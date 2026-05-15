@@ -1,0 +1,78 @@
+name;internal_id;act;is_town
+Clearfell Encampment;G1_town;1;1
+Cemetery of the Eternals;G1_7;1;0
+Clearfell;G1_2;1;0
+Freythorn;G1_12;1;0
+Hunting Grounds;G1_11;1;0
+Mausoleum of the Praetor;G1_8;1;0
+Mud Burrow;G1_3;1;0
+Ogham Farmlands;G1_13_1;1;0
+Ogham Manor;G1_15;1;0
+Ogham Village;G1_13_2;1;0
+Root Hollow;G1_10;1;0
+The Grelwood;G1_4;1;0
+The Grim Tangle;G1_6;1;0
+The Manor Ramparts;G1_14;1;0
+The Red Vale;G1_5;1;0
+The Riverbank;G1_1;1;0
+Tomb of the Consort;G1_9;1;0
+The Ardura Caravan;G2_town;2;1
+Buried Shrines;G2_4_3;2;0
+Deshar;G2_8;2;0
+Dreadnought Vanguard;G2_12_2;2;0
+Keth;G2_4_1;2;0
+Mastodon Badlands;G2_5_1;2;0
+Mawdun Mine;G2_10_2;2;0
+Mawdun Quarry;G2_10_1;2;0
+Path of Mourning;G2_9_1;2;0
+The Bone Pits;G2_5_2;2;0
+The Dreadnought;G2_12_1;2;0
+The Dreadnought's Wake;G2_11;2;0
+The Halani Gates;G2_3;2;0
+The Lost City;G2_4_2;2;0
+The Spires of Deshar;G2_9_2;2;0
+The Titan Grotto;G2_7;2;0
+Traitor's Passage;G2_2;2;0
+Trial of the Sekhemas;G2_13;2;0
+Valley of the Titans;G2_6;2;0
+Vastiri Outskirts;G2_1;2;0
+Ziggurat Encampment;G3_town;3;1
+Aggorat;G3_16;3;0
+Apex of Filth;G3_11;3;0
+Chimeral Wetlands;G3_5;3;0
+Infested Barrens;G3_2_1;3;0
+Jiquani's Machinarium;G3_6_1;3;0
+Jiquani's Sanctum;G3_6_2;3;0
+Jungle Ruins;G3_3;3;0
+Library of Kamasa;G3_15;3;0
+Sandswept Marsh;G3_1;3;0
+Temple of Kopec;G3_12;3;0
+The Azak Bog;G3_7;3;0
+The Black Chambers;G3_17;3;0
+The Drowned City;G3_8;3;0
+The Matlan Waterways;G3_2_2;3;0
+The Molten Vault;G3_9;3;0
+The Temple of Chaos;G3_10_Airlock;3;0
+The Trial of Chaos;G3_10;3;0
+The Venom Crypts;G3_4;3;0
+Utzaal;G3_14;3;0
+Kingsmarch;G4_town;4;1
+Abandoned Prison;G4_5_1;4;0
+Arastas;G4_8a;4;0
+Brinerot Cove;G4_14;4;0
+Eye of Hinekora;G4_4_1;4;0
+Halls of the Dead;G4_4_2;4;0
+Heart of the Tribe;G4_11_2;4;0
+Isle of Decay;G4_9_;4;0
+Isle of Kin;G4_1_1;4;0
+Journey's End;G4_2_2;4;0
+Kedge Bay;G4_2_1;4;0
+Ngakanu;G4_11_1a;4;0
+Plunder's Point;G4_13;4;0
+Shrike Island;G4_7;4;0
+Singing Caverns;G4_3_2;4;0
+Solitary Confinement;G4_5_2;4;0
+The Excavation;G4_10;4;0
+Trial of the Ancestors;G4_4_3;4;0
+Volcanic Warrens;G4_1_2;4;0
+Whakapanu Island;G4_3_1;4;0

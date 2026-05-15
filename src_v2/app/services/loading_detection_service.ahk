@@ -1,0 +1,465 @@
+; ============================================================
+; LoadingDetectionService — mede tempo de loading entre zonas (Fase 9.2)
+; ============================================================
+;
+; Port do loading_visual.ahk legado, em service-based architecture.
+;
+; FLUXO:
+;
+;   1. ARM (start measurement)
+;      Subscribe Evt.AreaLevelChanged -> ArmFromAreaChange()
+;      O log monitor publica esse evento ao detectar `Generating level X
+;      area Y with seed Z`. Isso e o `start` do loading.
+;      Pre-condicoes: setting habilitado + timer rodando + nao ja-armado.
+;
+;   2. POLL (HUD scan)
+;      SetTimer 25ms (configuravel) chama Tick() enquanto state=active.
+;      Cada Tick: scanner amostra HUD do PoE2.
+;      - HUD visivel -> END (publish Evt.LoadingMeasured, return to idle)
+;      - HUD ausente -> continua
+;      - Tempo > maxMs -> END com source=timeout
+;
+;   3. END (publish event)
+;      Publish Evt.LoadingMeasured com:
+;        Map(
+;          "durationMs", n,
+;          "actIndex",   n,        ; do snapshot no arm
+;          "stepId",     "..",     ; idem
+;          "fromZone",   "..",     ; zona quando foi armado
+;          "toZone",     "..",     ; zona atual no end (pode estar igual)
+;          "source",     "..",     ; "hud_returned_fast" | "scene_then_hud_return" | "timeout_no_hud_return" | etc
+;          "score",      n,        ; score do scanner
+;          "anchor",     ".."      ; "hud_visible_life0_mana3_bar0" debug
+;        )
+;      App.ahk subscreve e (a) escreve em loading.csv (b) injeta no
+;      proximo split como transitionMs.
+;
+; SUPRESSAO:
+;   SuppressForPanel() cancela o loading ativo (usuario abriu painel).
+;   Util pra evitar falso positivo quando HUD some por causa de inventario.
+;
+; SCENE NOTIFICATION:
+;   NotifyScene(mapName) eh chamado pelo SyncEngine quando detecta
+;   nova SCENE. Atua como "preview" do fim — marca sceneSeenTick mas
+;   nao encerra. End so vem quando HUD volta de verdade. Razao:
+;   SCENE pode chegar antes da tela de loading sumir.
+;
+; HEADLESS:
+;   Em headless, Start() nao chama SetTimer real. Tick() pode ser
+;   chamado manualmente nos testes. Tudo o resto funciona.
+
+class LoadingDetectionService
+{
+    _bus       := ""
+    _clock     := ""
+    _scanner   := ""
+    _settings  := ""
+    _timerSvc  := ""
+
+    ; Estado
+    _state := "idle"     ; "idle" | "active"
+    _startTick := 0
+    _startActIndex := 0
+    _startStepId := ""
+    _startZone := ""
+    _ignoreUntilTick := 0
+    _sceneSeenTick := 0
+    _lastScore := 0
+    _lastAnchor := ""
+
+    ; Snapshot helpers (callers passam isso no arm)
+    _zoneProvider := ""    ; () -> string (zona atual)
+    _stepProvider := ""    ; () -> Map("actIndex", n, "stepId", "..")
+    _windowProvider := ""  ; () -> Map("x",n,"y",n,"w",n,"h",n) ou ""
+
+    ; Lifecycle
+    _enabled := false
+    _tickFn := ""
+    _headless := false
+
+    ; Handler refs (fields pra permitir Unsubscribe em Stop)
+    _handlerAreaLevelChanged := ""
+    _handlerZoneChanged      := ""
+    ; v17.15 (Bug #31): _handlerPanelKeyPressed removido —
+    ; PanelKeyService desconectado em v17.2.
+
+    ; Constantes default
+    static DEFAULT_POLL_MS := 25
+    static DEFAULT_MIN_MS  := 250
+    static DEFAULT_MAX_MS  := 90000
+
+    __New(bus, clock, scanner, cfg, timerSvc, zoneProvider, stepProvider, windowProvider := "", headless := false)
+    {
+        if !(bus is EventBus)
+            throw TypeError("LoadingDetectionService: 'bus' deve ser EventBus")
+        if !IsObject(clock) || !clock.HasMethod("NowMs")
+            throw TypeError("LoadingDetectionService: 'clock' deve ter NowMs()")
+        if !(scanner is HudPixelScanner)
+            throw TypeError("LoadingDetectionService: 'scanner' deve ser HudPixelScanner")
+        if !(cfg is AppSettings)
+            throw TypeError("LoadingDetectionService: 'cfg' deve ser AppSettings")
+        if !(timerSvc is TimerService)
+            throw TypeError("LoadingDetectionService: 'timerSvc' deve ser TimerService")
+        if !IsObject(zoneProvider)
+            throw TypeError("LoadingDetectionService: 'zoneProvider' deve ser callable")
+        if !IsObject(stepProvider)
+            throw TypeError("LoadingDetectionService: 'stepProvider' deve ser callable")
+
+        this._bus            := bus
+        this._clock          := clock
+        this._scanner        := scanner
+        this._settings       := cfg
+        this._timerSvc       := timerSvc
+        this._zoneProvider   := zoneProvider
+        this._stepProvider   := stepProvider
+        this._windowProvider := windowProvider != "" ? windowProvider : (() => LoadingDetectionService._DefaultWindowProvider())
+        this._headless       := !!headless
+
+        this._tickFn := this.Tick.Bind(this)
+
+        ; Guarda refs dos handlers pra que Stop() consiga Unsubscribe
+        ; (closures fat-arrow inline criam refs novas a cada chamada;
+        ;  ver Section 17.32 / Section 18.5 do ARCHITECTURE.md).
+        this._handlerAreaLevelChanged := (data) => this._OnAreaLevelChanged(data)
+        this._handlerZoneChanged      := (data) => this._OnZoneChanged(data)
+
+        ; Subscribe arm (AreaLevelChanged dispara ArmFromAreaChange)
+        this._bus.Subscribe(Events.AreaLevelChanged, this._handlerAreaLevelChanged)
+
+        ; Subscribe SCENE notification direto (eliminado pombo-correio
+        ; em app.ahk: Turno 7).
+        this._bus.Subscribe(Events.ZoneChanged, this._handlerZoneChanged)
+
+        ; v17.15 (Bug #31): subscribe a Cmd.PanelKeyPressed removido —
+        ; PanelKeyService desconectado em v17.2. SuppressForPanel ainda
+        ; eh chamado internamente de _CancelActive.
+    }
+
+    ; ============================================================
+    ; Lifecycle
+    ; ============================================================
+
+    Start()
+    {
+        if this._enabled
+            return
+        this._enabled := true
+        if !this._headless
+        {
+            try SetTimer(this._tickFn, this._GetPollMs())
+        }
+    }
+
+    Stop()
+    {
+        if !this._enabled
+            return
+        this._enabled := false
+        this._CancelActive("service_stop")
+        if !this._headless
+        {
+            try SetTimer(this._tickFn, 0)
+        }
+    }
+
+    ; ============================================================
+    ; Dispose — desfaz subscriptions. Idempotente.
+    ;   Chamar quando o service nao for mais usado (ciclo Stop+Start
+    ;   da mesma instancia do app, ou destruicao em testes).
+    ; ============================================================
+    Dispose()
+    {
+        if (this._handlerAreaLevelChanged != "")
+        {
+            this._bus.Unsubscribe(Events.AreaLevelChanged, this._handlerAreaLevelChanged)
+            this._handlerAreaLevelChanged := ""
+        }
+        if (this._handlerZoneChanged != "")
+        {
+            this._bus.Unsubscribe(Events.ZoneChanged, this._handlerZoneChanged)
+            this._handlerZoneChanged := ""
+        }
+        ; v17.15 (Bug #31): unsubscribe a Cmd.PanelKeyPressed removido.
+    }
+
+    IsEnabled()  => this._enabled
+    IsActive()   => this._state = "active"
+    GetStartTick() => this._startTick
+    GetLastScore() => this._lastScore
+    GetLastAnchor() => this._lastAnchor
+
+    ; ============================================================
+    ; Arm
+    ; ============================================================
+
+    ; ArmFromAreaChange — chamado via subscribe Evt.AreaLevelChanged.
+    ;   Pre-condicoes:
+    ;     - setting loadingVisualEnabled = true
+    ;     - timer service ativo (rodando ou pausado nao importa, mas
+    ;       precisa ter sido iniciado — paridade com legado)
+    ;     - state = idle (segundo Generating durante loading nao
+    ;       reinicia)
+    ;
+    ; Retorna true se armou, false caso contrario.
+    ArmFromAreaChange(areaLevel := 0, areaCode := "")
+    {
+        if !this._settings.loadingVisualEnabled
+            return false
+        if !this._timerSvc.IsActive()
+            return false
+        if (this._state = "active")
+            return false
+
+        snapshot := this._SnapshotStep()
+        zone := this._SnapshotZone()
+
+        this._state           := "active"
+        this._startTick       := this._clock.NowMs()
+        this._startActIndex   := snapshot["actIndex"]
+        this._startStepId     := snapshot["stepId"]
+        this._startZone       := zone
+        this._ignoreUntilTick := this._startTick + 150
+        this._sceneSeenTick   := 0
+        this._lastScore       := 70
+        this._lastAnchor      := "client_generating:" areaCode
+        return true
+    }
+
+    ; NotifyScene — SyncEngine pode chamar quando detecta SCENE durante
+    ;   loading ativo. Marca sceneSeenTick mas nao encerra. End so vem
+    ;   quando HUD volta.
+    NotifyScene(mapName := "")
+    {
+        if (this._state != "active")
+            return false
+        durationMs := this._clock.NowMs() - this._startTick
+        if (durationMs < this._GetMinMs())
+            return false
+        this._sceneSeenTick := this._clock.NowMs()
+        this._lastAnchor    := "scene:" mapName
+        return true
+    }
+
+    ; SuppressForPanel — usuario abriu painel; cancela loading ativo
+    ;   e ignora amostras pelos proximos 1500ms.
+    SuppressForPanel(source := "panel")
+    {
+        if (this._state = "active")
+            this._CancelActive(source)
+        this._ignoreUntilTick := this._clock.NowMs() + 1500
+    }
+
+    ; ============================================================
+    ; Tick — poll do HUD
+    ; ============================================================
+
+    Tick()
+    {
+        if (this._state != "active")
+            return
+
+        now := this._clock.NowMs()
+
+        ; Timeout: loading rodando ha mais que maxMs
+        if ((now - this._startTick) > this._GetMaxMs())
+        {
+            this._End("timeout_no_hud_return")
+            return
+        }
+
+        ; Timer parado: cancela
+        if !this._timerSvc.IsActive()
+        {
+            this._CancelActive("timer_not_running")
+            return
+        }
+
+        ; Janela do PoE2 nao amostravel (sem foco, minimizada)
+        winInfo := this._windowProvider.Call()
+        if !IsObject(winInfo)
+            return    ; mantem aberto, aguarda HUD voltar
+
+        ; Periodo de ignore inicial pos-arm
+        if (this._ignoreUntilTick > 0 && now < this._ignoreUntilTick)
+            return
+
+        ; Scan
+        result := this._scanner.Scan(winInfo["x"], winInfo["y"], winInfo["w"], winInfo["h"])
+
+        ; Anchor pra debug
+        anchor := result["visible"]
+            ? "hud_visible_life" result["lifeHits"] "_mana" result["manaHits"] "_bar" result["hotbarHits"]
+            : "hud_absent_life" result["lifeHits"] "_mana" result["manaHits"] "_bar" result["hotbarHits"]
+        this._lastAnchor := anchor
+        this._lastScore  := result["visible"] ? 0 : 70
+
+        if !result["visible"]
+            return    ; HUD ainda ausente, continua poll
+
+        ; HUD voltou → end
+        endSource := this._sceneSeenTick > 0 ? "scene_then_hud_return" : "hud_returned_fast"
+        this._End(endSource)
+    }
+
+    ; ============================================================
+    ; End / Cancel
+    ; ============================================================
+
+    _End(source)
+    {
+        if (this._state != "active")
+            return false
+
+        durationMs := this._clock.NowMs() - this._startTick
+        startAct   := this._startActIndex
+        startStep  := this._startStepId
+        startZone  := this._startZone
+
+        this._ResetState()
+
+        if (durationMs < this._GetMinMs() || durationMs > this._GetMaxMs())
+            return false    ; descarta scans muito curtos/longos
+
+        toZone := this._SnapshotZone()
+        this._bus.Publish(Events.LoadingMeasured, Map(
+            "durationMs", durationMs,
+            "actIndex",   startAct,
+            "stepId",     startStep,
+            "fromZone",   startZone,
+            "toZone",     toZone,
+            "source",     source,
+            "score",      this._lastScore,
+            "anchor",     this._lastAnchor
+        ))
+        return true
+    }
+
+    _CancelActive(source)
+    {
+        if (this._state != "active")
+            return
+        this._ResetState()
+        this._ignoreUntilTick := this._clock.NowMs() + 500
+    }
+
+    _ResetState()
+    {
+        this._state         := "idle"
+        this._startTick     := 0
+        this._sceneSeenTick := 0
+    }
+
+    ; ============================================================
+    ; Bus subscribers
+    ; ============================================================
+
+    _OnAreaLevelChanged(data)
+    {
+        if !IsObject(data)
+            return
+        areaLevel := data.Has("areaLevel") ? data["areaLevel"] : 0
+        areaCode  := data.Has("areaCode")  ? data["areaCode"]  : ""
+        this.ArmFromAreaChange(areaLevel, areaCode)
+    }
+
+    ; SyncEngine recebe ZoneChanged e atualiza zona fisica; aqui
+    ; aproveitamos o mesmo evento pra avisar que uma SCENE chegou
+    ; (proxy do fim do loading). End real so vem quando HUD volta.
+    _OnZoneChanged(data)
+    {
+        if !IsObject(data) || !data.Has("zoneName")
+            return
+        zone := data["zoneName"]
+        if (zone = "")
+            return
+        this.NotifyScene(zone)
+    }
+
+    ; v17.15 (Bug #31): _OnPanelKeyPressed handler removido. PanelKeyService
+    ; foi desconectado em v17.2 e nao existe publisher pra Cmd.PanelKeyPressed.
+    ; SuppressForPanel acima continua usavel via _CancelActive.
+
+    ; ============================================================
+    ; Snapshot helpers
+    ; ============================================================
+
+    _SnapshotZone()
+    {
+        try
+            return String(this._zoneProvider.Call())
+        catch as ex
+        {
+            ; v17.15 (Bug #8): falha em snapshot eh diagnostico, nao
+            ; quebra fluxo. Retorna fallback seguro mas registra pra
+            ; debug. Service nao tem logger entao OutputDebug.
+            OutputDebug("LoadingDetectionService._SnapshotZone falhou: " ex.Message)
+        }
+        return ""
+    }
+
+    _SnapshotStep()
+    {
+        try
+        {
+            r := this._stepProvider.Call()
+            if IsObject(r)
+                return Map(
+                    "actIndex", r.Has("actIndex") ? r["actIndex"] : 0,
+                    "stepId",   r.Has("stepId")   ? r["stepId"]   : ""
+                )
+        }
+        catch as ex
+        {
+            ; v17.15 (Bug #8): idem _SnapshotZone
+            OutputDebug("LoadingDetectionService._SnapshotStep falhou: " ex.Message)
+        }
+        return Map("actIndex", 0, "stepId", "")
+    }
+
+    ; ============================================================
+    ; Settings accessors (pequeno indireção pra clamp + defaults)
+    ; ============================================================
+
+    _GetPollMs()
+    {
+        v := this._settings.loadingVisualPollMs
+        return v >= 10 ? Integer(v) : LoadingDetectionService.DEFAULT_POLL_MS
+    }
+
+    _GetMinMs()
+    {
+        v := this._settings.loadingVisualMinMs
+        return v >= 0 ? Integer(v) : LoadingDetectionService.DEFAULT_MIN_MS
+    }
+
+    _GetMaxMs()
+    {
+        v := this._settings.loadingVisualMaxMs
+        return v > 0 ? Integer(v) : LoadingDetectionService.DEFAULT_MAX_MS
+    }
+
+    ; ============================================================
+    ; Default window provider (em prod usa WinGetPos do PoE2)
+    ; ============================================================
+
+    static _DefaultWindowProvider()
+    {
+        try
+        {
+            hwnd := WinExist("Path of Exile 2")
+            if !hwnd
+                return ""
+            try
+            {
+                if (WinGetMinMax("Path of Exile 2") = -1)
+                    return ""    ; minimizada, nao amostravel
+            }
+            x := 0, y := 0, w := 0, h := 0
+            try WinGetPos(&x, &y, &w, &h, "Path of Exile 2")
+            if (w <= 0 || h <= 0)
+                return ""
+            return Map("x", x, "y", y, "w", w, "h", h)
+        }
+        return ""
+    }
+}
