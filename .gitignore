@@ -1,0 +1,56 @@
+# ============================================================
+# SpeedKalandra .gitignore
+# ============================================================
+# Protege dados pessoais (PBs, runs, character info) de virem
+# parar no repositorio publico por acidente.
+
+# === Personal data (NEVER commit) ===
+speedkalandra.ini
+speedkalandra_zones.txt
+data/personal_bests.ini
+data/personal_bests.ini.bak
+data/run_state.ini
+data/runs/
+data/speedkalandra.log
+data/zone_totals*.txt
+
+# Variante defensiva: ignora TUDO em data/ exceto o catalogo
+# de zonas (que eh necessario em runtime). Se voce adicionar
+# outros arquivos-catalogo no futuro, libere-os com `!data/<arq>`.
+data/*
+!data/zones.csv
+
+# === Build / dist output ===
+SpeedKalandra-dist*/
+SpeedKalandra-dist*.zip
+*.exe
+
+# === Legacy / archive (dev-only) ===
+_LIXEIRA/
+BKP/
+debug/
+runs/
+
+# === IDE / editor ===
+.vscode/
+.idea/
+*.swp
+*~
+.vs/
+
+# === OS junk ===
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# === Misc temp / backup ===
+*.bak
+*.tmp
+*.log
+
+# === Game logs (caso copie pra testar) ===
+Client.txt
+Client*.txt
+
+# === Auditoria interna (dev-only) ===
+AUDITORIA-PRODUCAO.md
