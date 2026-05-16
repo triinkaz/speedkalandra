@@ -35,7 +35,8 @@ class AppSettingsTests extends TestCase
         "defaults_auto_pause_on_focus_is_true",
         "defaults_death_penalty_settings",
         "defaults_disclaimer_not_acknowledged",
-        "defaults_auto_finalize_and_auto_start_regexes_empty",
+        "defaults_auto_finalize_regex_empty",
+        "defaults_auto_start_regex_is_wounded_man_line",
 
         ; --- FromMap validation ---
         "from_map_throws_type_error_on_non_object",
@@ -146,11 +147,18 @@ class AppSettingsTests extends TestCase
         Assert.False(AppSettings.Defaults().disclaimerAcknowledged)
     }
 
-    defaults_auto_finalize_and_auto_start_regexes_empty()
+    defaults_auto_finalize_regex_empty()
     {
-        cfg := AppSettings.Defaults()
-        Assert.Equal("", cfg.autoFinalizeRegex)
-        Assert.Equal("", cfg.autoStartRegex)
+        Assert.Equal("", AppSettings.Defaults().autoFinalizeRegex)
+    }
+
+    defaults_auto_start_regex_is_wounded_man_line()
+    {
+        ; Default = fala do Wounded Man no comeco da campanha PoE2,
+        ; com flag PCRE `i)` pra case-insensitive matching.
+        ; Ver comentario em app_settings.ahk pro raciocinio + caveat
+        ; do Bug #11 (jogadores non-EN editam via Settings dialog).
+        Assert.Equal("i)Wounded Man: By the First Ones!", AppSettings.Defaults().autoStartRegex)
     }
 
     ; ============================================================

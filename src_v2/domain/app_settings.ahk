@@ -78,11 +78,20 @@ class AppSettings
     ; --- Auto-finalize (Onda 6) ---
     autoFinalizeRegex := ""
 
-    ; --- Auto-start (Onda 7) ---
-    ; v17.15 (Bug #11): default vazio. PoE2 eh localizado e jogadores
-    ; PT-BR/ES/DE/FR/etc nao tem a fala em ingles. User configura via
-    ; Settings dialog de acordo com seu idioma. Empty = service no-op.
-    autoStartRegex := ""
+    ; --- Auto-start (Onda 6) ---
+    ; Frase do Wounded Man no comecinho da campanha PoE2. O log do jogo
+    ; sai com formato "Wounded Man: By the First Ones! ..." (prefixo do
+    ; NPC + dialogo). Match case-insensitive via flag PCRE `i)` no
+    ; comeco do padrao — resiliente a pequenas variacoes de caps no log.
+    ; AutoStartService matcheia contra Evt.LogLineRead e publica
+    ; Cmd.NewRunRequested.
+    ;
+    ; CAVEAT (Bug #11): PoE2 eh localizado. Jogadores PT-BR / ES / DE /
+    ; FR / etc tem essa fala traduzida no log e o default em ingles nao
+    ; bate. Esses jogadores podem editar via Settings dialog (Auto-start
+    ; regex) com o equivalente do seu idioma, ou deixar vazio pra usar
+    ; hotkey manual (^!n por default).
+    autoStartRegex := "i)Wounded Man: By the First Ones!"
 
     ; --- Vendor Regex Slots (Onda 8) ---
     ; 3 strings curtas (max 50 chars cada) que o user pode copiar pra

@@ -16,6 +16,15 @@ A minimalist Path of Exile 2 speedrun tracker for Windows.
 - Auto-finalize on configurable regex trigger (e.g. last-boss kill line)
 - Crash recovery — re-hydrates run state on relaunch
 
+## Game language
+
+The auto-start and auto-finalize features rely on regex matches against lines in `Client.txt`. The default auto-start regex matches a Wounded Man line from the **English** PoE2 client. If your game is in another language, either:
+
+- Edit the regex strings in **Settings** to match the equivalent lines in your locale, **or**
+- Leave them empty and use the manual hotkeys instead (`Ctrl+Alt+N` to start, `Ctrl+Alt+F` to finalize).
+
+Everything else (zone detection, deaths, loading screens, level changes, personal bests) works regardless of client language — it relies on stable text fragments and pixel patterns that don't change with locale.
+
 ## Disclaimer
 
 SpeedKalandra is a personal project by a player, not a developer.
