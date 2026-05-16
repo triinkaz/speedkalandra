@@ -282,15 +282,19 @@ class RunStatsPlotDialog
         innerW := RunStatsPlotDialog.WINDOW_W - 28
 
         ; --- Header + Subheader ---
-        runId    := data.Has("runId")    ? data["runId"]    : ""
-        profile  := data.Has("profile")  ? data["profile"]  : ""
-        patch    := data.Has("patch")    ? data["patch"]    : ""
-        firstTs  := data.Has("firstTs")  ? data["firstTs"]  : ""
-        totalMs  := data.Has("totalMs")  ? data["totalMs"]  : 0
-        deathCnt := data.Has("deathCount") ? data["deathCount"] : 0
+        ; v0.1.1: `runId` local colide com classe `RunId` (case-insensitive).
+        ; Usar `currentRunId` consistente com x-axis labels mais abaixo.
+        currentRunId := data.Has("runId")    ? data["runId"]    : ""
+        profile      := data.Has("profile")  ? data["profile"]  : ""
+        patch        := data.Has("patch")    ? data["patch"]    : ""
+        firstTs      := data.Has("firstTs")  ? data["firstTs"]  : ""
+        totalMs      := data.Has("totalMs")  ? data["totalMs"]  : 0
+        deathCnt     := data.Has("deathCount") ? data["deathCount"] : 0
 
-        headerTxt := "Run " (runId != "" ? runId : "(in progress)") "  -  " RunStatsPlotBuilder.FormatMs(totalMs)
-        subTxt    := "Profile: " profile "   Patch: " patch
+        headerTxt := "Run " (currentRunId != "" ? currentRunId : "(in progress)") "  -  " RunStatsPlotBuilder.FormatMs(totalMs)
+        ; v0.1.3: campo Patch removido da exibicao. Mantido em data["patch"]
+        ; pra retrocompat com runs salvas mas nao mostrado mais no subheader.
+        subTxt    := "Profile: " . profile . "   SpeedKalandra " . Version.STRING
         if (firstTs != "")
             subTxt .= "   Start: " firstTs
         if (deathCnt > 0)
@@ -533,7 +537,7 @@ class RunStatsPlotDialog
                 ))
 
             ; X axis labels (1 por run, dispostos sob o chart)
-            currentRunId := data.Has("runId") ? data["runId"] : ""
+            ; v0.1.1: usa currentRunId ja declarado no inicio do _BuildGui
             xLabelW := 80
             if (nRuns > 1)
             {
@@ -749,10 +753,12 @@ class RunStatsPlotDialog
 
         useGap := this._granularity != "run"
 
+        ; v0.1.1: `run` local colide com builtin `Run` (case-insensitive).
+        ; Usar `runItem` em todos os loops desta funcao.
         universe := Map()
-        for _, run in runs
+        for _, runItem in runs
         {
-            segs := this._GetSegmentsForRun(run, this._granularity)
+            segs := this._GetSegmentsForRun(runItem, this._granularity)
             for _, s in segs
             {
                 lbl := s["label"]
@@ -766,9 +772,9 @@ class RunStatsPlotDialog
         {
             points := []
             totalMs := 0
-            for idx, run in runs
+            for idx, runItem in runs
             {
-                segs := this._GetSegmentsForRun(run, this._granularity)
+                segs := this._GetSegmentsForRun(runItem, this._granularity)
                 found := false
                 ms := 0
                 for _, s in segs
@@ -1225,11 +1231,12 @@ class RunStatsPlotDialog
             this._detailsGui := ""
         }
 
-        details := this._currentData.Has("details") ? this._currentData["details"] : []
-        runId   := this._currentData.Has("runId")   ? this._currentData["runId"]   : ""
+        details      := this._currentData.Has("details") ? this._currentData["details"] : []
+        ; v0.1.1: `runId` local colide com classe `RunId`. Usar `currentRunId`.
+        currentRunId := this._currentData.Has("runId")   ? this._currentData["runId"]   : ""
 
         g := Gui("+AlwaysOnTop -MaximizeBox",
-            "SpeedKalandra - Details" (runId != "" ? " (" runId ")" : ""))
+            "SpeedKalandra - Details" (currentRunId != "" ? " (" currentRunId ")" : ""))
         g.BackColor := Theme.Color("bg")
         g.MarginX := 14
         g.MarginY := 12

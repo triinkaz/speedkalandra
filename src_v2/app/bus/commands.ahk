@@ -35,6 +35,10 @@ class Commands
     ; --- Personal Bests (v17.13) ---
     static ResetPersonalBestsRequested := "Cmd.ResetPersonalBestsRequested"
 
+    ; --- Export/Import de runs (v0.1.0) ---
+    static ExportRunsRequested := "Cmd.ExportRunsRequested"
+    static ImportRunsRequested := "Cmd.ImportRunsRequested"
+
     ; --- Overlay panel keys (auto-MICRO mode) ---
     static PanelKeyPressed  := "Cmd.PanelKeyPressed"
     static PanelKeyReleased := "Cmd.PanelKeyReleased"

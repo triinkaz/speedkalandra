@@ -90,6 +90,12 @@ class ZoneTrackingService
     _startMs    := 0
     _totals     := ""    ; Map<zoneName, totalMs>
     _runActive  := false
+    _timerPaused := false   ; v0.1.1 (Bug Lechtansi): tracks timer pause state
+                            ; pra ZoneChanged respeitar. Sem isso, ZoneChanged
+                            ; que dispara durante pausa (ex: [SCENE] emitido
+                            ; pelo game enquanto alt-tabbed) reiniciava _startMs
+                            ; e o zone timer continuava "ticking" mesmo com
+                            ; overall pausado.
 
     _handlerZoneChanged   := ""
     _handlerTimerPaused   := ""
@@ -383,6 +389,7 @@ class ZoneTrackingService
         this._startMs    := 0
         this._totals     := Map()
         this._runActive  := false
+        this._timerPaused := false   ; v0.1.1
     }
 
     ; ============================================================
@@ -403,9 +410,17 @@ class ZoneTrackingService
 
         ; Abre nova
         this._activeZone := newZone
-        ; Conta tempo somente se run ativa. Caso contrario, mantem a zona
-        ; registrada (pra display) com cronometro parado.
-        this._startMs := this._runActive ? this._clock.NowMs() : 0
+        ; Conta tempo somente se run ativa E timer NAO esta pausado.
+        ; Caso contrario, mantem a zona registrada (pra display) com
+        ; cronometro parado.
+        ;
+        ; v0.1.1 (Bug Lechtansi): adicionada checagem de !_timerPaused.
+        ; Antes considerava so _runActive — ZoneChanged durante pausa
+        ; reiniciava _startMs e o zone timer continuava tickando enquanto
+        ; o overall estava pausado. Caso comum: PoE2 emite [SCENE] events
+        ; durante alt-tab (loading screens em background, portal animations,
+        ; etc) que viram ZoneChanged via _ProcessLine do LogMonitor.
+        this._startMs := (this._runActive && !this._timerPaused) ? this._clock.NowMs() : 0
 
         ; Publica evento enriquecido com metadata do catalog
         actIdx := 0
@@ -430,6 +445,10 @@ class ZoneTrackingService
 
     _OnTimerPaused(data)
     {
+        ; v0.1.1: seta flag ANTES de _FlushActive pra que ZoneChanged
+        ; que dispare imediatamente apos (race entre log lines) nao
+        ; reinicie _startMs.
+        this._timerPaused := true
         ; Fecha zona ativa (acumula tempo ate o pause). Apos resume,
         ; a zona ativa atual eh "reaberta" no _OnTimerResumed.
         ; Param true = keepActive (preserva _activeZone, so zera _startMs).
@@ -438,6 +457,8 @@ class ZoneTrackingService
 
     _OnTimerResumed(data)
     {
+        ; v0.1.1: limpa flag ANTES de setar _startMs.
+        this._timerPaused := false
         ; Reseta startMs da zona atual (se houver) pra contar de
         ; agora em diante. Tempo durante o pause nao foi contado.
         if (this._activeZone != "" && this._runActive)
@@ -457,6 +478,7 @@ class ZoneTrackingService
         ; Agora: _FlushActive(true) commita o elapsed em _totals antes
         ; de zerar _startMs. keepActive=true preserva _activeZone
         ; (jogador continua na zona; futura RunStarted reabrira tracking).
+        this._timerPaused := false   ; v0.1.1: run encerrou, nao mais pausada
         this._FlushActive(true)
     }
 
@@ -467,6 +489,7 @@ class ZoneTrackingService
         ; comeca a contar a partir de agora.
         this._totals := Map()
         this._runActive := true
+        this._timerPaused := false   ; v0.1.1: fresh start
         if (this._activeZone != "")
             this._startMs := this._clock.NowMs()
     }
@@ -482,6 +505,7 @@ class ZoneTrackingService
         this._activeZone := ""
         this._startMs := 0
         this._runActive := false
+        this._timerPaused := false   ; v0.1.1: run encerrou
     }
 
     _OnRunCompleted(data)
@@ -491,6 +515,7 @@ class ZoneTrackingService
         ; e o Reset que ocorre logo apos.
         this._FlushActive()
         this._runActive := false
+        this._timerPaused := false   ; v0.1.1: run encerrou
         ; Nao zera _totals — outros subscribers (RunStatsPlotDialog)
         ; consultam GetTotals() durante o ciclo de RunCompleted pra
         ; montar o plot final. Proxima RunStarted limpa via _OnRunStarted.

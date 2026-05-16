@@ -193,18 +193,8 @@ class MicroLayoutWidget extends LayoutWidgetBase
         try ctrl.Value := "XP"
     }
 
-    _FormatMs(ms)
-    {
-        if (ms < 0)
-            ms := 0
-        totalSec := Floor(ms / 1000)
-        h := Floor(totalSec / 3600)
-        m := Floor(Mod(totalSec, 3600) / 60)
-        s := Mod(totalSec, 60)
-        if (h > 0)
-            return Format("{:d}:{:02d}:{:02d}", h, m, s)
-        return Format("{:02d}:{:02d}", m, s)
-    }
+    ; v0.1.2 (auditoria #19): consolidado em Duration.FormatMs.
+    _FormatMs(ms) => Duration.FormatMs(ms)
 
     _OnTick(data)
     {

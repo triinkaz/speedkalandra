@@ -67,16 +67,18 @@ class RunStateRepository
     Load()
     {
         ini := this._ini
-        runId     := ini.Read(RunStateRepository.SECTION, "RunId", "")
-        startedAt := ini.Read(RunStateRepository.SECTION, "StartedAt", "")
-        status    := ini.Read(RunStateRepository.SECTION, "Status", "idle")
-        runBaseMs := RunStateRepository._ReadInt(ini, RunStateRepository.SECTION, "RunBaseMs", 0)
+        ; v0.1.0: renomeado de `runId` pra `currentRunId` (case-insensitive
+        ; collision com classe `RunId` do domain disparava #Warn).
+        currentRunId := ini.Read(RunStateRepository.SECTION, "RunId", "")
+        startedAt    := ini.Read(RunStateRepository.SECTION, "StartedAt", "")
+        status       := ini.Read(RunStateRepository.SECTION, "Status", "idle")
+        runBaseMs    := RunStateRepository._ReadInt(ini, RunStateRepository.SECTION, "RunBaseMs", 0)
 
-        if (Trim(runId) = "")
+        if (Trim(currentRunId) = "")
             return RunState.Empty()
 
         return RunState.FromMap(Map(
-            "runId",     runId,
+            "runId",     currentRunId,
             "startedAt", startedAt,
             "status",    status,
             "runBaseMs", runBaseMs

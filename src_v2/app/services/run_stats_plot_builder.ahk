@@ -148,11 +148,14 @@ class RunStatsPlotBuilder
         for _, key in RunStatsPlotBuilder.SEGMENT_KEYS
             totals[key] := 0
 
-        runId      := IsObject(snapshot) && snapshot.Has("runId")      ? snapshot["runId"]      : ""
-        profile    := IsObject(snapshot) && snapshot.Has("profile")    ? snapshot["profile"]    : ""
-        patch      := IsObject(snapshot) && snapshot.Has("patch")      ? snapshot["patch"]      : ""
-        firstTs    := IsObject(snapshot) && snapshot.Has("firstTs")    ? snapshot["firstTs"]    : ""
-        deathCount := IsObject(snapshot) && snapshot.Has("deathCount") ? snapshot["deathCount"] : 0
+        ; v0.1.0: `runId` local colide case-insensitively com classe `RunId`
+        ; (#Warn LocalSameAsGlobal). Mesma resolucao adotada em outros lugares
+        ; do projeto: usar `currentRunId`.
+        currentRunId := IsObject(snapshot) && snapshot.Has("runId")      ? snapshot["runId"]      : ""
+        profile      := IsObject(snapshot) && snapshot.Has("profile")    ? snapshot["profile"]    : ""
+        patch        := IsObject(snapshot) && snapshot.Has("patch")      ? snapshot["patch"]      : ""
+        firstTs      := IsObject(snapshot) && snapshot.Has("firstTs")    ? snapshot["firstTs"]    : ""
+        deathCount   := IsObject(snapshot) && snapshot.Has("deathCount") ? snapshot["deathCount"] : 0
 
         ; Defaults dos settings se nao vieram no snapshot
         if (profile = "")
@@ -161,7 +164,7 @@ class RunStatsPlotBuilder
             patch := this._settings.gamePatch
 
         return Map(
-            "runId",         String(runId),
+            "runId",         String(currentRunId),
             "profile",       String(profile),
             "patch",         String(patch),
             "firstTs",       String(firstTs),
@@ -302,19 +305,10 @@ class RunStatsPlotBuilder
         return total
     }
 
-    static FormatMs(ms) => RunStatsPlotBuilder._FormatMs(ms)
+    static FormatMs(ms) => Duration.FormatMs(ms)
 
-    static _FormatMs(ms)
-    {
-        n := RunStatsPlotBuilder._ToInt(ms)
-        if (n < 0)
-            n := 0
-        totalSec := Floor(n / 1000)
-        h := Floor(totalSec / 3600)
-        m := Floor(Mod(totalSec, 3600) / 60)
-        s := Mod(totalSec, 60)
-        if (h > 0)
-            return Format("{:d}:{:02d}:{:02d}", h, m, s)
-        return Format("{:02d}:{:02d}", m, s)
-    }
+    ; v0.1.2 (auditoria #19): _FormatMs consolidado em Duration.FormatMs.
+    ; Mantido como alias static interno pra retrocompat dos call sites
+    ; deste arquivo (incluindo _AddDeathDetails que passa penalty).
+    static _FormatMs(ms) => Duration.FormatMs(ms)
 }

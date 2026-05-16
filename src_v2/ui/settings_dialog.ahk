@@ -99,7 +99,7 @@ class SettingsDialog
 
     _BuildGui()
     {
-        g := Gui("+AlwaysOnTop +Resize -MaximizeBox", "SpeedKalandra - Settings")
+        g := Gui("+AlwaysOnTop +Resize -MaximizeBox", "SpeedKalandra " . Version.STRING . " - Settings")
         g.BackColor := Theme.Color("bg")
         g.MarginX := 16
         g.MarginY := 14
@@ -120,9 +120,10 @@ class SettingsDialog
         this._ctrls["profileName"] := this._AddEdit(g, 180, y, 360, this._cfg.profileName)
         y += 26
 
-        this._Label(g, y, "Patch")
-        this._ctrls["gamePatch"] := this._AddEdit(g, 180, y, 360, this._cfg.gamePatch)
-        y += 26
+        ; v0.1.3: campo "Patch" removido do dialog. cfg.gamePatch ainda
+        ; existe internamente (default "Unknown") pra retrocompat com runs
+        ; antigas salvas no historico, mas o usuario nao precisa mais
+        ; manter manualmente.
 
         this._Label(g, y, "PoE2 log (Client.txt)")
         this._ctrls["logFile"] := this._AddEdit(g, 180, y, 280, this._cfg.logFile)
@@ -188,6 +189,13 @@ class SettingsDialog
         this._SectionHeader(g, y, "HOTKEYS")
         y += 22
 
+        ; v0.1.0: hint sobre a UX de captura. Edit field eh ReadOnly,
+        ; usuario interage so via botoes (Capture + Clear).
+        g.SetFont("s8 c" Theme.Color("muted"), Theme.FONT_UI)
+        g.Add("Text", "x16 y" y " w520",
+            "Click 'Capture' to record a key combo (Esc cancels). 'Clear' to unbind.")
+        y += 18
+
         ; Ordena actions alfabeticamente
         this._hotkeyActions := []
         for action, _ in this._cfg.hotkeys
@@ -197,7 +205,24 @@ class SettingsDialog
         for _, action in this._hotkeyActions
         {
             this._Label(g, y, action)
-            this._ctrls["hk_" action] := this._AddEdit(g, 180, y, 200, this._cfg.GetHotkey(action))
+            ; v0.1.0: Edit eh ReadOnly. Display em formato human ("Ctrl+Alt+F")
+            ; via HotkeyFormatter. Interacao so via botoes Capture/Clear.
+            ; _OnSave converte de volta pra AHK syntax ("^!f") na hora de
+            ; persistir.
+            displayVal := HotkeyFormatter.ToHuman(this._cfg.GetHotkey(action))
+            this._ctrls["hk_" action] := this._AddEdit(g, 180, y, 200, displayVal, "ReadOnly")
+
+            ; Capture button: graba proximo combo via InputHook
+            g.SetFont("s9 c" Theme.Color("text"), Theme.FONT_UI)
+            btnCap := g.Add("Button", "x384 y" (y-1) " w60 h22", "Capture")
+            btnCap.OnEvent("Click", this._MakeCaptureHandler(action))
+            this._ctrls["btn_capture_" action] := btnCap
+
+            ; Clear button: desbinda a hotkey (limpa o edit)
+            btnClr := g.Add("Button", "x448 y" (y-1) " w50 h22", "Clear")
+            btnClr.OnEvent("Click", this._MakeClearHandler(action))
+            this._ctrls["btn_clear_" action] := btnClr
+
             y += 24
         }
         y += 12
@@ -220,11 +245,16 @@ class SettingsDialog
     ;
     ;   extraOpts: opcoes adicionais validas pra Edit (ex: "Number",
     ;     "ReadOnly", "Multi", "Password"). NUNCA passar s<n> ou c<hex>.
+    ;
+    ;   v0.1.3: altura fixa h22 pra evitar Edit auto-expandir em multi
+    ;   linhas quando o valor eh longo (caso do logFile com path full
+    ;   do Steam). Antes, o Edit do logFile crescia pra 3 linhas e
+    ;   sobrepunha visualmente o campo abaixo.
     ; ============================================================
     _AddEdit(g, x, y, w, value, extraOpts := "")
     {
         g.SetFont(Theme.InputFont(), Theme.FONT_UI)
-        opts := "x" x " y" y " w" w " " Theme.InputBg()
+        opts := "x" x " y" y " w" w " h22 " Theme.InputBg()
         if (extraOpts != "")
             opts .= " " extraOpts
         return g.Add("Edit", opts, value)
@@ -246,9 +276,10 @@ class SettingsDialog
     {
         try
         {
-            file := FileSelect(1, this._cfg.logFile, "Select Client.txt", "Logs (*.txt)")
-            if (file != "")
-                this._ctrls["logFile"].Value := file
+            ; v0.1.1: `file` colide com builtin `File`. Usar `selectedFile`.
+            selectedFile := FileSelect(1, this._cfg.logFile, "Select Client.txt", "Logs (*.txt)")
+            if (selectedFile != "")
+                this._ctrls["logFile"].Value := selectedFile
         }
     }
 
@@ -256,7 +287,8 @@ class SettingsDialog
     {
         cfg := this._cfg
         cfg.profileName := this._ctrls["profileName"].Value
-        cfg.gamePatch   := this._ctrls["gamePatch"].Value
+        ; v0.1.3: gamePatch nao eh mais editavel no dialog. Mantem o valor
+        ; que ja estava em cfg (default "Unknown" em fresh install).
         cfg.logFile     := this._ctrls["logFile"].Value
         cfg.autoStartRegex    := this._ctrls["autoStartRegex"].Value
         cfg.autoFinalizeRegex := this._ctrls["autoFinalizeRegex"].Value
@@ -290,11 +322,17 @@ class SettingsDialog
             cfg.deathPenaltyMs := 150000
 
         ; Hotkeys
+        ; v0.1.0: usuario digita formato human-readable ("Ctrl+Alt+F");
+        ; HotkeyFormatter.ToAhk converte pra syntax interno ("^!f") antes
+        ; de persistir. Tolerante a passthrough do formato antigo.
         for _, action in this._hotkeyActions
         {
             ctrlKey := "hk_" action
             if this._ctrls.Has(ctrlKey)
-                cfg.hotkeys[action] := Trim(this._ctrls[ctrlKey].Value)
+            {
+                rawVal := Trim(this._ctrls[ctrlKey].Value)
+                cfg.hotkeys[action] := HotkeyFormatter.ToAhk(rawVal)
+            }
         }
 
         try this._settingsRepo.Save(cfg)
@@ -320,5 +358,140 @@ class SettingsDialog
                 }
             }
         }
+    }
+
+    ; ============================================================
+    ; Hotkey CAPTURE mode (v0.1.0)
+    ; ============================================================
+    ;
+    ; Fluxo:
+    ;   1. User clica "Capture" ao lado de uma hotkey
+    ;   2. Botao muda label pra "Press..." e suprime input global
+    ;   3. User pressiona o combo (ex: Ctrl+Alt+G)
+    ;   4. InputHook OnKeyDown captura a key NAO-modifier; modifier
+    ;      state eh lido via GetKeyState no momento exato
+    ;   5. Edit eh atualizado com o combo em formato human-readable
+    ;
+    ; CANCELAR:
+    ;   - Esc sozinho (sem modifier) cancela a captura
+    ;   - Esc+modifier (Ctrl+Esc, etc) eh bind valido
+    ;   - Timeout de 10s tambem cancela silenciosamente
+    ;
+    ; _MakeCaptureHandler eh necessario pq fat-arrows em loop nao
+    ; capturam o valor da variavel de iteracao corretamente (closure
+    ; pega a ultima atribuicao). Wrapping num metodo cria escopo novo
+    ; por chamada, fixando o `action`.
+    ; ============================================================
+    _MakeCaptureHandler(action)
+    {
+        return (*) => this._OnCaptureHotkey(action)
+    }
+
+    ; v0.1.0: handler do botao Clear. Limpa o edit; _OnSave persiste
+    ; como string vazia, desbindando a hotkey.
+    _MakeClearHandler(action)
+    {
+        return (*) => this._OnClearHotkey(action)
+    }
+
+    _OnClearHotkey(action)
+    {
+        editKey := "hk_" action
+        if !this._ctrls.Has(editKey)
+            return
+        try this._ctrls[editKey].Value := ""
+    }
+
+    _OnCaptureHotkey(action)
+    {
+        editKey := "hk_" action
+        btnKey  := "btn_capture_" action
+        if !this._ctrls.Has(editKey) || !this._ctrls.Has(btnKey)
+            return
+
+        ; v0.1.1: `edit` colide com builtin `Edit` (controle Gui).
+        ; `btn` tambem pode colidir (Button). Usar sufixos Ctrl.
+        editCtrl := this._ctrls[editKey]
+        btnCtrl  := this._ctrls[btnKey]
+
+        originalLabel := "Capture"
+        try originalLabel := btnCtrl.Text
+        try btnCtrl.Text := "Press..."
+
+        ; State capturado por referencia pelo OnKeyDown handler.
+        ; Object literal pra mutacao via referencia (Map serviria tambem).
+        state := { key: "", mods: "", cancelled: false }
+
+        try
+        {
+            ih := InputHook("T10")          ; 10s timeout, suprime input por default
+            ih.KeyOpt("{All}", "N")         ; notify on all key down
+            ih.OnKeyDown := (hookObj, vk, sc) => this._HandleCaptureKey(hookObj, vk, sc, state)
+            ih.Start()
+            ih.Wait()
+        }
+        catch as ex
+        {
+            OutputDebug("SettingsDialog._OnCaptureHotkey falhou: " ex.Message)
+        }
+
+        ; Restaura botao (defensivo contra dialog fechado mid-capture)
+        try btnCtrl.Text := originalLabel
+
+        if (state.cancelled || state.key = "")
+            return
+
+        ; Monta hotkey AHK syntax e converte pra human pro display
+        ahkKey := state.mods . state.key
+        try editCtrl.Value := HotkeyFormatter.ToHuman(ahkKey)
+    }
+
+    ; Callback do InputHook.OnKeyDown. Roda no thread do hook.
+    ; Atualiza `state` (passado por referencia) e chama ih.Stop quando
+    ; captura uma key valida.
+    _HandleCaptureKey(ih, vk, sc, state)
+    {
+        ; Modifiers sozinhos NAO sao key valida — esperamos uma key
+        ; "real" enquanto modifiers estao segurados.
+        ;   0x10 = Shift,   0xA0/A1 = LShift/RShift
+        ;   0x11 = Ctrl,    0xA2/A3 = LCtrl/RCtrl
+        ;   0x12 = Alt,     0xA4/A5 = LAlt/RAlt
+        ;   0x5B/5C = LWin/RWin
+        if (vk = 0x10 || vk = 0xA0 || vk = 0xA1
+         || vk = 0x11 || vk = 0xA2 || vk = 0xA3
+         || vk = 0x12 || vk = 0xA4 || vk = 0xA5
+         || vk = 0x5B || vk = 0x5C)
+            return
+
+        ; Esc PURO (sem modifier) cancela. Esc+modifier (Ctrl+Esc, etc)
+        ; eh bind valido — cai pro caminho normal abaixo.
+        if (vk = 0x1B)
+        {
+            anyMod := GetKeyState("Ctrl", "P") || GetKeyState("Alt", "P")
+                   || GetKeyState("Shift", "P")
+                   || GetKeyState("LWin", "P") || GetKeyState("RWin", "P")
+            if !anyMod
+            {
+                state.cancelled := true
+                ih.Stop()
+                return
+            }
+        }
+
+        ; Captura nome da key + modifier state no instante exato.
+        ; "vkXXscYY" eh a forma mais robusta de obter o nome (diferencia
+        ; NumpadEnter vs Enter, etc).
+        state.key := GetKeyName(Format("vk{:X}sc{:X}", vk, sc))
+        state.mods := ""
+        if GetKeyState("Ctrl", "P")
+            state.mods .= "^"
+        if GetKeyState("Alt", "P")
+            state.mods .= "!"
+        if GetKeyState("Shift", "P")
+            state.mods .= "+"
+        if GetKeyState("LWin", "P") || GetKeyState("RWin", "P")
+            state.mods .= "#"
+
+        ih.Stop()
     }
 }

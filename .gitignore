@@ -25,6 +25,11 @@ SpeedKalandra-dist*/
 SpeedKalandra-dist*.zip
 *.exe
 
+# === User-generated exports (contain profile/character/PB data) ===
+# Ignora todos os exports em exports/. Se voce quiser commitar um
+# arquivo de exemplo no futuro, libere-o explicitamente com !exports/<arq>.
+exports/
+
 # === Legacy / archive (dev-only) ===
 _LIXEIRA/
 BKP/

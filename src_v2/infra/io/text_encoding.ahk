@@ -1,58 +1,55 @@
 ﻿; ============================================================
-; TextEncoding — deteccao de BOM + conversao UTF-16 -> UTF-8 (R11)
+; TextEncoding — deteccao de BOM (R11.1)
 ; ============================================================
 ;
-; CONTEXTO:
-;   AHK v2 cria arquivos INI em UTF-16 LE BOM por default (quando
-;   o arquivo nao existe e a primeira chamada eh IniWrite). UTF-16
-;   tem 2 problemas pratos:
+; HISTORICO:
+;   - R11 introduziu TextEncoding com 3 metodos:
+;       DetectBom            -> identifica encoding via BOM
+;       ConvertUtf16ToUtf8   -> reescreve UTF-16 LE como UTF-8 BOM
+;       MigrateIniToUtf8     -> facade detect+convert para INIs
 ;
-;   1. Arquivos ficam ~2x maiores que UTF-8 (cada char ASCII ocupa
-;      2 bytes em vez de 1). Pra INIs do nosso projeto que tem
-;      muito texto ASCII, isso eh waste de espaco.
+;   - R11.1 (Bug #2, regression tests Wave 9): ConvertUtf16ToUtf8 e
+;     MigrateIniToUtf8 foram REMOVIDOS. Manter so DetectBom.
 ;
-;   2. Editores modernos (VSCode, Notepad++, sublime) leem UTF-8
-;      por default. Abrir UTF-16 funciona mas o BOM aparece como
-;      "EF BB BF" garbage em editors que nao detectam corretamente.
-;      Diff tools (git diff, beyond compare) tambem podem ter
-;      problemas em modo binario.
+; POR QUE A REMOCAO:
+;   IniRead key-lookup do AHK v2 SO funciona em arquivos UTF-16 LE BOM.
+;   Em UTF-8 BOM, IniRead(path, section, key, default) sempre retorna
+;   o default — independente de line endings, encoding correto, etc.
 ;
-;   3. Versionamento (.gitignore desativa, mas se voltar um dia)
-;      mostra diffs ilegiveis em UTF-16.
+;   A funcao MigrateIniToUtf8 prometia "auto-converter INIs de UTF-16
+;   pra UTF-8 BOM pra economizar espaco e melhorar diffs". Mas o efeito
+;   colateral era catastrofico: TODO Load() dos repositorios falhava
+;   silenciosamente, retornando defaults pra todas as keys. PBs, run
+;   state, settings — tudo lido como se nao existisse.
 ;
-; SOLUCAO:
-;   Auto-migrar INIs UTF-16 LE pra UTF-8 (com BOM) na primeira vez
-;   que um IniFile eh instanciado apontando pra esse arquivo.
-;   Idempotente: arquivos ja UTF-8 ou inexistentes ficam no-op.
+;   O bug ficou latente porque IniFile.__New tinha a chamada envolvida
+;   em try/catch e a funcao foi desativada antes de ser amplamente
+;   testada. Os regression tests da Wave 9 (text_encoding_tests
+;   `iniread_works_after_migration_*`) confirmaram empiricamente que
+;   o IniRead falhava apos a migration.
 ;
-; POR QUE UTF-8 COM BOM E NAO UTF-8-RAW (sem BOM)?
-;   AHK v2 detecta encoding em IniRead/IniWrite pelo BOM:
-;     - UTF-16 LE BOM: le como UTF-16 LE
-;     - UTF-8 BOM:     le como UTF-8
-;     - Sem BOM:       trata como ANSI (CP1252 em pt-BR Windows)
+;   Sem caminho de fix viavel:
+;     - UTF-8 sem BOM: AHK trata como ANSI/CP1252; acentos quebram.
+;     - UTF-16 BE: AHK v2 FileRead nao tem flag explicita BE.
+;     - UTF-8 BOM: o que MigrateIniToUtf8 fazia — quebra IniRead.
+;     - Manter UTF-16 LE: o que o AHK ja gera por default — funcao
+;                         vira no-op semanticamente.
 ;
-;   Se gravassemos UTF-8 sem BOM, AHK trataria como ANSI no proximo
-;   IniRead e caracteres acentuados (cao, cafe, posicao) viriam
-;   corrompidos. BOM UTF-8 (3 bytes: EF BB BF) eh o sinal correto.
+;   Conclusao: a migration era uma feature INVIAVEL. INIs do projeto
+;   continuam em UTF-16 LE BOM (o que o AHK gera por default em
+;   IniWrite quando o arquivo nao existe). Sem migration = sem bug.
 ;
-; PRINCIPIO ATOMICO:
-;   Conversao usa AtomicWriter (refactor R10). Crash durante a
-;   migration deixa arquivo intacto ou ja convertido, nunca corrompido.
+; PITFALL RELACIONADO (PersonalBestRepositoryTests):
+;   O teste `iniread_key_lookup_works_in_utf16_le_bom_but_not_utf8_bom`
+;   documenta o comportamento do AHK v2 que motivou esta remocao.
 ;
-; USO:
+; USO ATUAL:
 ;   enc := TextEncoding.DetectBom(path)
-;   if (enc = "UTF-16-LE")
-;       TextEncoding.ConvertUtf16ToUtf8(path)
+;   ; enc in {"UTF-16-LE", "UTF-16-BE", "UTF-8-BOM", "NONE"}
 ;
-;   ; Ou direto:
-;   TextEncoding.MigrateIniToUtf8(path)    ; faz detect + convert
-;
-; LIMITES:
-;   - Nao detecta encoding sem BOM (ANSI vs UTF-8-RAW): falta info
-;     em bytes. Esse caso assume "sem BOM = nao mexe".
-;   - UTF-16 BE (Big Endian) eh raro em Windows mas suportado pela
-;     deteccao; conversao trata como erro (skip) porque AHK v2
-;     FileRead nao tem flag pra UTF-16-BE explicito.
+;   ; Use casos: diagnostico, debug, validar que IniWrite gerou o
+;   ; encoding esperado. NAO use pra converter — nao temos mais essa
+;   ; capacidade no projeto.
 
 
 class TextEncoding
@@ -98,77 +95,5 @@ class TextEncoding
         }
 
         return "NONE"
-    }
-
-    ; ------------------------------------------------------------
-    ; ConvertUtf16ToUtf8(path)
-    ;
-    ; Le path como UTF-16 LE e regrava como UTF-8 com BOM.
-    ; Usa AtomicWriter (R10) — crash durante conversao deixa
-    ; arquivo antigo intacto.
-    ;
-    ; PRE: path existe, BOM = UTF-16 LE (chamador deve checar antes).
-    ; POST: path tem BOM UTF-8 e conteudo decodificado igual ao original.
-    ;
-    ; Throws OSError se FileRead/FileMove falhar.
-    ; ------------------------------------------------------------
-    static ConvertUtf16ToUtf8(path)
-    {
-        if !FileExist(path)
-            throw OSError("TextEncoding.ConvertUtf16ToUtf8: arquivo nao existe: " path)
-
-        ; AHK v2 FileRead com "UTF-16" decoda assumindo UTF-16 LE com BOM.
-        ; Retorna string AHK (que internamente eh UTF-16 mas isso eh
-        ; detalhe de implementacao do AHK; pra nos eh "uma string").
-        content := FileRead(path, "UTF-16")
-
-        ; Defensive: alguns paths de FileRead deixam U+FEFF (zero-width
-        ; no-break space, codepoint do BOM) como primeiro char da string.
-        ; Se gravassemos com encoding "UTF-8" (que adiciona BOM EF BB BF
-        ; automaticamente), terminariamos com 2 BOMs encadeados (EF BB BF
-        ; EF BB BF). Strip o U+FEFF antes pra evitar isso.
-        if (StrLen(content) > 0 && SubStr(content, 1, 1) = Chr(0xFEFF))
-            content := SubStr(content, 2)
-
-        ; AtomicWriter escreve em UTF-8 com BOM por default.
-        ; .tmp + FileMove garante atomicidade.
-        AtomicWriter.WriteAll(path, content, "UTF-8")
-    }
-
-    ; ------------------------------------------------------------
-    ; MigrateIniToUtf8(path)
-    ;
-    ; Helper conveniente: detecta encoding e converte se necessario.
-    ; No-op se arquivo nao existe, ja eh UTF-8, ou eh ANSI (sem BOM).
-    ;
-    ; Retorna:
-    ;   "converted"      — UTF-16 LE detectado e convertido
-    ;   "already-utf8"   — ja tem BOM UTF-8
-    ;   "no-bom"         — sem BOM (ANSI ou UTF-8-RAW; deixa quieto)
-    ;   "not-found"      — arquivo nao existe
-    ;   "skipped-be"     — UTF-16 BE (raro; nao convertido)
-    ;
-    ; Idempotente: chamadas sucessivas no mesmo path sao seguras.
-    ; ------------------------------------------------------------
-    static MigrateIniToUtf8(path)
-    {
-        if !FileExist(path)
-            return "not-found"
-
-        enc := TextEncoding.DetectBom(path)
-        switch enc
-        {
-            case "UTF-16-LE":
-                TextEncoding.ConvertUtf16ToUtf8(path)
-                return "converted"
-            case "UTF-8-BOM":
-                return "already-utf8"
-            case "UTF-16-BE":
-                ; Nao convertemos automaticamente — caso raro
-                ; e AHK v2 FileRead nao tem flag explicita BE.
-                return "skipped-be"
-            default:
-                return "no-bom"
-        }
     }
 }

@@ -191,6 +191,40 @@ class TimerService
     }
 
     ; ============================================================
+    ; AddPenaltyMs - adiciona tempo extra ao timer (v0.1.3)
+    ;
+    ; Usado pelo composition root quando Evt.DeathDetected dispara e
+    ; cfg.deathPenaltyEnabled = true: a penalidade entra direto no
+    ; runMs, ficando visivel no widget em tempo real (antes so aparecia
+    ; no plot post-finalize).
+    ;
+    ; Comportamento:
+    ;   - Se PARADO ou run inativa: chamador deve verificar antes (este
+    ;     metodo nao filtra — adiciona ao _baseMs incondicional).
+    ;   - Se RODANDO: commita o delta atual primeiro (pra que a penalty
+    ;     fique "costurada" no ponto exato do tempo) e depois adiciona
+    ;     a penalty ao _baseMs. _startTick eh resetado pra NowMs pra que
+    ;     GetRunMs continue contando a partir do novo baseline.
+    ;   - Se PAUSADO: adiciona direto ao _baseMs. _startTick continua 0.
+    ;
+    ; Negativos / non-number: coerce pra 0 (no-op).
+    ;
+    ; NAO publica evento. A penalty eh refletida automaticamente em
+    ; GetRunMs() na proxima leitura — widgets dao refresh no proximo
+    ; Tick e mostram o novo valor sem precisar de evento dedicado.
+    ; ============================================================
+    AddPenaltyMs(ms)
+    {
+        if (!IsNumber(ms) || ms <= 0)
+            return false
+        penalty := Integer(ms)
+        if (this._active && !this._paused)
+            this._CommitDelta()
+        this._baseMs += penalty
+        return true
+    }
+
+    ; ============================================================
     ; Toggle - StartPause hotkey-friendly
     ;   PARADO -> Start
     ;   RODANDO -> Pause

@@ -87,19 +87,21 @@ class RunHistoryRepository
         if !IsObject(buildResult)
             return false
 
-        runId := buildResult.Has("runId") ? String(buildResult["runId"]) : ""
-        if (runId = "")
+        ; v0.1.0: renomeado de `runId` pra `currentRunId` (case-insensitive
+        ; collision com classe `RunId` do domain disparava #Warn).
+        currentRunId := buildResult.Has("runId") ? String(buildResult["runId"]) : ""
+        if (currentRunId = "")
             return false
 
         totalMs := buildResult.Has("totalMs") ? buildResult["totalMs"] : 0
         if (totalMs < 1000)
             return false
 
-        path := this._PathForRunId(runId)
+        path := this._PathForRunId(currentRunId)
         ini := IniFile(path)
 
         ; --- [meta] ---
-        ini.Write(runId, "meta", "runId")
+        ini.Write(currentRunId, "meta", "runId")
         ini.Write(buildResult.Has("profile") ? buildResult["profile"] : "", "meta", "profile")
         ini.Write(buildResult.Has("patch")   ? buildResult["patch"]   : "", "meta", "patch")
         ini.Write(buildResult.Has("firstTs") ? buildResult["firstTs"] : "", "meta", "firstTs")
@@ -180,13 +182,14 @@ class RunHistoryRepository
         candidates := []
         loop files this._dir "\*.ini", "F"
         {
-            ; Extrai nome sem extensao via SplitPath
-            SplitPath(A_LoopFileName, , , , &runId)
-            if (runId = "")
+            ; Extrai nome sem extensao via SplitPath.
+            ; `runId` ByRef out colide com classe `RunId` (#Warn).
+            SplitPath(A_LoopFileName, , , , &currentRunId)
+            if (currentRunId = "")
                 continue
             ; A_LoopFileTimeModified eh "YYYYMMDDHHMMSS"
             candidates.Push(Map(
-                "runId", runId,
+                "runId", currentRunId,
                 "mtime", A_LoopFileTimeModified
             ))
         }
@@ -318,15 +321,16 @@ class RunHistoryRepository
     {
         result := []
         ids := this.ListRunIds(maxN)
-        for _, runId in ids
+        ; `runId` loop var colide com classe `RunId` (#Warn).
+        for _, currentRunId in ids
         {
-            path := this._PathForRunId(runId)
+            path := this._PathForRunId(currentRunId)
             if !FileExist(path)
                 continue
             ini := IniFile(path)
 
             summary := Map(
-                "runId",         ini.Read("meta", "runId", runId),
+                "runId",         ini.Read("meta", "runId", currentRunId),
                 "profile",       ini.Read("meta", "profile", ""),
                 "patch",         ini.Read("meta", "patch", ""),
                 "firstTs",       ini.Read("meta", "firstTs", ""),
@@ -433,12 +437,46 @@ class RunHistoryRepository
 
         return Map(
             "category",      cat,
-            "categoryLabel", RunStatsPlotBuilder.CategoryLabel(cat),
+            "categoryLabel", RunHistoryRepository._SafeCategoryLabel(cat),
             "label",         label,
             "ms",            ms,
             "note",          note,
             "timestamp",     ts
         )
+    }
+
+    ; v0.1.0: lookup explicito em SegmentDefinitions em vez de delegar a
+    ; CategoryLabel (que retorna "All" pra unknowns, transformando categorias
+    ; legadas como `boss` em "All" na UI). Aqui queremos passthrough da string
+    ; original pra categorias desconhecidas — runs salvas em versoes antigas
+    ; podem ter category=boss, e o nome "boss" eh mais util na UI que "All".
+    ;
+    ; Tambem usa lookup dinamico via %"..."%, mantendo o fallback hardcoded
+    ; pro caso de RunStatsPlotBuilder nao estar no escopo (testes isolados
+    ; deste repository sem incluir o builder).
+    static _SafeCategoryLabel(cat)
+    {
+        catStr := String(cat)
+        try
+        {
+            builderClass := %"RunStatsPlotBuilder"%
+            for _, seg in builderClass.SegmentDefinitions()
+                if (seg["key"] = catStr)
+                    return seg["label"]
+            ; Categoria desconhecida: passthrough
+            return catStr
+        }
+        catch
+        {
+            switch catStr
+            {
+                case "mapa":    return "Map"
+                case "cidade":  return "Town"
+                case "loading": return "Loading"
+                case "morte":   return "Deaths"
+                default:        return catStr
+            }
+        }
     }
 
     ; Escape pra serializacao: troca | por \|, e \ por \\ (precisa

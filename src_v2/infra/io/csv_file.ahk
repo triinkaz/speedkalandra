@@ -119,17 +119,19 @@ class CsvFile
         }
 
         ; Build buffer: header (formato sem aspas, paridade EnsureHeader)
-        buffer := ""
+        ; v0.1.0: renomeado de `buffer` pra `outBuffer` (case-insensitive
+        ; collision com classe builtin `Buffer` disparava #Warn).
+        outBuffer := ""
         for i, col in headerArray
-            buffer .= (i > 1 ? ";" : "") . col
-        buffer .= "`n"
+            outBuffer .= (i > 1 ? ";" : "") . col
+        outBuffer .= "`n"
 
         ; Append cada row formatada
         for _, row in rowsList
-            buffer .= CsvFile._FormatRow(row)
+            outBuffer .= CsvFile._FormatRow(row)
 
         ; Escreve atomico
-        AtomicWriter.WriteAll(this.path, buffer, "UTF-8")
+        AtomicWriter.WriteAll(this.path, outBuffer, "UTF-8")
     }
 
     ; ------------------------------------------------------------

@@ -91,6 +91,11 @@ class SpeedKalandraApp
     settingsDialog     := ""
     plotDialog         := ""
     runHistoryDialog   := ""
+    exportDialog       := ""    ; v0.1.0 — export/import feature
+    importPreviewDialog := ""   ; v0.1.0 — export/import feature
+
+    runExportService   := ""    ; v0.1.0 — export/import feature
+    runImportService   := ""    ; v0.1.0 — export/import feature
 
     _started   := false
     _persistFn := ""
@@ -132,7 +137,9 @@ class SpeedKalandraApp
 
         this.log   := LogService(logPath, "INFO", headless ? 1 : 32)
         this.bus   := EventBus(this.log)
-        this.clock := RealClock()
+        ; v0.1.1: clock injetavel via cfgMap pra integration tests usarem FakeClock.
+        ; Default eh RealClock (NowMs = A_TickCount).
+        this.clock := cfgMap.Has("clock") ? cfgMap["clock"] : RealClock()
 
         ini := IniFile(iniPath)
         this._settingsRepo := SettingsRepository(ini)
@@ -151,8 +158,8 @@ class SpeedKalandraApp
         if this.personalBest.HasRunPb()
         {
             try this.log.Info("PB de run carregado: "
-                this.personalBest.GetRunPbMs() " ms ("
-                this.personalBest.GetRunPbRunId() ")", "App")
+                . this.personalBest.GetRunPbMs() . " ms ("
+                . this.personalBest.GetRunPbRunId() . ")", "App")
         }
 
         ; (ActCheckpointTracker eh instanciado MAIS ABAIXO, depois do
@@ -310,6 +317,12 @@ class SpeedKalandraApp
         )
         this.runHistoryDialog := RunHistoryDialog(this.bus, this.runHistory, this.plotDialog, this.personalBest, headless)
 
+        ; v0.1.0 — Export/import feature
+        this.runExportService := RunExportService(this.bus, this.runHistory, this.personalBest)
+        this.runImportService := RunImportService(this.bus, this.runHistory, this.personalBest)
+        this.exportDialog := ExportOptionsDialog(this.bus, this.runExportService, headless)
+        this.importPreviewDialog := ImportPreviewDialog(this.bus, this.runImportService, headless)
+
         this._WireEventHandlers()
     }
 
@@ -322,6 +335,11 @@ class SpeedKalandraApp
         ; v17.15.2: mostra disclaimer no boot se ainda nao foi reconhecido.
         ; Modal — bloqueia o restante do Start() ate user dismisse.
         this._ShowDisclaimerIfNeeded()
+
+        ; v0.1.3: setup do Client.txt na primeira execucao. Bloqueia o
+        ; boot ate que o usuario configure um path valido (ou cancele,
+        ; o que encerra o app).
+        this._PromptLogFileSetupIfNeeded()
 
         ; v17.14 — F4: se ha run ativa hidratada, pergunta ao usuario
         ; o que fazer antes de subir os widgets/hotkeys. Resolve a
@@ -490,24 +508,156 @@ class SpeedKalandraApp
         ; v17.13 — reset de PBs via tray menu
         this.bus.Subscribe(Commands.ResetPersonalBestsRequested,
             (data) => this._OnResetPersonalBestsRequested())
+
+        ; v0.1.0 — export de runs (publicado pelos botoes do RunHistoryDialog)
+        this.bus.Subscribe(Commands.ExportRunsRequested,
+            (data) => this._OnExportRunsRequested(data))
+
+        ; v0.1.0 — import de runs (publicado pelo botao Import... do RunHistoryDialog)
+        this.bus.Subscribe(Commands.ImportRunsRequested,
+            (data) => this._OnImportRunsRequested(data))
+
+        ; v0.1.0 Fase 5 — logging de export/import pra rastreio em
+        ; data\speedkalandra.log. Subscriber-only, sem mudar services.
+        this.bus.Subscribe(Events.RunsExported,
+            (data) => this._LogRunsExported(data))
+        this.bus.Subscribe(Events.RunsImported,
+            (data) => this._LogRunsImported(data))
+
+        ; v0.1.3: aplicar penalty de morte no timer em tempo real (era
+        ; antes so visivel post-finalize no plot).
+        this.bus.Subscribe(Events.DeathDetected,
+            (data) => this._OnDeathApplyTimerPenalty(data))
+    }
+
+    ; ============================================================
+    ; _OnDeathApplyTimerPenalty (v0.1.3)
+    ;
+    ; Handler de Evt.DeathDetected. Se cfg.deathPenaltyEnabled e a run
+    ; esta ativa, adiciona cfg.deathPenaltyMs ao timer via
+    ; TimerService.AddPenaltyMs. O usuario ve o ponteiro saltar pra
+    ; frente no overlay assim que morre.
+    ;
+    ; A categoria "Deaths" no plot post-finalize continua sendo
+    ; count*penalty (RunStatsPlotBuilder._AddDeathDetails). O totalMs do
+    ; plot ja inclui essa soma porque _AddZoneDetails / _AddLoadingDetails
+    ; cobrem o tempo real (sem penalty) e _AddDeathDetails fornece a
+    ; penalty separada — mesma soma do runMs agora (que ja inclui
+    ; penalty incorporado).
+    ; ============================================================
+    _OnDeathApplyTimerPenalty(data)
+    {
+        if !IsObject(this._cfg) || !this._cfg.deathPenaltyEnabled
+            return
+        if !IsObject(this.timer) || !this.timer.IsActive()
+            return
+        penaltyMs := this._cfg.deathPenaltyMs
+        if (!IsNumber(penaltyMs) || penaltyMs <= 0)
+            return
+        try this.timer.AddPenaltyMs(penaltyMs)
+        if IsObject(this.log)
+            try this.log.Info("Death penalty aplicada ao timer: +" . penaltyMs . " ms", "App")
+    }
+
+    ; ============================================================
+    ; _OnExportRunsRequested (v0.1.0)
+    ;
+    ; Handler de Commands.ExportRunsRequested. Espera `data` ter
+    ; o campo "runIds" (Array<string>). Repassa pro ExportOptionsDialog
+    ; que faz o resto (opcoes + path picker + chamada do service).
+    ; ============================================================
+    _OnExportRunsRequested(data)
+    {
+        if !IsObject(data)
+            return
+        runIds := data.Has("runIds") ? data["runIds"] : ""
+        if !IsObject(runIds) || !(runIds is Array) || runIds.Length = 0
+        {
+            try TrayTip("SpeedKalandra", "No runs to export.", "Mute")
+            return
+        }
+        if IsObject(this.exportDialog)
+            this.exportDialog.Open(runIds)
+    }
+
+    ; ============================================================
+    ; _OnImportRunsRequested (v0.1.0)
+    ;
+    ; Handler de Commands.ImportRunsRequested. Espera `data` ter
+    ; o campo "path" (string apontando pro .json). Chama Preview
+    ; do RunImportService; se sucesso, abre o ImportPreviewDialog.
+    ; Se falhar (arquivo invalido, schema errado, etc), mostra
+    ; MsgBox com erros.
+    ; ============================================================
+    _OnImportRunsRequested(data)
+    {
+        if !IsObject(data)
+            return
+        path := data.Has("path") ? String(data["path"]) : ""
+        if (Trim(path) = "")
+            return
+
+        preview := this.runImportService.Preview(path)
+
+        if !preview["success"]
+        {
+            msg := "Failed to load import file:"
+            for _, e in preview["errors"]
+                msg .= "`n  - " e
+            try SpeedKalandraMsgBox(msg, "Import failed", "IconX")
+            return
+        }
+
+        if IsObject(this.importPreviewDialog)
+            this.importPreviewDialog.OpenWithPreview(preview)
+    }
+
+    ; ============================================================
+    ; _LogRunsExported / _LogRunsImported (v0.1.0 Fase 5)
+    ;
+    ; Subscribers de Evt.RunsExported / Evt.RunsImported. Registram
+    ; no LogService pra que operacoes de export/import aparecam em
+    ; data/speedkalandra.log. Sem isso, debug fica cego — os services
+    ; nao tem log injetado (decisao deliberada pra mante-los simples).
+    ; ============================================================
+    _LogRunsExported(data)
+    {
+        if !IsObject(data) || !IsObject(this.log)
+            return
+        count := data.Has("count") ? data["count"] : 0
+        path  := data.Has("path")  ? data["path"]  : "?"
+        try this.log.Info("Exported " count " run(s) to: " path, "Export")
+    }
+
+    _LogRunsImported(data)
+    {
+        if !IsObject(data) || !IsObject(this.log)
+            return
+        imported := data.Has("imported") ? data["imported"] : 0
+        renamed  := data.Has("renamed")  ? data["renamed"]  : 0
+        skipped  := data.Has("skipped")  ? data["skipped"]  : 0
+        path     := data.Has("path")     ? data["path"]     : "?"
+        try this.log.Info("Imported runs: " . imported . " new (of which " . renamed
+            . " renamed), " . skipped . " skipped, from: " . path, "Import")
     }
 
     _OnCharacterLevelUp(data)
     {
         if !IsObject(data)
             return
-        name  := data.Has("character") ? data["character"] : ""
-        class := data.Has("class")     ? data["class"]     : ""
-        level := data.Has("level")     ? data["level"]     : 0
-        this.xpService.SetCharacter(name, class, level)
+        name      := data.Has("character") ? data["character"] : ""
+        ; v0.1.1: `class` colide com keyword `class` do AHK v2. Usar `charClass`.
+        charClass := data.Has("class")     ? data["class"]     : ""
+        level     := data.Has("level")     ? data["level"]     : 0
+        this.xpService.SetCharacter(name, charClass, level)
         if (name != "")
         {
             this._cfg.characterName := name
             ; v17.15 (Bug #2): propaga pro filtro de DeathDetected
             try this.logMonitor.SetCharacterName(name)
         }
-        if (class != "")
-            this._cfg.characterClass := class
+        if (charClass != "")
+            this._cfg.characterClass := charClass
         if (level > 0)
             this._cfg.characterLevel := level
     }
@@ -572,6 +722,160 @@ class SpeedKalandraApp
         this._lastSavedZoneTotalsHash := ""
         ; v17.15 (Bug #9): fim de run, libera flag pra proxima
         this._riverbankSeenInRun := false
+    }
+
+    ; ============================================================
+    ; _PromptLogFileSetupIfNeeded (v0.1.3)
+    ;
+    ; Bloqueia o boot ate o usuario configurar um Client.txt valido.
+    ;
+    ; Pre-condicoes pra MOSTRAR o dialog:
+    ;   - !this._headless (testes pulam silenciosamente)
+    ;   - cfg.logFile vazio  OR  arquivo configurado nao existe
+    ;
+    ; Default sugerido eh o path padrao do Steam (PoE2 instalado via
+    ; Steam). Versao standalone (GGG launcher) tem outro path; usuario
+    ; troca via Browse.
+    ;
+    ; Botoes:
+    ;   OK — se path valido (FileExist), salva no INI e prossegue.
+    ;        Se path invalido, mostra erro e mantem dialog aberto.
+    ;   Cancel — ExitApp() (encerra o programa). User pediu explici
+    ;            tamente que o app NAO funcione sem Client.txt.
+    ; ============================================================
+    _PromptLogFileSetupIfNeeded()
+    {
+        if this._headless
+            return
+
+        ; Ja temos um path valido? Nao precisa configurar.
+        if (this._cfg.logFile != "" && FileExist(this._cfg.logFile))
+            return
+
+        defaultPath := "C:\Program Files (x86)\Steam\steamapps\common\Path of Exile 2\logs\Client.txt"
+
+        ; Pre-fill: se ja tinha um path configurado mas o arquivo sumiu,
+        ; preserva o path antigo pra o usuario corrigir; caso contrario,
+        ; usa o default do Steam.
+        initialPath := this._cfg.logFile != "" ? this._cfg.logFile : defaultPath
+
+        choice := { value: "", path: "" }
+
+        g := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox +ToolWindow",
+            "SpeedKalandra — Setup")
+        g.MarginX := 16
+        g.MarginY := 14
+
+        g.SetFont("s11 bold", "Segoe UI")
+        g.Add("Text", "x16 y14 w560", "Configure PoE2's Client.txt path")
+
+        g.SetFont("s9", "Segoe UI")
+        bodyText := ""
+            . "SpeedKalandra reads Path of Exile 2's Client.txt log file to detect zone"
+            . " changes, level ups, and deaths in real time. The path below is the"
+            . " default location when PoE2 is installed via Steam.\n\nIf your installation"
+            . " is somewhere else, use Browse to point to your own Client.txt. The app"
+            . " will not start without a valid path."
+        ; AHK v2 nao reconhece \n; converte pra `n
+        bodyText := StrReplace(bodyText, "\n", "`n")
+        g.Add("Text", "x16 y44 w560 h60", bodyText)
+
+        g.SetFont("s9 bold", "Segoe UI")
+        g.Add("Text", "x16 y110 w120", "Client.txt path:")
+
+        g.SetFont("s9", "Consolas")
+        editPath := g.Add("Edit", "x16 y130 w470 h24", initialPath)
+
+        g.SetFont("s9", "Segoe UI")
+        btnBrowse := g.Add("Button", "x494 y129 w82 h26", "Browse...")
+        browseHandler := (*) => (
+            picked := this._SetupBrowseLog(editPath.Value),
+            (picked != "" ? (editPath.Value := picked) : 0)
+        )
+        btnBrowse.OnEvent("Click", browseHandler)
+
+        ; Status line (vazio inicialmente, ganha texto vermelho em erro)
+        g.SetFont("s9", "Segoe UI")
+        statusLbl := g.Add("Text",
+            "x16 y162 w560 h20 c" Theme.Color("danger"), "")
+
+        ; Botoes
+        btnOk := g.Add("Button", "x376 y196 w100 h30 Default", "OK")
+        btnCancel := g.Add("Button", "x484 y196 w92 h30", "Cancel")
+
+        okHandler := (*) => (
+            (this._SetupValidatePath(editPath.Value, statusLbl)
+                ? (choice.value := "ok",
+                   choice.path := Trim(editPath.Value),
+                   g.Destroy())
+                : 0)
+        )
+        cancelHandler := (*) => (
+            choice.value := "cancel",
+            g.Destroy()
+        )
+
+        btnOk.OnEvent("Click", okHandler)
+        btnCancel.OnEvent("Click", cancelHandler)
+        g.OnEvent("Close", cancelHandler)
+        g.OnEvent("Escape", cancelHandler)
+
+        g.Show("w592 h240")
+
+        ; Bloqueia ate user dismisse
+        hwnd := g.Hwnd
+        while (choice.value = "" && WinExist("ahk_id " hwnd))
+            Sleep 50
+
+        if (choice.value = "cancel")
+        {
+            if IsObject(this.log)
+                try this.log.Info("Setup cancelado pelo usuario: encerrando app", "App")
+            try TrayTip("SpeedKalandra",
+                "Setup cancelled. The app cannot run without Client.txt.",
+                "Iconx")
+            ExitApp()
+        }
+
+        ; OK: persiste o path escolhido
+        this._cfg.logFile := choice.path
+        try this._PersistSettings()
+        if IsObject(this.log)
+            try this.log.Info("Client.txt path configurado: " . choice.path, "App")
+    }
+
+    ; Helper do setup dialog: abre FileSelect e devolve o path escolhido
+    ; (ou "" se canceled). Mantido como metodo separado pra closure capture
+    ; do path inicial.
+    _SetupBrowseLog(currentValue)
+    {
+        try
+        {
+            ; v0.1.1: `file` colide com builtin `File`. Usar `selectedFile`.
+            selectedFile := FileSelect(1, currentValue,
+                "Select PoE2 Client.txt", "Log files (*.txt)")
+            return selectedFile
+        }
+        return ""
+    }
+
+    ; Helper do setup dialog: valida que o path existe. Em caso de erro,
+    ; atualiza o label de status com mensagem vermelha. Retorna bool
+    ; indicando se prossegue.
+    _SetupValidatePath(path, statusLbl)
+    {
+        path := Trim(path)
+        if (path = "")
+        {
+            try statusLbl.Value := "Path cannot be empty."
+            return false
+        }
+        if !FileExist(path)
+        {
+            try statusLbl.Value := "File not found: " . path
+            return false
+        }
+        return true
     }
 
     ; ============================================================
@@ -813,8 +1117,8 @@ If it helps your runs, great. If it doesn't fit your needs, that's fine too - th
                 if IsObject(this.log)
                 {
                     try this.log.Info("Run muito curta descartada (< "
-                        SpeedKalandraApp.MIN_CANCELLED_SAVE_MS "ms): "
-                        runMs " ms (reason=" reason ")", "App")
+                        . SpeedKalandraApp.MIN_CANCELLED_SAVE_MS . "ms): "
+                        . runMs . " ms (reason=" . reason . ")", "App")
                 }
                 ; TrayTip soh pra completed — cancelled eh esperado
                 ; ser silencioso (usuario cancelou intencionalmente)
@@ -853,8 +1157,8 @@ If it helps your runs, great. If it doesn't fit your needs, that's fine too - th
             rid := buildResult.Has("runId") ? buildResult["runId"] : ""
             if (saved && IsObject(this.log))
             {
-                this.log.Info("Run salva no historico (" reason "): " rid
-                    " (" runMs " ms)", "App")
+                this.log.Info("Run salva no historico (" . reason . "): " . rid
+                    . " (" . runMs . " ms)", "App")
             }
 
             ; --- Personal bests (v17.13) ---
@@ -874,8 +1178,8 @@ If it helps your runs, great. If it doesn't fit your needs, that's fine too - th
                         if (_ms > 0)
                             nActs += 1
                     }
-                    try this.log.Info("PB atualizado em run " rid
-                        " (runMs=" runMs ", checkpoints=" nActs ")", "App")
+                    try this.log.Info("PB atualizado em run " . rid
+                        . " (runMs=" . runMs . ", checkpoints=" . nActs . ")", "App")
                 }
             }
 
@@ -935,8 +1239,9 @@ If it helps your runs, great. If it doesn't fit your needs, that's fine too - th
 
     UndoLastSave()
     {
-        runId := this._lastSavedRunId
-        if (runId = "")
+        ; v0.1.1: `runId` local colide com classe `RunId`. Usar `currentRunId`.
+        currentRunId := this._lastSavedRunId
+        if (currentRunId = "")
         {
             ; Item de menu obsoleto — limpa por garantia
             try SpeedKalandraTrayRemoveUndoItem()
@@ -948,7 +1253,7 @@ If it helps your runs, great. If it doesn't fit your needs, that's fine too - th
         try
         {
             if IsObject(this.runHistory)
-                deleted := this.runHistory.Delete(runId)
+                deleted := this.runHistory.Delete(currentRunId)
         }
         catch
             deleted := false
@@ -964,8 +1269,8 @@ If it helps your runs, great. If it doesn't fit your needs, that's fine too - th
 
         if IsObject(this.log)
         {
-            try this.log.Info("Undo last save: " runId
-                (deleted ? " (removido)" : " (arquivo nao encontrado)"), "App")
+            try this.log.Info("Undo last save: " . currentRunId
+                . (deleted ? " (removido)" : " (arquivo nao encontrado)"), "App")
         }
         if !this._headless
         {
@@ -1018,14 +1323,14 @@ If it helps your runs, great. If it doesn't fit your needs, that's fine too - th
         result := ""
         try
         {
-            result := MsgBox(
+            result := SpeedKalandraMsgBox(
                 "Reset all Personal Bests?`n`n"
                 . "Full run PB: " runPbStr "`n"
                 . "PBs per act: " actPbCount "`n"
                 . "Zone PBs: " zoneCount "`n`n"
                 . "This action erases all best times and cannot be undone.",
                 "SpeedKalandra - Reset PBs",
-                "YesNo IconQ Default2")
+                "YesNo Icon? Default2")
         }
         catch
             return
@@ -1034,24 +1339,15 @@ If it helps your runs, great. If it doesn't fit your needs, that's fine too - th
             return
 
         this.personalBest.Reset()
-        try this.log.Info("PBs resetados pelo usuario (run PB: " runPbStr
-            ", " actPbCount " atos, " zoneCount " zonas)", "App")
+        try this.log.Info("PBs resetados pelo usuario (run PB: " . runPbStr
+            . ", " . actPbCount . " atos, " . zoneCount . " zonas)", "App")
         try TrayTip("SpeedKalandra", "Personal Bests reset.", "Mute")
     }
 
     ; Helper static pra formatar ms em MM:SS ou H:MM:SS (pra mensagens).
-    static _FormatMsForMsg(ms)
-    {
-        if (ms < 0)
-            ms := 0
-        totalSec := Floor(ms / 1000)
-        h := Floor(totalSec / 3600)
-        m := Floor(Mod(totalSec, 3600) / 60)
-        s := Mod(totalSec, 60)
-        if (h > 0)
-            return Format("{:d}:{:02d}:{:02d}", h, m, s)
-        return Format("{:02d}:{:02d}", m, s)
-    }
+    ; v0.1.2 (auditoria #19): delega a Duration.FormatMs (era 4 copias
+    ; identicas espalhadas; consolidacao em domain/values/duration.ahk).
+    static _FormatMsForMsg(ms) => Duration.FormatMs(ms)
 
     _PersistRunData()
     {

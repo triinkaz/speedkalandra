@@ -117,30 +117,30 @@ class LogMonitorService
         }
         try
         {
-            file := FileOpen(this._logFilePath, "r", "UTF-8")
+            logFile := FileOpen(this._logFilePath, "r", "UTF-8")
         }
         catch Error as e
         {
             this._log.Error("Falha ao abrir log: " e.Message, "LogMonitor")
             return false
         }
-        if !IsObject(file)
+        if !IsObject(logFile)
         {
             this._log.Error("FileOpen retornou nao-objeto", "LogMonitor")
             return false
         }
-        size := file.Length
+        size := logFile.Length
 
         if seedFromTail
         {
             seedSize := LogMonitorService.SEED_BYTES
-            file.Pos := size > seedSize ? size - seedSize : 0
-            seedText := file.Read()
+            logFile.Pos := size > seedSize ? size - seedSize : 0
+            seedText := logFile.Read()
             this._SeedFromText(seedText)
         }
 
         this._lastPos     := size
-        file.Close()
+        logFile.Close()
         this._isRunning   := true
         this._lastReadMs  := this._clock.NowMs()
         this._partialLine := ""
@@ -172,29 +172,29 @@ class LogMonitorService
 
         try
         {
-            file := FileOpen(this._logFilePath, "r", "UTF-8")
+            logFile := FileOpen(this._logFilePath, "r", "UTF-8")
         }
         catch
         {
             return
         }
-        if !IsObject(file)
+        if !IsObject(logFile)
             return
 
-        size := file.Length
+        size := logFile.Length
         ; File rotacionado/truncado
         if (size < this._lastPos)
             this._lastPos := 0
         if (size = this._lastPos)
         {
-            file.Close()
+            logFile.Close()
             return
         }
 
-        file.Pos := this._lastPos
-        text := file.Read()
-        this._lastPos := file.Pos
-        file.Close()
+        logFile.Pos := this._lastPos
+        text := logFile.Read()
+        this._lastPos := logFile.Pos
+        logFile.Close()
 
         this._lastReadMs := this._clock.NowMs()
         if (text != "")

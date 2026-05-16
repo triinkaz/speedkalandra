@@ -41,7 +41,7 @@
 class RunHistoryDialog
 {
     static WINDOW_W := 620
-    static WINDOW_H := 480
+    static WINDOW_H := 520    ; v0.1.0: 480->520 pra caber segunda fileira de botoes (Export)
 
     _bus         := ""
     _repo        := ""
@@ -78,6 +78,12 @@ class RunHistoryDialog
         this._runIdsByRow  := []
 
         bus.Subscribe(Commands.OpenRunHistoryRequested, (data) => this.Open())
+
+        ; v0.1.0: refresh automatico quando uma importacao concluir.
+        ; Se dialog estiver aberto, recarrega a lista pra mostrar as
+        ; runs recem-importadas. Se fechado, no-op (proxima Open lera
+        ; do disco normalmente).
+        bus.Subscribe(Events.RunsImported, (data) => this._OnRunsImported(data))
     }
 
     IsOpen() => this._isOpen
@@ -156,6 +162,23 @@ class RunHistoryDialog
         btnClose := g.Add("Button", "x494 y" btnY " w100 h28", "Close")
         btnClose.OnEvent("Click", (*) => this.Close())
 
+        ; ---- Segunda fileira: botoes de export (v0.1.0) ----
+        ; "Export selected" pega so as runs marcadas no ListView.
+        ; "Export all" exporta todas do historico. Ambos publicam
+        ; Cmd.ExportRunsRequested; o handler em app.ahk abre o
+        ; ExportOptionsDialog.
+        btnRow2Y := btnY + 28 + 6
+        btnExportSel := g.Add("Button", "x14 y" btnRow2Y " w130 h28", "Export selected")
+        btnExportSel.OnEvent("Click", (*) => this._OnExportSelected())
+
+        btnExportAll := g.Add("Button", "x150 y" btnRow2Y " w130 h28", "Export all")
+        btnExportAll.OnEvent("Click", (*) => this._OnExportAll())
+
+        ; "Import..." abre FileSelect e publica Cmd.ImportRunsRequested.
+        ; O handler em app.ahk roda Preview e abre o ImportPreviewDialog.
+        btnImport := g.Add("Button", "x286 y" btnRow2Y " w110 h28", "Import...")
+        btnImport.OnEvent("Click", (*) => this._OnImportClicked())
+
         this._RefreshList()
         g.Show("w" RunHistoryDialog.WINDOW_W " h" RunHistoryDialog.WINDOW_H)
     }
@@ -181,19 +204,20 @@ class RunHistoryDialog
             firstTs := sm.Has("firstTs") && sm["firstTs"] != ""
                        ? sm["firstTs"]
                        : RunHistoryDialog._DeriveDateFromRunId(sm["runId"])
-            runId   := sm.Has("runId")      ? sm["runId"]      : ""
-            totalMs := sm.Has("totalMs")    ? sm["totalMs"]    : 0
-            deaths  := sm.Has("deathCount") ? sm["deathCount"] : 0
-            profile := sm.Has("profile")    ? sm["profile"]    : ""
+            ; v0.1.1: `runId` local colide com classe `RunId`. Usar `currentRunId`.
+            currentRunId := sm.Has("runId")      ? sm["runId"]      : ""
+            totalMs      := sm.Has("totalMs")    ? sm["totalMs"]    : 0
+            deaths       := sm.Has("deathCount") ? sm["deathCount"] : 0
+            profile      := sm.Has("profile")    ? sm["profile"]    : ""
 
             lv.Add(,
                 firstTs,
-                runId,
+                currentRunId,
                 RunStatsPlotBuilder.FormatMs(totalMs),
                 deaths,
                 profile
             )
-            this._runIdsByRow.Push(runId)
+            this._runIdsByRow.Push(currentRunId)
         }
 
         ; Header conta total
@@ -216,14 +240,15 @@ class RunHistoryDialog
     ; ============================================================
     _OnOpenSelected()
     {
-        runId := this._GetSelectedRunId()
-        if (runId = "")
+        ; v0.1.1: `runId` local colide com classe `RunId`. Usar `currentRunId`.
+        currentRunId := this._GetSelectedRunId()
+        if (currentRunId = "")
             return
 
-        buildResult := this._repo.Load(runId)
+        buildResult := this._repo.Load(currentRunId)
         if !IsObject(buildResult)
         {
-            try MsgBox("Failed to load run " runId, "SpeedKalandra", "IconX")
+            try SpeedKalandraMsgBox("Failed to load run " currentRunId, "SpeedKalandra", "IconX")
             return
         }
 
@@ -243,25 +268,26 @@ class RunHistoryDialog
     ; ============================================================
     _OnDeleteSelected()
     {
-        runId := this._GetSelectedRunId()
-        if (runId = "")
+        ; v0.1.1: `runId` local colide com classe `RunId`. Usar `currentRunId`.
+        currentRunId := this._GetSelectedRunId()
+        if (currentRunId = "")
             return
 
         result := ""
         try
-            result := MsgBox("Delete run " runId "?`n`n"
+            result := SpeedKalandraMsgBox("Delete run " currentRunId "?`n`n"
                 . "Personal Bests will be rebuilt from the remaining runs "
                 . "(if this run was the source of any PB, it will be replaced "
                 . "by the next best, or cleared if no other run qualifies)."
                 . "`n`nThis action cannot be undone.",
-                "SpeedKalandra", "YesNo IconQ")
+                "SpeedKalandra", "YesNo Icon?")
         catch
             return
         if (result != "Yes")
             return
 
         deleted := false
-        try deleted := this._repo.Delete(runId)
+        try deleted := this._repo.Delete(currentRunId)
 
         ; Reconstroi PBs a partir das runs restantes.
         pbChanged := false
@@ -278,7 +304,7 @@ class RunHistoryDialog
                 ? (pbChanged
                     ? "Run deleted. PBs were rebuilt from history."
                     : "Run deleted (no PB changes).")
-                : "Failed to delete run " runId "."
+                : "Failed to delete run " currentRunId "."
             try TrayTip("SpeedKalandra", msg, "Mute")
         }
     }
@@ -292,24 +318,26 @@ class RunHistoryDialog
     ; ============================================================
     _OnSetAsPbSelected()
     {
-        runId := this._GetSelectedRunId()
-        if (runId = "")
+        ; v0.1.1: `runId` e `run` locais colidem com classe `RunId` e
+        ; builtin `Run`. Usar `currentRunId` e `runItem`.
+        currentRunId := this._GetSelectedRunId()
+        if (currentRunId = "")
             return
         if (this._personalBest = "")
             return
 
         ; Carrega a run pra pegar totalMs (resumo seria suficiente,
         ; mas Load tem todo o contexto e o custo eh marginal).
-        run := this._repo.Load(runId)
-        if !IsObject(run)
+        runItem := this._repo.Load(currentRunId)
+        if !IsObject(runItem)
         {
-            try MsgBox("Failed to load run " runId, "SpeedKalandra", "IconX")
+            try SpeedKalandraMsgBox("Failed to load run " currentRunId, "SpeedKalandra", "IconX")
             return
         }
-        runMs := run.Has("totalMs") ? run["totalMs"] : 0
+        runMs := runItem.Has("totalMs") ? runItem["totalMs"] : 0
         if (runMs <= 0)
         {
-            try MsgBox("Run " runId " has no valid totalMs.",
+            try SpeedKalandraMsgBox("Run " currentRunId " has no valid totalMs.",
                 "SpeedKalandra", "IconX")
             return
         }
@@ -328,8 +356,8 @@ class RunHistoryDialog
 
         ; Conta quantos checkpoints essa run tem (afeta o que vai mudar
         ; em runPbByAct — o overlay le esse Map).
-        ckpts := run.Has("actCheckpoints") && IsObject(run["actCheckpoints"])
-                 ? run["actCheckpoints"]
+        ckpts := runItem.Has("actCheckpoints") && IsObject(runItem["actCheckpoints"])
+                 ? runItem["actCheckpoints"]
                  : Map()
         ckptCount := IsObject(ckpts) ? ckpts.Count : 0
         ckptNote := ckptCount > 0
@@ -338,26 +366,26 @@ class RunHistoryDialog
 
         result := ""
         try
-            result := MsgBox("Set this run as your Personal Best?`n`n"
-                . "Run ID:   " runId "`n"
+            result := SpeedKalandraMsgBox("Set this run as your Personal Best?`n`n"
+                . "Run ID:   " currentRunId "`n"
                 . "Time:     " newPbStr "`n`n"
                 . "Current PB: " currentPbStr "`n`n"
                 . ckptNote "`n`n"
                 . "Per-zone PBs remain aggregated from all runs.",
-                "SpeedKalandra", "YesNo IconQ")
+                "SpeedKalandra", "YesNo Icon?")
         catch
             return
         if (result != "Yes")
             return
 
         changed := false
-        try changed := this._personalBest.SetAsRunPb(runMs, runId, ckpts)
+        try changed := this._personalBest.SetAsRunPb(runMs, currentRunId, ckpts)
 
         if !this._headless
         {
             msg := changed
-                ? "Run " runId " set as PB (" newPbStr ")."
-                : "Run " runId " was already the PB — no change."
+                ? "Run " currentRunId " set as PB (" newPbStr ")."
+                : "Run " currentRunId " was already the PB — no change."
             try TrayTip("SpeedKalandra", msg, "Mute")
         }
     }
@@ -396,6 +424,113 @@ class RunHistoryDialog
         if (row < 1 || row > this._runIdsByRow.Length)
             return ""
         return this._runIdsByRow[row]
+    }
+
+    ; ============================================================
+    ; _GetSelectedRunIds (v0.1.0) - todas as linhas marcadas
+    ;
+    ; Diferente de _GetSelectedRunId (que usa "F" pra pegar so a linha
+    ; focada), este itera o estado Selected que pode estar em multiplas
+    ; linhas. Usado pelo "Export selected".
+    ;
+    ; NOTA AHK v2: GetNext aceita "" (default=Selected), "C" (Checked)
+    ; ou "F" (Focused). NAO existe "S" — era do AHK v1.
+    ; ============================================================
+    _GetSelectedRunIds()
+    {
+        out := []
+        if !this._ctrls.Has("list")
+            return out
+        lv := this._ctrls["list"]
+        row := 0
+        loop
+        {
+            row := lv.GetNext(row)   ; default = proxima Selected
+            if (row <= 0)
+                break
+            if (row <= this._runIdsByRow.Length)
+                out.Push(this._runIdsByRow[row])
+        }
+        return out
+    }
+
+    ; ============================================================
+    ; _OnExportSelected (v0.1.0)
+    ;
+    ; Coleta runIds das linhas marcadas e publica Cmd.ExportRunsRequested.
+    ; Se nenhuma linha esta marcada, mostra hint amigavel.
+    ; ============================================================
+    _OnExportSelected()
+    {
+        runIds := this._GetSelectedRunIds()
+        if (runIds.Length = 0)
+        {
+            try SpeedKalandraMsgBox("Select one or more runs first (Ctrl+Click ou Shift+Click pra multipla selecao).",
+                "SpeedKalandra - Export", "IconI")
+            return
+        }
+        this._bus.Publish(Commands.ExportRunsRequested, Map("runIds", runIds))
+    }
+
+    ; ============================================================
+    ; _OnExportAll (v0.1.0)
+    ;
+    ; Coleta TODOS os runIds do historico e publica Cmd.ExportRunsRequested.
+    ; ============================================================
+    _OnExportAll()
+    {
+        runIds := []
+        try
+        {
+            for _, rid in this._repo.ListRunIds()
+                runIds.Push(rid)
+        }
+        if (runIds.Length = 0)
+        {
+            try SpeedKalandraMsgBox("No runs in history to export.",
+                "SpeedKalandra - Export", "IconI")
+            return
+        }
+        this._bus.Publish(Commands.ExportRunsRequested, Map("runIds", runIds))
+    }
+
+    ; ============================================================
+    ; _OnImportClicked (v0.1.0)
+    ;
+    ; Abre FileSelect com pasta default em exports/ e publica
+    ; Cmd.ImportRunsRequested. O handler em app.ahk faz o resto.
+    ; ============================================================
+    _OnImportClicked()
+    {
+        path := ""
+        try
+        {
+            ; FileSelect mode "3" = file must exist, single selection.
+            ; Inicia em exports/ (cria a pasta antes se nao existe).
+            try RunExportService.EnsureExportDir()
+            path := FileSelect("3", RunExportService.DEFAULT_EXPORT_DIR "\",
+                "Select export file to import", "JSON files (*.json)")
+        }
+        catch as ex
+        {
+            OutputDebug("RunHistoryDialog._OnImportClicked FileSelect falhou: " ex.Message)
+            return
+        }
+        if (path = "")
+            return
+        this._bus.Publish(Commands.ImportRunsRequested, Map("path", path))
+    }
+
+    ; ============================================================
+    ; _OnRunsImported (v0.1.0)
+    ;
+    ; Subscriber do Evt.RunsImported. Refresh da lista se dialog
+    ; estiver aberto. Caso contrario, no-op.
+    ; ============================================================
+    _OnRunsImported(data)
+    {
+        if this._isOpen && this._gui
+            try this._RefreshList()
     }
 
     ; runId tem formato "20260513_051547" — converte pra "2026-05-13 05:15:47"

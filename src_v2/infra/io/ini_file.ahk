@@ -34,17 +34,12 @@ class IniFile
             throw ValueError("IniFile: 'path' obrigatorio")
         this.path := path
         this._EnsureDir()
-        ; Refactor R11: auto-migration UTF-16 -> UTF-8 foi DESATIVADA aqui.
-        ; Era: try TextEncoding.MigrateIniToUtf8(this.path)
-        ;
-        ; Motivo do rollback: a migration corrompia INIs em alguns testes
-        ; quando rodava entre escrita (IniWrite cria UTF-16 LE) e leitura
-        ; (segundo IniFile tentava migrar e o conteudo apos AtomicWriter
-        ; nao era recuperavel via IniRead).
-        ; A migration agora eh CHAMADA EXPLICITAMENTE em `app.Start()`
-        ; sobre os INIs conhecidos do app (mainIni, routeIni, gemPlanIni),
-        ; antes de qualquer Load. Em testes, INIs continuam UTF-16 LE
-        ; (zero impacto na semantica) ate' eventual migration manual.
+        ; Encoding: AHK v2 IniWrite cria UTF-16 LE BOM por default quando
+        ; o arquivo nao existe. NAO TENTAMOS migrar pra UTF-8 — IniRead
+        ; key-lookup do AHK v2 SO funciona em UTF-16 LE BOM (em UTF-8 BOM,
+        ; retorna default silenciosamente). Vide R11.1 doc em
+        ; text_encoding.ahk e o pitfall test em
+        ; PersonalBestRepositoryTests.iniread_key_lookup_works_in_utf16_le_bom_but_not_utf8_bom.
     }
 
     ; ------------------------------------------------------------

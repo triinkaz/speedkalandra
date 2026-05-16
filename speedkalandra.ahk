@@ -44,6 +44,134 @@ SpeedKalandraTrayRemoveUndoItem()
     try A_TrayMenu.Delete("Undo last save")
 }
 
+; ============================================================
+; SpeedKalandraMsgBox (v0.1.0 Fase 5) - wrapper de MsgBox com TopMost
+;
+; PROBLEMA QUE RESOLVE:
+;   MsgBox padrao do AHK NAO herda AlwaysOnTop do dialog que o
+;   invoca. Resultado: confirmacoes (Delete run, Reset PBs, Replace
+;   PBs, etc) abrem ATRAS do dialog que as chamou — user pensa que
+;   o programa travou.
+;
+; FIX:
+;   Adiciona o flag MB_TOPMOST (0x40000 = 262144 decimal) que poe
+;   a MsgBox sempre acima, incluindo dos overlays AlwaysOnTop.
+;
+; USO:
+;   Substitua MsgBox(text, title, options) por
+;            SpeedKalandraMsgBox(text, title, options).
+;   Assinatura identica — mesmo retorno ("Yes", "No", "OK", etc).
+;
+; NOTA: aplicar em chamadas dentro de qualquer dialog/widget que
+; possa ter overlay/dialog AlwaysOnTop coexistindo. TrayTips NAO
+; precisam (sao notificacoes, nao modais).
+; ============================================================
+SpeedKalandraMsgBox(text, title := "", options := "")
+{
+    optsStr := Trim(String(options))
+    if (optsStr = "")
+        optsStr := "0x40000"
+    else
+        optsStr .= " 0x40000"
+    return MsgBox(text, title, optsStr)
+}
+
+; ============================================================
+; v0.1.0: helper de debug. Pode ser chamado de qualquer lugar
+; (console AHK, hotkey temporaria) pra validar que o roundtrip
+; do RunExportFormat ainda funciona apos mudancas no schema.
+; Foi item de tray menu durante Fase 1 da feature export/import,
+; depois removido pra nao poluir UI — funcao continua viva pro
+; caso de regressao.
+; ============================================================
+SpeedKalandraRunExportSelfTest()
+{
+    result := RunExportFormat.SelfTest()
+    title := result["passed"]
+        ? "SelfTest PASS"
+        : "SelfTest FAIL"
+    body := result["message"] . "`n`n--- Sub-tests ---`n"
+    for _, line in result["details"]
+        body .= "  ✓ " line "`n"
+    icon := result["passed"] ? "Iconi" : "Iconx"
+    SpeedKalandraMsgBox(body, title, icon)
+}
+
+; ============================================================
+; v0.1.0: helper de debug. Foi item de tray menu durante Fase 3
+; da feature export/import; depois removido pra nao poluir UI.
+; Funcao continua viva pra debug de regressao no fluxo do import
+; service (chame via console AHK ou hotkey temporaria).
+; ============================================================
+SpeedKalandraRunImportDebug()
+{
+    path := ""
+    try
+        path := FileSelect("3", RunExportService.GetDefaultExportPath(),
+            "Select export to import", "JSON files (*.json)")
+    catch
+        return
+    if (path = "")
+        return
+
+    preview := app.runImportService.Preview(path)
+
+    if !preview["success"]
+    {
+        msg := "PREVIEW FAILED.`n`nErrors:"
+        for _, e in preview["errors"]
+            msg .= "`n  - " e
+        SpeedKalandraMsgBox(msg, "Import test", "IconX")
+        return
+    }
+
+    sum := preview["summary"]
+    metaStr := ""
+    if IsObject(preview["meta"])
+    {
+        m := preview["meta"]
+        metaStr := "Exported at: " (m.Has("exportedAt") ? m["exportedAt"] : "?")
+            . "`nExported by: " (m.Has("exportedBy") ? m["exportedBy"] : "?")
+            . "`nAnonymized: " ((m.Has("anonymized") && m["anonymized"]) ? "yes" : "no")
+            . "`nHas PBs: " (IsObject(preview["importedPbs"]) ? "yes" : "no") "`n"
+    }
+
+    text := "PREVIEW OK.`n`n" metaStr
+        . "`nTotal runs in file: " sum["total"]
+        . "`nNew (will import): " sum["new"]
+        . "`nIdentical (will skip): " sum["identical"]
+        . "`nConflicts (will rename _imported): " sum["rename"]
+
+    if preview["warnings"].Length > 0
+    {
+        text .= "`n`nWarnings:"
+        for _, w in preview["warnings"]
+            text .= "`n  - " w
+    }
+
+    text .= "`n`nProceed with import? (PB strategy = keep)"
+
+    answer := SpeedKalandraMsgBox(text, "Import test - Preview", "YesNo Icon?")
+    if (answer != "Yes")
+        return
+
+    execResult := app.runImportService.Execute(preview, "keep")
+
+    resultMsg := "IMPORT RESULT:`n`n"
+        . "Imported: " execResult["imported"] "`n"
+        . "  (of which renamed: " execResult["renamed"] ")`n"
+        . "Skipped (identical): " execResult["skipped"] "`n"
+        . "PBs: " execResult["pbAction"]
+    if execResult["errors"].Length > 0
+    {
+        resultMsg .= "`n`nErrors:"
+        for _, e in execResult["errors"]
+            resultMsg .= "`n  - " e
+    }
+    SpeedKalandraMsgBox(resultMsg, "Import test - Result",
+        execResult["success"] ? "Iconi" : "IconX")
+}
+
 
 #Include "src_v2\core\clock.ahk"
 #Include "src_v2\core\event_bus.ahk"
@@ -59,6 +187,7 @@ SpeedKalandraTrayRemoveUndoItem()
 #Include "src_v2\infra\io\csv_file.ahk"
 #Include "src_v2\infra\io\ini_file.ahk"
 #Include "src_v2\infra\io\json_file.ahk"
+#Include "src_v2\infra\io\run_export_format.ahk"
 
 #Include "src_v2\domain\xp_rules.ahk"
 #Include "src_v2\domain\window_state.ahk"
@@ -95,6 +224,8 @@ SpeedKalandraTrayRemoveUndoItem()
 #Include "src_v2\app\services\overlay_mode_applier.ahk"
 #Include "src_v2\app\services\overlay_interaction_service.ahk"
 #Include "src_v2\app\services\focus_auto_pause_service.ahk"
+#Include "src_v2\app\services\run_export_service.ahk"
+#Include "src_v2\app\services\run_import_service.ahk"
 
 #Include "src_v2\ui\theme.ahk"
 #Include "src_v2\ui\widget_base.ahk"
@@ -102,10 +233,13 @@ SpeedKalandraTrayRemoveUndoItem()
 #Include "src_v2\ui\compact_layout_widget.ahk"
 #Include "src_v2\ui\micro_layout_widget.ahk"
 #Include "src_v2\ui\steve_layout_widget.ahk"
+#Include "src_v2\ui\hotkey_formatter.ahk"
 #Include "src_v2\ui\settings_dialog.ahk"
 #Include "src_v2\ui\line_chart_renderer.ahk"
 #Include "src_v2\ui\run_stats_plot_dialog.ahk"
 #Include "src_v2\ui\run_history_dialog.ahk"
+#Include "src_v2\ui\export_options_dialog.ahk"
+#Include "src_v2\ui\import_preview_dialog.ahk"
 
 #Include "src_v2\app\app.ahk"
 

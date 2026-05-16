@@ -216,6 +216,65 @@ class PersonalBestService
     }
 
     ; ============================================================
+    ; LoadFromExternal(pbData) - substitui PBs com dados externos (v0.1.0)
+    ;
+    ; Usado pelo RunImportService quando o user escolhe pbStrategy="replace".
+    ; Substitui TOTALMENTE os PBs locais pelos dados vindos do arquivo
+    ; de import (acao destrutiva, user precisa ter escolhido conscientemente).
+    ;
+    ; pbData: Map com 4 campos opcionais:
+    ;   runPbMs    : int >= 0
+    ;   runPbRunId : string
+    ;   runPbByAct : Map<int, int>
+    ;   zonePbs    : Map<str, int>
+    ;
+    ; Campos faltando viram defaults (0/""/Map vazio).
+    ; Persiste no INI ao final.
+    ; ============================================================
+    LoadFromExternal(pbData)
+    {
+        if !IsObject(pbData)
+            throw TypeError("PersonalBestService.LoadFromExternal: pbData deve ser Map")
+
+        ; Reset state primeiro
+        this._runPbMs    := 0
+        this._runPbRunId := ""
+        this._runPbByAct := Map()
+        this._zonePbs    := Map()
+
+        if pbData.Has("runPbMs") && IsNumber(pbData["runPbMs"])
+        {
+            v := Integer(pbData["runPbMs"])
+            if (v >= 0)
+                this._runPbMs := v
+        }
+        if pbData.Has("runPbRunId")
+            this._runPbRunId := String(pbData["runPbRunId"])
+        if pbData.Has("runPbByAct") && IsObject(pbData["runPbByAct"])
+        {
+            for k, v in pbData["runPbByAct"]
+            {
+                if !IsNumber(k) || Integer(k) <= 0
+                    continue
+                if !IsNumber(v) || Integer(v) <= 0
+                    continue
+                this._runPbByAct[Integer(k)] := Integer(v)
+            }
+        }
+        if pbData.Has("zonePbs") && IsObject(pbData["zonePbs"])
+        {
+            for k, v in pbData["zonePbs"]
+            {
+                if !IsNumber(v) || Integer(v) <= 0
+                    continue
+                this._zonePbs[String(k)] := Integer(v)
+            }
+        }
+
+        try this._PersistToRepo()
+    }
+
+    ; ============================================================
     ; SetAsRunPb(runMs, runId, actCheckpoints := "") - pina uma run
     ; como PB (v17.15.1)
     ;
@@ -337,13 +396,13 @@ class PersonalBestService
             return true
         }
 
-        for _, run in runs
+        for _, runItem in runs
         {
-            if !IsObject(run)
+            if !IsObject(runItem)
                 continue
 
-            runMs := run.Has("totalMs") ? run["totalMs"] : 0
-            runId := run.Has("runId") ? String(run["runId"]) : ""
+            runMs := runItem.Has("totalMs") ? runItem["totalMs"] : 0
+            currentRunId := runItem.Has("runId") ? String(runItem["runId"]) : ""
 
             ; --- Run PB global ---
             if (IsNumber(runMs) && runMs > 0)
@@ -351,14 +410,14 @@ class PersonalBestService
                 if (this._runPbMs = 0 || runMs < this._runPbMs)
                 {
                     this._runPbMs    := Integer(runMs)
-                    this._runPbRunId := runId
+                    this._runPbRunId := currentRunId
                 }
             }
 
             ; --- Run PB por ato ---
-            if run.Has("actCheckpoints") && IsObject(run["actCheckpoints"])
+            if runItem.Has("actCheckpoints") && IsObject(runItem["actCheckpoints"])
             {
-                for actNum, actMs in run["actCheckpoints"]
+                for actNum, actMs in runItem["actCheckpoints"]
                 {
                     if !IsNumber(actNum) || actNum <= 0
                         continue
@@ -373,9 +432,9 @@ class PersonalBestService
             }
 
             ; --- Zone PBs (extraidos de details onde category=mapa|cidade) ---
-            if run.Has("details") && IsObject(run["details"])
+            if runItem.Has("details") && IsObject(runItem["details"])
             {
-                for _, d in run["details"]
+                for _, d in runItem["details"]
                 {
                     if !IsObject(d)
                         continue
@@ -411,31 +470,37 @@ class PersonalBestService
 
     ; Serializa Map<int|string, int> em string canonica pra comparacao.
     ; Nao depende de ordem de iteracao (sort por key).
+    ;
+    ; FIX v0.1.0: anteriormente guardava apenas a key como string e depois
+    ; refazia `m[k]` no final, mas em AHK v2 `m[1]` (int) e `m["1"]` (string)
+    ; sao keys distintos em Maps. Pra runPbByAct (keys int), o lookup com
+    ; string-coerced key disparava UnsetItemError. Agora guardamos o value
+    ; junto da key string durante a primeira iteracao.
     static _MapToDebugStr(m)
     {
         if !IsObject(m)
             return ""
-        keys := []
-        for k, _ in m
-            keys.Push(String(k))
-        ; Bubble sort (lista pequena)
-        n := keys.Length
+        pairs := []
+        for k, v in m
+            pairs.Push(Map("k", String(k), "v", v))
+        ; Bubble sort por key string (lista pequena)
+        n := pairs.Length
         i := 2
         while (i <= n)
         {
             j := i
-            while (j > 1 && StrCompare(keys[j], keys[j-1]) < 0)
+            while (j > 1 && StrCompare(pairs[j]["k"], pairs[j-1]["k"]) < 0)
             {
-                tmp := keys[j]
-                keys[j] := keys[j-1]
-                keys[j-1] := tmp
+                tmp := pairs[j]
+                pairs[j] := pairs[j-1]
+                pairs[j-1] := tmp
                 j--
             }
             i++
         }
         out := ""
-        for _, k in keys
-            out .= k "=" m[k] "|"
+        for _, p in pairs
+            out .= p["k"] "=" p["v"] "|"
         return out
     }
 

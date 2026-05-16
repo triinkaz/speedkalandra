@@ -190,7 +190,8 @@ class RunService
     {
         if !this._state.IsActive()
             return false
-        runId := this._state.runId
+        ; v0.1.0: `runId` local colide com classe `RunId` (#Warn). Usar currentRunId.
+        currentRunId := this._state.runId
         durationMs := this._timer.GetRunMs()
 
         this._timer.Stop()
@@ -199,7 +200,7 @@ class RunService
         this._Persist()
 
         this._bus.Publish(Events.RunCompleted, Map(
-            "runId",      runId,
+            "runId",      currentRunId,
             "durationMs", durationMs
         ))
         return true
@@ -209,24 +210,24 @@ class RunService
     {
         if !this._state.IsActive()
             return false
-        runId := this._state.runId
+        currentRunId := this._state.runId
 
         this._timer.Stop()
         this._state.status := "cancelled"
         this._Persist()
 
-        this._bus.Publish(Events.RunCancelled, Map("runId", runId))
+        this._bus.Publish(Events.RunCancelled, Map("runId", currentRunId))
         return true
     }
 
     ResetRun()
     {
-        runId := this._state.runId
+        currentRunId := this._state.runId
         this._timer.Reset()
         this._state := RunState.Empty()
         this._stateRepo.Clear()
 
-        this._bus.Publish(Events.RunReset, Map("runId", runId))
+        this._bus.Publish(Events.RunReset, Map("runId", currentRunId))
         return true
     }
 

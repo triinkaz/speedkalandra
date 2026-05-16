@@ -59,4 +59,8 @@ class Events
     ; --- App lifecycle ---
     static AppStarted  := "Evt.AppStarted"
     static AppStopping := "Evt.AppStopping"
+
+    ; --- Export/Import de runs (v0.1.0) ---
+    static RunsExported := "Evt.RunsExported"  ; data: {path, count}
+    static RunsImported := "Evt.RunsImported"  ; data: {path, imported, renamed, skipped}
 }

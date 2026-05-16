@@ -317,8 +317,23 @@ class LoadingDetectionService
 
         this._ResetState()
 
-        if (durationMs < this._GetMinMs() || durationMs > this._GetMaxMs())
-            return false    ; descarta scans muito curtos/longos
+        ; v0.1.2 (Bug #5): filtro ANTES era `< minMs || > maxMs`. O
+        ; ramo `> maxMs` causava timeout silencioso: quando Tick detecta
+        ; loading > maxMs chama _End("timeout_no_hud_return"), e _End
+        ; descartava o event POR DEFINICAO (durationMs > maxMs era a
+        ; condicao que disparou o timeout). Resultado: TODO loading que
+        ; excedia 90s ficava invisivel nas estatisticas — PCs lentos
+        ; tinham runs com loading-time substancialmente subestimado.
+        ;
+        ; Fix: mantem so o filtro `< minMs` (descarta fluctuacoes de
+        ; HUD muito curtas, lixo do scanner). O teto eh controlado pelo
+        ; Tick que dispara `timeout_no_hud_return` quando atinge maxMs;
+        ; quando esse caminho roda, queremos publicar o evento com a
+        ; duracao REAL (que vai ser >= maxMs por construcao) pra que
+        ; downstream (LoadingTotalsService, RunStatsRecorder) integre
+        ; o tempo correto na soma da run.
+        if (durationMs < this._GetMinMs())
+            return false    ; descarta scans muito curtos (HUD flicker)
 
         toZone := this._SnapshotZone()
         this._bus.Publish(Events.LoadingMeasured, Map(

@@ -154,6 +154,13 @@ class PersonalBestRepository
     ; (.tmp + FileMove). Crash antes do FileMove deixa .tmp orfao mas
     ; o INI original intacto.
     ;
+    ; ENCODING (v0.1.0): AtomicWriter usa "UTF-16" em vez de "UTF-8".
+    ; Descoberta na Wave 4 de testes: IniRead key-lookup
+    ; (`IniRead(path, section, key, default)`) em AHK v2 NAO funciona
+    ; em arquivos UTF-8 BOM, retornando sempre o default. Funciona
+    ; apenas em UTF-16 LE BOM (formato nativo de IniWrite). Bug latente
+    ; no R11 do projeto (TextEncoding.MigrateIniToUtf8) tambem.
+    ;
     ; Falhas: loga OutputDebug e retorna false. Caller (service) decide
     ; o que fazer (atualmente silencia, mas pelo menos tem o sinal).
     ; ------------------------------------------------------------
@@ -165,7 +172,7 @@ class PersonalBestRepository
         try
         {
             content := PersonalBestRepository._Serialize(data)
-            AtomicWriter.WriteAll(this._path, content, "UTF-8")
+            AtomicWriter.WriteAll(this._path, content, "UTF-16")
             return true
         }
         catch as ex
@@ -180,23 +187,31 @@ class PersonalBestRepository
     ;
     ; Output compativel com IniRead (que Load usa pra parsear).
     ; Defensivo: valida tipos, sanitiza chaves de zona.
+    ;
+    ; LINE ENDINGS: usa CRLF (`r`n) porque IniRead chama Win32
+    ; GetPrivateProfileString, que em arquivos UTF-8 BOM NAO reconhece
+    ; key=value separados por LF puro. Section-reads (`IniRead(file,
+    ; section)`) toleram LF, mas key-lookups (`IniRead(file, section,
+    ; key, default)`) retornam default. v0.1.0 fix: convencao Windows.
     ; ------------------------------------------------------------
     static _Serialize(data)
     {
         ; --- [Run] ---
         runMs := (data.Has("runPbMs") && IsNumber(data["runPbMs"]))
                  ? Integer(data["runPbMs"]) : 0
-        runId := data.Has("runPbRunId") ? String(data["runPbRunId"]) : ""
-        ; Sanitiza runId (paranoia: nao deveria ter caracteres invalidos)
-        runId := StrReplace(runId, "`r", "")
-        runId := StrReplace(runId, "`n", "")
+        ; v0.1.0: renomeado de `runId` pra `currentRunId` (case-insensitive
+        ; collision com classe `RunId` do domain disparava #Warn).
+        currentRunId := data.Has("runPbRunId") ? String(data["runPbRunId"]) : ""
+        ; Sanitiza id (paranoia: nao deveria ter caracteres invalidos)
+        currentRunId := StrReplace(currentRunId, "`r", "")
+        currentRunId := StrReplace(currentRunId, "`n", "")
 
-        content := "[Run]`n"
-        content .= "BestMs=" runMs "`n"
-        content .= "BestRunId=" runId "`n`n"
+        content := "[Run]`r`n"
+        content .= "BestMs=" runMs "`r`n"
+        content .= "BestRunId=" currentRunId "`r`n`r`n"
 
         ; --- [RunByAct] ---
-        content .= "[RunByAct]`n"
+        content .= "[RunByAct]`r`n"
         byAct := data.Has("runPbByAct") ? data["runPbByAct"] : ""
         if IsObject(byAct)
         {
@@ -206,13 +221,13 @@ class PersonalBestRepository
                     continue
                 if !IsNumber(ms) || ms <= 0
                     continue
-                content .= "Act" Integer(actNum) "Ms=" Integer(ms) "`n"
+                content .= "Act" Integer(actNum) "Ms=" Integer(ms) "`r`n"
             }
         }
-        content .= "`n"
+        content .= "`r`n"
 
         ; --- [Zones] ---
-        content .= "[Zones]`n"
+        content .= "[Zones]`r`n"
         zones := data.Has("zonePbs") ? data["zonePbs"] : ""
         if IsObject(zones)
         {
@@ -231,7 +246,7 @@ class PersonalBestRepository
                 zStr := StrReplace(zStr, "]", "")
                 if (zStr = "")
                     continue
-                content .= zStr "=" Integer(ms) "`n"
+                content .= zStr "=" Integer(ms) "`r`n"
             }
         }
         return content
