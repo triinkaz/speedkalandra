@@ -299,6 +299,12 @@ class SettingsDialog
         cfg.autoFinalizeRegex := this._ctrls["autoFinalizeRegex"].Value
 
         ; Vendor regex slots (Wave 8) — defensive clamp to 50 chars
+        ;
+        ; v0.1.4: snapshot oldVendorRegexes BEFORE rewriting cfg so we
+        ; can detect a change and emit Evt.VendorRegexesChanged. The
+        ; CompactLayoutWidget will refresh its V1/V2/V3 button labels
+        ; without a full app reload.
+        oldVendorRegexes := SettingsDialog._CloneStringArray(cfg.vendorRegexes)
         vrOut := ["", "", ""]
         Loop 3
         {
@@ -312,6 +318,7 @@ class SettingsDialog
             }
         }
         cfg.vendorRegexes := vrOut
+        vendorRegexesChanged := !SettingsDialog._StringArraysEqual(oldVendorRegexes, cfg.vendorRegexes)
 
         cfg.autoPauseOnFocus := this._ctrls["autoPauseOnFocus"].Value = 1
 
@@ -331,6 +338,10 @@ class SettingsDialog
         ; v0.1.0: user types human-readable format ("Ctrl+Alt+F");
         ; HotkeyFormatter.ToAhk converts to internal syntax ("^!f")
         ; before persisting. Tolerant of old-format passthrough.
+        ;
+        ; v0.1.4: snapshot oldHotkeys BEFORE the loop so we can detect
+        ; a change and trigger a hot-rebind via Evt.HotkeysChanged.
+        oldHotkeys := SettingsDialog._CloneStringMap(cfg.hotkeys)
         for _, action in this._hotkeyActions
         {
             ctrlKey := "hk_" action
@@ -340,6 +351,7 @@ class SettingsDialog
                 cfg.hotkeys[action] := HotkeyFormatter.ToAhk(rawVal)
             }
         }
+        hotkeysChanged := !SettingsDialog._StringMapsEqual(oldHotkeys, cfg.hotkeys)
 
         try this._settingsRepo.Save(cfg)
         ; v0.1.4: publish event when logFile actually changed so the
@@ -352,8 +364,99 @@ class SettingsDialog
                 "oldPath", oldLogFile,
                 "newPath", cfg.logFile))
         }
+        ; v0.1.4: publish event when hotkeys changed so the app
+        ; composition root can rebind HotkeyService without a full
+        ; app reload. Sends a defensive copy of the new map so the
+        ; handler can’t accidentally mutate cfg.hotkeys.
+        if hotkeysChanged
+        {
+            try this._bus.Publish(Events.HotkeysChanged, Map(
+                "oldHotkeys", oldHotkeys,
+                "newHotkeys", SettingsDialog._CloneStringMap(cfg.hotkeys)))
+        }
+        ; v0.1.4: publish event when any vendor regex slot changed so
+        ; the CompactLayoutWidget refreshes its V1/V2/V3 button labels
+        ; (filled vs empty) without a full app reload. Sends a copy of
+        ; the new array so the handler can’t mutate cfg.vendorRegexes.
+        if vendorRegexesChanged
+        {
+            try this._bus.Publish(Events.VendorRegexesChanged, Map(
+                "oldRegexes", oldVendorRegexes,
+                "newRegexes", SettingsDialog._CloneStringArray(cfg.vendorRegexes)))
+        }
         try TrayTip("SpeedKalandra", "Settings saved.", "Mute")
         this.Close()
+    }
+
+    ; ============================================================
+    ; _CloneStringMap / _StringMapsEqual (v0.1.4)
+    ;
+    ; Helpers for the hotkeys snapshot/diff. cfg.hotkeys is a
+    ; Map<actionName, keyBind>, both sides strings. We need:
+    ;   - a defensive copy before the loop that mutates cfg.hotkeys,
+    ;     so we can compare before/after
+    ;   - an equality check after the loop
+    ;
+    ; Kept static so the same logic can be reused (and unit-tested
+    ; if we add coverage later). Empty inputs return empty Map / true
+    ; — callers do not need to null-check.
+    ; ============================================================
+    static _CloneStringMap(m)
+    {
+        out := Map()
+        if !(m is Map)
+            return out
+        for k, v in m
+            out[k] := String(v)
+        return out
+    }
+
+    static _StringMapsEqual(a, b)
+    {
+        if !(a is Map) || !(b is Map)
+            return false
+        if (a.Count != b.Count)
+            return false
+        for k, v in a
+        {
+            if !b.Has(k)
+                return false
+            if (String(v) != String(b[k]))
+                return false
+        }
+        return true
+    }
+
+    ; ============================================================
+    ; _CloneStringArray / _StringArraysEqual (v0.1.4)
+    ;
+    ; Helpers for the vendorRegexes snapshot/diff. cfg.vendorRegexes
+    ; is Array<string> (3 fixed slots). Mirrors _CloneStringMap /
+    ; _StringMapsEqual above; kept separate because Array and Map
+    ; have different iteration semantics in AHK v2.
+    ; ============================================================
+    static _CloneStringArray(arr)
+    {
+        out := []
+        if !(arr is Array)
+            return out
+        for _, v in arr
+            out.Push(String(v))
+        return out
+    }
+
+    static _StringArraysEqual(a, b)
+    {
+        if !(a is Array) || !(b is Array)
+            return false
+        if (a.Length != b.Length)
+            return false
+        for i, v in a
+        {
+            if (String(v) != String(b[i]))
+                return false
+        }
+        return true
     }
 
     ; Simple bubble sort (small list ~10 hotkeys)

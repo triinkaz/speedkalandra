@@ -237,6 +237,7 @@ class CompactLayoutWidget extends LayoutWidgetBase
     _handlerRunReset       := ""
     _handlerRunCancelled   := ""
     _handlerDeathDetected  := ""   ; v17.13
+    _handlerVendorChanged  := ""   ; v0.1.4 — hot-refresh V1/V2/V3 button labels
 
     __New(bus, position, onPersist, timer, zoneTracker, xp, zonesCatalog := "", loadingTotals := "", cfg := "", pbService := "")
     {
@@ -260,6 +261,12 @@ class CompactLayoutWidget extends LayoutWidgetBase
         this._handlerRunReset       := (data) => this._OnRunRestart(data)
         this._handlerRunCancelled   := (data) => this._OnRunRestart(data)
         this._handlerDeathDetected  := (data) => this._OnDeathDetected(data)
+        ; v0.1.4: hot-refresh of the V1/V2/V3 button labels when the
+        ; user changes vendor regex slots in Settings. The click
+        ; handler always reads cfg.vendorRegexes on-demand, so click
+        ; behavior is already up-to-date — only the visual state
+        ; (filled "1"/"2"/"3" vs empty "·") needed wiring.
+        this._handlerVendorChanged  := (data) => this._OnVendorRegexesChanged(data)
 
         bus.Subscribe(Events.Tick,              this._handlerTick)
         bus.Subscribe(Events.ZoneEntered,       this._handlerZoneEntered)
@@ -269,9 +276,55 @@ class CompactLayoutWidget extends LayoutWidgetBase
         bus.Subscribe(Events.RunReset,          this._handlerRunReset)
         bus.Subscribe(Events.RunCancelled,      this._handlerRunCancelled)
         bus.Subscribe(Events.DeathDetected,     this._handlerDeathDetected)
+        bus.Subscribe(Events.VendorRegexesChanged, this._handlerVendorChanged)
     }
 
     _GetFixedSize() => Map("w", CompactLayoutWidget.FIXED_W, "h", CompactLayoutWidget.FIXED_H)
+
+    ; ============================================================
+    ; _OnVendorRegexesChanged (v0.1.4)
+    ;
+    ; Handler for Evt.VendorRegexesChanged. Refreshes the label and
+    ; color of each of the 3 V1/V2/V3 button Text controls based on
+    ; the new cfg.vendorRegexes values:
+    ;   - Slot filled:  label "1"/"2"/"3", color = muted
+    ;   - Slot empty:   label "·",         color = subtle
+    ;
+    ; The click handler (_OnVendorClick) always reads cfg.vendorRegexes
+    ; on-demand and therefore already copies the up-to-date value to
+    ; the clipboard — this handler only fixes the VISUAL state of the
+    ; buttons so the overlay doesn't show stale "·" labels after the
+    ; user fills in a slot via Settings.
+    ;
+    ; Defensive: if the widget hasn't built its GUI yet (called before
+    ; first Show), the _ctrls map won't have the keys and the loop
+    ; silently no-ops.
+    ; ============================================================
+    _OnVendorRegexesChanged(data)
+    {
+        if !this._gui
+            return
+        fontBtn := Max(7, Round(CompactLayoutWidget.FONT_BTN * this._GetScale()))
+        Loop 3
+        {
+            i := A_Index
+            ctrlKey := "vendorBtn" i
+            if !this._ctrls.Has(ctrlKey)
+                continue
+            val := (IsObject(this._cfg) && IsObject(this._cfg.vendorRegexes)
+                    && this._cfg.vendorRegexes.Has(i))
+                   ? this._cfg.vendorRegexes[i]
+                   : ""
+            label := val != "" ? String(i) : "·"
+            color := val != "" ? Theme.Color("muted") : Theme.Color("subtle")
+            try
+            {
+                ctrl := this._ctrls[ctrlKey]
+                ctrl.SetFont("s" fontBtn " c" color " bold", Theme.FONT_UI)
+                ctrl.Value := label
+            }
+        }
+    }
 
     ; ============================================================
     ; _GetScale - reads current scale, with defensive fallback
@@ -1110,6 +1163,11 @@ class CompactLayoutWidget extends LayoutWidgetBase
         {
             this._bus.Unsubscribe(Events.DeathDetected, this._handlerDeathDetected)
             this._handlerDeathDetected := ""
+        }
+        if (this._handlerVendorChanged != "")
+        {
+            this._bus.Unsubscribe(Events.VendorRegexesChanged, this._handlerVendorChanged)
+            this._handlerVendorChanged := ""
         }
     }
 }

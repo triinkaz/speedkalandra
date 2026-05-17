@@ -549,6 +549,11 @@ class SpeedKalandraApp
         ; changes via Settings — no full app reload needed.
         this.bus.Subscribe(Events.LogFilePathChanged,
             (data) => this._OnLogFilePathChanged(data))
+
+        ; v0.1.4: hot-rebind hotkeys when the user changes them via
+        ; Settings — no full app reload needed.
+        this.bus.Subscribe(Events.HotkeysChanged,
+            (data) => this._OnHotkeysChanged(data))
     }
 
     ; ============================================================
@@ -579,6 +584,58 @@ class SpeedKalandraApp
         try this.timer.AddPenaltyMs(penaltyMs)
         if IsObject(this.log)
             try this.log.Info("Death penalty applied to timer: +" . penaltyMs . " ms", "App")
+    }
+
+    ; ============================================================
+    ; _OnHotkeysChanged (v0.1.4)
+    ;
+    ; Handler for Evt.HotkeysChanged. Published by SettingsDialog when
+    ; the user changes any hotkey binding via Settings. Performs a
+    ; full rebind cycle on HotkeyService so the new keys take effect
+    ; without a full app reload.
+    ;
+    ; Steps:
+    ;   1. Stop HotkeyService (unregisters every currently bound key)
+    ;   2. Hydrate with the new map from data["newHotkeys"]; falls
+    ;      back to cfg.hotkeys if data is missing/malformed
+    ;   3. Start HotkeyService (registers each non-empty binding)
+    ;
+    ; Failures inside any step are logged but do not propagate — a
+    ; bad rebind should not crash the app. The user can re-open
+    ; Settings to retry.
+    ;
+    ; Note: Hotkeys for actions opening dialogs (Settings, PlotRunStats)
+    ; do a modifier cleanup Send before publishing the command (see
+    ; FocusChangingActions in HotkeyService). That happens at fire
+    ; time, independent of this rebind.
+    ; ============================================================
+    _OnHotkeysChanged(data)
+    {
+        if !IsObject(this.hotkeyService)
+            return
+
+        ; Prefer the new map from the event payload; fall back to
+        ; cfg.hotkeys when the payload is missing/malformed. Either
+        ; way the rebind goes through.
+        newHotkeys := ""
+        if (IsObject(data) && data.Has("newHotkeys") && data["newHotkeys"] is Map)
+            newHotkeys := data["newHotkeys"]
+        else if (IsObject(this._cfg) && this._cfg.hotkeys is Map)
+            newHotkeys := this._cfg.hotkeys
+        else
+            newHotkeys := Map()
+
+        try this.hotkeyService.Stop()
+        try this.hotkeyService.Hydrate(newHotkeys)
+        try this.hotkeyService.Start()
+
+        if IsObject(this.log)
+        {
+            try this.log.Info("Hotkeys rebound: " . newHotkeys.Count
+                . " action(s), " . this.hotkeyService.Count() . " registered", "App")
+        }
+        if !this._headless
+            try TrayTip("SpeedKalandra", "Hotkeys updated.", "Mute")
     }
 
     ; ============================================================
@@ -937,6 +994,15 @@ class SpeedKalandraApp
         ; OK: persist the chosen path
         this._cfg.logFile := choice.path
         try this._PersistSettings()
+        ; v0.1.4 fix: also reconfigure the LogMonitor with the chosen
+        ; path. Without this, _logFilePath stays as "" (set in __New
+        ; with the empty cfg.logFile of a fresh install). The Start()
+        ; that runs later in app.Start() then calls logMonitor.Start()
+        ; which early-returns because the path looks unconfigured.
+        ; Result before this fix: user has to reload the app for the
+        ; new path to take effect, defeating the auto-reload feature.
+        if IsObject(this.logMonitor)
+            try this.logMonitor.Configure(choice.path)
         if IsObject(this.log)
             try this.log.Info("Client.txt path configured: " . choice.path, "App")
     }

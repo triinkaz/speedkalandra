@@ -63,6 +63,20 @@ class Events
     ; reload required.
     static LogFilePathChanged := "Evt.LogFilePathChanged"     ; data: {oldPath, newPath}
 
+    ; Published by SettingsDialog._OnSave when cfg.hotkeys changed in
+    ; any way (added/removed/rebound a key). App composition root
+    ; reacts by Stop + Hydrate + Start on HotkeyService so the new
+    ; bindings take effect without a full app reload.
+    static HotkeysChanged := "Evt.HotkeysChanged"             ; data: {oldHotkeys, newHotkeys}
+
+    ; Published by SettingsDialog._OnSave when cfg.vendorRegexes
+    ; changed in any slot. CompactLayoutWidget reacts by updating
+    ; the labels/colors of the V1/V2/V3 buttons in the overlay
+    ; without a full widget rebuild. The click handlers always read
+    ; cfg.vendorRegexes on-demand, so functionality is already live;
+    ; this event only refreshes the visual state.
+    static VendorRegexesChanged := "Evt.VendorRegexesChanged" ; data: {oldRegexes, newRegexes}
+
     ; --- App lifecycle ---
     static AppStarted  := "Evt.AppStarted"
     static AppStopping := "Evt.AppStopping"
