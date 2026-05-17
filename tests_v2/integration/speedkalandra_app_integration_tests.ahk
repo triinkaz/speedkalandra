@@ -90,6 +90,7 @@ class SpeedKalandraAppIntegrationTests extends TestCase
         "constructor_loads_zones_catalog",
         "constructor_does_not_throw_with_empty_ini",
         "constructor_no_run_active_initially",
+        "constructor_event_tracer_not_enabled_by_default",
 
         ; --- Run lifecycle via bus ---
         "new_run_via_command_starts_run",
@@ -106,10 +107,15 @@ class SpeedKalandraAppIntegrationTests extends TestCase
         ; --- Crash recovery ---
         "second_app_instance_hydrates_active_run_from_disk",
         "second_instance_resumes_timer_with_correct_base_ms",
+        "hydrated_run_propagates_run_id_to_stats_recorder",
+        "hydrated_run_finalize_saves_to_history",
 
         ; --- Stop ---
         "stop_does_not_throw_when_never_started",
         "stop_is_idempotent",
+
+        ; --- v0.1.4: Undo last save rebuilds PBs (consistency with Delete) ---
+        "undo_last_save_rebuilds_pbs_from_history",
 
         ; --- Wave 9: regression tests for cataloged bugs without direct coverage ---
         ; Bug #9 (AUDIT): Riverbank resets level on every entry. Fix:
@@ -205,6 +211,29 @@ class SpeedKalandraAppIntegrationTests extends TestCase
     constructor_no_run_active_initially()
     {
         Assert.False(this.app.runService.IsActive())
+    }
+
+    constructor_event_tracer_not_enabled_by_default()
+    {
+        ; v0.1.4: EventTraceLogger is opt-in. Even though the
+        ; interceptor object is instantiated during __New (so the
+        ; cost of the constructor is paid once and Start can later
+        ; flip it on without re-wiring), it must NOT be enabled until
+        ; Start() runs AND cfg.eventTracingEnabled is true.
+        ;
+        ; This test covers the construction half: defaults give
+        ; eventTracingEnabled=false and the interceptor reports
+        ; IsEnabled()=false. The Start() branch isn't exercised here
+        ; because Start triggers real SetTimers / WinActive polling
+        ; that we don't want firing inside the test process — the
+        ; unit-level coverage of the flag lives in AppSettings and
+        ; SettingsRepository tests.
+        Assert.False(this.app._cfg.eventTracingEnabled,
+            "Default cfg.eventTracingEnabled is false (privacy-preserving)")
+        Assert.True(IsObject(this.app.eventTracer),
+            "EventTraceLogger object is still instantiated for cheap flip-on later")
+        Assert.False(this.app.eventTracer.IsEnabled(),
+            "Interceptor not registered on the bus until Start() under the flag")
     }
 
     ; ============================================================
@@ -372,6 +401,116 @@ class SpeedKalandraAppIntegrationTests extends TestCase
     }
 
     ; ============================================================
+    ; v0.1.4: Hydration ordering fix (event subscriber sequencing)
+    ; ============================================================
+    ;
+    ; Before v0.1.4 SpeedKalandraApp.__New called
+    ; runService.Hydrate(hydratedState) in the MIDDLE of construction
+    ; — right after the run service itself was built, well before
+    ; RunStatsRecorder, the app's own _OnRunStartedForXp wiring, etc.
+    ;
+    ; When the loaded state had an active run, Hydrate published
+    ; Evt.RunStarted{hydrated:true}. The interceptors that hadn't been
+    ; constructed yet missed the event entirely. The most visible
+    ; consequence: RunStatsRecorder._runId stayed "", so finalizing
+    ; the hydrated run produced a snapshot with runId="" which
+    ; RunHistoryRepository.Save silently rejected (`if currentRunId =
+    ; "" return false`). The user lost the run.
+    ;
+    ; Fix: defer runService.Hydrate to the very end of __New, after
+    ; _WireEventHandlers(). All subscribers are then in place when
+    ; RunStarted{hydrated:true} fires. ZoneTrackingService had to be
+    ; updated to respect the hydrated:true flag so the event no
+    ; longer wipes the totals that were just restored from disk.
+
+    hydrated_run_propagates_run_id_to_stats_recorder()
+    {
+        ; Set up an in-progress run on disk via the first app instance.
+        this.app.bus.Publish(Commands.NewRunRequested, Map())
+        firstRunId := this.app.runService.GetRunId()
+        this.stubClock.AdvanceMs(60000)
+        this.app.runService.PersistTick()
+
+        try this.app.Stop()
+        this.app := ""
+
+        ; Construct a second instance — this triggers Hydrate.
+        secondClock := Fixtures.MakeFakeClock(2000000)
+        app2 := SpeedKalandraApp(Map(
+            "iniPath",          this.iniPath,
+            "zonesCsvPath",     this.zonesCsvPath,
+            "logPath",          this.logPath,
+            "runHistoryDir",    this.runHistoryDir,
+            "personalBestPath", this.pbPath,
+            "headless",         true,
+            "clock",            secondClock
+        ))
+
+        ; Before v0.1.4 this returned "" because RunStatsRecorder
+        ; was constructed after Hydrate fired.
+        Assert.Equal(firstRunId, app2.statsRecorder.GetRunId(),
+            "RunStatsRecorder receives runId from hydrated RunStarted (v0.1.4 fix)")
+
+        try app2.Stop()
+    }
+
+    hydrated_run_finalize_saves_to_history()
+    {
+        ; Set up a long enough run with zone time on disk.
+        this.app.bus.Publish(Commands.NewRunRequested, Map())
+        firstRunId := this.app.runService.GetRunId()
+
+        ; 5 minutes in Riverbank (well above the 3-min save threshold).
+        this._EnterZoneAndAdvance("The Riverbank", 300000)
+
+        ; Persist both timer baseMs and zone totals. In production
+        ; this happens every 5s through the _runPersistTimer SetTimer,
+        ; but the test setup does not call app.Start.
+        this.app.runService.PersistTick()
+        this.app.runState.SaveZoneTotals(
+            this.app.zoneTracker.GetTotalsForSnapshot())
+
+        try this.app.Stop()
+        this.app := ""
+
+        ; "Reboot" — second instance hydrates the in-progress run.
+        secondClock := Fixtures.MakeFakeClock(2000000)
+        app2 := SpeedKalandraApp(Map(
+            "iniPath",          this.iniPath,
+            "zonesCsvPath",     this.zonesCsvPath,
+            "logPath",          this.logPath,
+            "runHistoryDir",    this.runHistoryDir,
+            "personalBestPath", this.pbPath,
+            "headless",         true,
+            "clock",            secondClock
+        ))
+
+        ; Sanity: hydration produced a coherent state.
+        Assert.True(app2.runService.IsActive(), "sanity: hydrated as active")
+        Assert.Equal(firstRunId, app2.runService.GetRunId())
+        Assert.Equal(firstRunId, app2.statsRecorder.GetRunId(),
+            "sanity: statsRecorder received runId")
+        Assert.True(app2.zoneTracker.GetTotals().Has("The Riverbank"),
+            "sanity: zone totals survived RunStarted{hydrated:true}")
+
+        ; Finalize the hydrated run.
+        app2.bus.Publish(Commands.FinalizeRunRequested, Map())
+
+        ; A history file should now exist with the original runId.
+        ; Before v0.1.4 the save silently failed because the snapshot
+        ; had runId="".
+        files := []
+        Loop Files, this.runHistoryDir "\*.ini"
+            files.Push(A_LoopFileName)
+        Assert.Equal(1, files.Length,
+            "Hydrated run finalize saved to history (pre-v0.1.4 silently failed)")
+        Assert.Equal(firstRunId ".ini", files[1],
+            "Saved file has the hydrated runId")
+
+        try app2.Stop()
+    }
+
+    ; ============================================================
     ; Stop
     ; ============================================================
 
@@ -387,6 +526,59 @@ class SpeedKalandraAppIntegrationTests extends TestCase
         this.app.Stop()
         this.app.Stop()
         Assert.True(true)
+    }
+
+    ; ============================================================
+    ; v0.1.4: Undo last save rebuilds PBs from remaining history
+    ; ============================================================
+    ;
+    ; Pre-v0.1.4 behavior:
+    ;   UndoLastSave deleted the run file but left PersonalBests
+    ;   pointing at the deleted run. The user had to manually click
+    ;   "Reset PBs" to fix the stale state — inconsistent with the
+    ;   "Delete" button in RunHistoryDialog, which DID rebuild PBs.
+    ;
+    ; Fix (v0.1.4):
+    ;   UndoLastSave now calls PersonalBestService.RebuildFromHistory
+    ;   after a successful delete (mirrors RunHistoryDialog). The new
+    ;   _RebuildPbsFromHistory helper on the app loads every surviving
+    ;   run and re-derives PBs from them.
+
+    undo_last_save_rebuilds_pbs_from_history()
+    {
+        ; Complete one run — it becomes the PB.
+        this.app.bus.Publish(Commands.NewRunRequested, Map())
+        this._EnterZoneAndAdvance("The Riverbank", 300000)
+        producedRunId := this.app.runService.GetRunId()
+        this.app.bus.Publish(Commands.FinalizeRunRequested, Map())
+
+        ; Sanity: PB is set and the run file exists.
+        Assert.True(this.app.personalBest.HasRunPb(),
+            "sanity: PB updated after finalize")
+        Assert.Equal(producedRunId, this.app.personalBest.GetRunPbRunId())
+        Assert.Equal(1, this._ListRunFiles().Length, "sanity: run saved to disk")
+
+        ; Production sets _lastSavedRunId inside _MarkUndoableSave, but
+        ; that path is gated by !_headless (it also adds a tray menu
+        ; entry and arms a 60s SetTimer). In headless tests we set the
+        ; field directly so UndoLastSave has a target.
+        this.app._lastSavedRunId := producedRunId
+
+        this.app.UndoLastSave()
+
+        ; File removed from disk.
+        Assert.Equal(0, this._ListRunFiles().Length,
+            "Run file removed from history after undo")
+
+        ; PB rebuilt from the (now empty) history: the undone run no
+        ; longer contributes, and with no surviving runs the PB is
+        ; cleared. This is the assertion that would have FAILED before
+        ; the v0.1.4 fix — the PB used to be left pointing at the
+        ; deleted run.
+        Assert.False(this.app.personalBest.HasRunPb(),
+            "PB rebuilt from history: no surviving runs => no PB")
+        Assert.Equal(0,  this.app.personalBest.GetRunPbMs())
+        Assert.Equal("", this.app.personalBest.GetRunPbRunId())
     }
 
     ; ============================================================

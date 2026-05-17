@@ -71,9 +71,17 @@ AutoHotkey.exe speedkalandra.ahk
 
 That's the definitive entry point. Requires AutoHotkey v2.
 
-## No automated tests (v17.15)
+## Automated tests (v0.1.3+)
 
-The legacy suite (~2500 tests) referenced classes that went to `_LIXEIRA/` during the demolition of Waves 1-6. It was archived in `_LIXEIRA/onda_7_tests_obsoletas/` and was not migrated. A deliberate decision to go to production without automated coverage in this version. Rewrite planned for Wave 8.
+The legacy suite (~2500 tests) referenced classes that went to `_LIXEIRA/` during the demolition of Waves 1-6 and was archived there. A new suite was rewritten from scratch under `tests_v2/` with a micro test runner in pure AHK v2 (no external deps). Current coverage: **1558 unit + integration tests** across `core/`, `domain/`, `infra/`, `app/services/`, `ui/`, plus end-to-end integration of `SpeedKalandraApp`.
+
+To run:
+
+```
+"C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe" tests_v2\run_tests.ahk
+```
+
+See `tests_v2/README.md` for framework details, conventions, and wave-by-wave coverage notes.
 
 ## Migration status
 

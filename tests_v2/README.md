@@ -139,7 +139,7 @@ Current progress:
 - [ ] **Wave 8**: SpeedKalandraApp end-to-end integration (includes R11 fix)
 - [ ] **Wave 9**: regression of catalogued bugs
 
-Current total: **1510 green tests in ~21 seconds**.
+Current total: **1567 green tests in ~25 seconds**.
 
 ## Strategies per wave
 

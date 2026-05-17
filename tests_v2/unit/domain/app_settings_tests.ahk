@@ -35,6 +35,7 @@ class AppSettingsTests extends TestCase
         "defaults_auto_pause_on_focus_is_true",
         "defaults_death_penalty_settings",
         "defaults_disclaimer_not_acknowledged",
+        "defaults_event_tracing_disabled_by_default",
         "defaults_auto_finalize_regex_empty",
         "defaults_auto_start_regex_is_wounded_man_line",
 
@@ -52,6 +53,7 @@ class AppSettingsTests extends TestCase
         "from_map_reads_death_penalty_settings",
         "from_map_clamps_negative_death_penalty_ms_to_zero",
         "from_map_reads_disclaimer_acknowledged",
+        "from_map_reads_event_tracing_enabled",
         "from_map_reads_auto_finalize_regex",
         "from_map_reads_auto_start_regex_allowing_empty",
         "from_map_strict_string_treats_empty_as_missing",
@@ -145,6 +147,14 @@ class AppSettingsTests extends TestCase
     defaults_disclaimer_not_acknowledged()
     {
         Assert.False(AppSettings.Defaults().disclaimerAcknowledged)
+    }
+
+    defaults_event_tracing_disabled_by_default()
+    {
+        ; v0.1.4: EventTraceLogger is opt-in. A fresh install never
+        ; starts the interceptor unless the user explicitly enables
+        ; it under [Diagnostics] in speedkalandra.ini.
+        Assert.False(AppSettings.Defaults().eventTracingEnabled)
     }
 
     defaults_auto_finalize_regex_empty()
@@ -264,6 +274,21 @@ class AppSettingsTests extends TestCase
     {
         cfg := AppSettings.FromMap(Map("disclaimerAcknowledged", true))
         Assert.True(cfg.disclaimerAcknowledged)
+    }
+
+    from_map_reads_event_tracing_enabled()
+    {
+        ; Explicit true accepted
+        cfg := AppSettings.FromMap(Map("eventTracingEnabled", true))
+        Assert.True(cfg.eventTracingEnabled)
+
+        ; String coercion (matches how SettingsRepository delivers the value)
+        cfg2 := AppSettings.FromMap(Map("eventTracingEnabled", "1"))
+        Assert.True(cfg2.eventTracingEnabled)
+
+        ; Missing key falls back to the safe default (false)
+        cfg3 := AppSettings.FromMap(Map())
+        Assert.False(cfg3.eventTracingEnabled)
     }
 
     from_map_reads_auto_finalize_regex()

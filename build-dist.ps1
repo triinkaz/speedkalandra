@@ -99,6 +99,10 @@ if ($sourceFull.StartsWith($destFull + [System.IO.Path]::DirectorySeparatorChar,
     Write-Error "DestDir nao pode ser ancestor do SourceDir (apagaria o projeto)."
     exit 1
 }
+if ($destFull.StartsWith($sourceFull + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)) {
+    Write-Error "DestDir nao pode ser descendente do SourceDir (geraria copia recursiva). Use um diretorio fora do projeto, ex: '..\SpeedKalandra-dist'."
+    exit 1
+}
 
 Write-Host ""
 Write-Host "=== SpeedKalandra :: Build Dist ===" -ForegroundColor Cyan
@@ -300,6 +304,7 @@ DEFAULT HOTKEYS:
    Ctrl+Alt+S    Settings
    F8            Toggle overlay
    Ctrl+F9       Toggle Micro mode
+   Ctrl+F8       Toggle Steve mode
 
 COMPACT OVERLAY:
    LINE 1: Act N . Zone Name . zone_time / total_time

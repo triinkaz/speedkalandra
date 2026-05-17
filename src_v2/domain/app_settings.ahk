@@ -27,6 +27,7 @@
 ;   [AutoFinalize] Regex (PCRE string — empty = disabled)
 ;   [AutoStart]    Regex (PCRE string — empty = disabled)
 ;   [VendorRegexes] Slot1, Slot2, Slot3 (max 50 chars each)
+;   [Diagnostics]  EventTracingEnabled (v0.1.4 — opt-in only)
 ;   [Hotkeys]      <action> -> keyBind
 ;   [Window]       -> WindowState (composite)
 ;   [Overlay]      -> OverlayLayout (composite)
@@ -74,6 +75,15 @@ class AppSettings
     ; Default false = shown on every boot until the user ticks the checkbox.
     ; Persisted in [Disclaimer].Acknowledged of speedkalandra.ini.
     disclaimerAcknowledged := false
+
+    ; --- Diagnostics (v0.1.4) ---
+    ; Opt-in flag for the EventTraceLogger interceptor on the EventBus.
+    ; When true, every Publish is logged to speedkalandra.log including
+    ; the full payload (which itself contains raw Client.txt lines via
+    ; the LogLineRead event). Default false so a normal install never
+    ; persists that data — the user has to explicitly enable it for
+    ; diagnostics. Persisted in [Diagnostics].EventTracingEnabled.
+    eventTracingEnabled := false
 
     ; --- Auto-finalize (Wave 6) ---
     autoFinalizeRegex := ""
@@ -159,6 +169,9 @@ class AppSettings
 
         ; --- Disclaimer (v17.15.2) ---
         cfg.disclaimerAcknowledged := AppSettings._GetBool(data, "disclaimerAcknowledged", cfg.disclaimerAcknowledged)
+
+        ; --- Diagnostics (v0.1.4) ---
+        cfg.eventTracingEnabled := AppSettings._GetBool(data, "eventTracingEnabled", cfg.eventTracingEnabled)
 
         ; --- Auto-finalize ---
         cfg.autoFinalizeRegex := AppSettings._GetStr(data, "autoFinalizeRegex", cfg.autoFinalizeRegex)

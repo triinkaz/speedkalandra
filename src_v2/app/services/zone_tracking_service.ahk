@@ -531,19 +531,33 @@ class ZoneTrackingService
 
     _OnRunStarted(data)
     {
-        ; New run: clear totals, mark runActive.
-        ; If there is already a registered zone (from the seed or a
-        ; previous ZoneChanged), start counting from now.
-        this._totals := Map()
-        this._firstEnteredAt := Map()   ; v0.1.4: fresh run, no zone seen yet
+        ; A new run normally clears totals and starts counting from
+        ; the registered zone (if any). The hydrated:true variant is
+        ; different: RunService.Hydrate publishes RunStarted{hydrated:
+        ; true} at the end of the composition root's __New so that
+        ; services constructed later (RunStatsRecorder, etc.) can
+        ; pick up the run id. By that point the composition root has
+        ; ALREADY hydrated _totals from disk (via Hydrate(map) +
+        ; SetRunActive(true)) — wiping them here would lose every ms
+        ; tracked before the previous shutdown. Same convention used
+        ; by SpeedKalandraApp._OnRunStartedForXp.
+        isHydrate := IsObject(data) && data.Has("hydrated") && data["hydrated"]
+        if !isHydrate
+        {
+            this._totals := Map()
+            this._firstEnteredAt := Map()
+        }
         this._runActive := true
         this._timerPaused := false   ; v0.1.1: fresh start
         if (this._activeZone != "")
         {
             this._startMs := this._clock.NowMs()
-            ; v0.1.4: record the active zone (carried over from the
-            ; seed/previous state) as the first entry of the new run.
-            this._firstEnteredAt[this._activeZone] := FormatTime(A_Now, "yyyy-MM-dd HH:mm:ss")
+            ; Only stamp the first-entry timestamp for a fresh run.
+            ; On hydrate the active zone is "" (Hydrate wipes it),
+            ; so this branch is normally not taken; the guard is
+            ; defensive in case Hydrate semantics ever change.
+            if !isHydrate && !this._firstEnteredAt.Has(this._activeZone)
+                this._firstEnteredAt[this._activeZone] := FormatTime(A_Now, "yyyy-MM-dd HH:mm:ss")
         }
     }
 

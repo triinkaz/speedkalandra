@@ -65,6 +65,7 @@ Run `build-dist.ps1` to generate a self-contained `SpeedKalandra-dist/` folder y
 | `Ctrl+Alt+S` | Open settings |
 | `F8` | Toggle overlay visibility |
 | `Ctrl+F9` | Toggle Micro mode |
+| `Ctrl+F8` | Toggle Steve mode |
 
 All hotkeys are remappable in Settings.
 
@@ -81,13 +82,27 @@ All hotkeys are remappable in Settings.
 
 These are gitignored — they stay on your machine.
 
+## Testing
+
+The project ships with a self-contained AHK v2 test suite under `tests_v2/` (no external dependencies). Run it with:
+
+```
+"C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe" tests_v2\run_tests.ahk
+```
+
+~1567 tests covering core primitives, domain, persistence, services, UI bases, and end-to-end app wiring. Output goes to `tests_v2/tests_output.log` plus a final MsgBox with the pass/fail count. Filter by substring: `AutoHotkey64.exe tests_v2\run_tests.ahk EventBus`. Conventions and assertion API are in [`tests_v2/README.md`](tests_v2/README.md).
+
 ## Architecture
 
-Composition Root + EventBus + Services + Domain layers. For a tour of the code structure, see [`src_v2/README.md`](src_v2/README.md). Deeper history (the "demolition" of the legacy paradigm) lives in `ARCHITECTURE.md`.
+[`ARCHITECTURE.md`](ARCHITECTURE.md) is the design tour: layered structure (`core` / `domain` / `infra` / `app` / `ui`), the EventBus, run persistence, run history format, AHK v2 pitfalls encoded in the code. [`src_v2/README.md`](src_v2/README.md) is a shorter map of the source tree.
 
 ## Contributing
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md). TL;DR: PRs welcome, response times are slow, set expectations accordingly.
+
+## Changelog
+
+See [`CHANGELOG.md`](CHANGELOG.md) for release notes.
 
 ## License
 

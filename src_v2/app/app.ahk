@@ -194,7 +194,16 @@ class SpeedKalandraApp
         this.actCheckpoints := ActCheckpointTracker(this.bus, this.timer)
 
         hydratedState := this.runState.Load()
-        try this.runService.Hydrate(hydratedState)
+        ; runService.Hydrate intentionally NOT called here. When the
+        ; hydrated state has an active run, Hydrate publishes
+        ; Evt.RunStarted{hydrated:true} — and several services that
+        ; depend on that event (RunStatsRecorder, ZoneTrackingService,
+        ; the _OnRunStartedForXp handler, etc.) are constructed below.
+        ; If we hydrated here those subscribers would miss the event
+        ; and end up with stale state (notably RunStatsRecorder would
+        ; keep _runId="" and the finalized hydrated run would silently
+        ; fail to save to history). The call is deferred to the end of
+        ; __New, after every service is wired up.
 
         ; v0.1.4: pass the LogService so transitions (focus/process) are
         ; surfaced in speedkalandra.log for diagnostics.
@@ -333,6 +342,31 @@ class SpeedKalandraApp
         this.importPreviewDialog := ImportPreviewDialog(this.bus, this.runImportService, headless)
 
         this._WireEventHandlers()
+
+        ; Subscribers are all in place — NOW it is safe to hydrate the
+        ; run service. If the loaded RunState has an active run, this
+        ; publishes Evt.RunStarted{hydrated:true} which propagates to
+        ; RunStatsRecorder (sets _runId), ZoneTrackingService
+        ; (re-arms timing without wiping the totals we just hydrated
+        ; from disk), AutoStartService (sets _runActive), and the
+        ; app's _OnRunStartedForXp handler (which is a no-op for
+        ; hydrate by design).
+        try
+        {
+            this.runService.Hydrate(hydratedState)
+        }
+        catch as ex
+        {
+            ; Hydrate failure is recoverable (the user just starts a
+            ; fresh run) but must be surfaced in the log so it isn't
+            ; mistaken for normal first-boot behavior. Failure modes
+            ; we've seen: corrupt RunState INI, type mismatch on
+            ; loaded fields, TimerService internal error.
+            try this.log.Warn("Failed to hydrate run service: " . ex.Message
+                . " | What: " . (ex.HasOwnProp("What") ? ex.What : "?")
+                . " | Line: " . (ex.HasOwnProp("Line") ? ex.Line : "?")
+                . " | File: " . (ex.HasOwnProp("File") ? ex.File : "?"), "App")
+        }
     }
 
     Start()
@@ -412,7 +446,20 @@ class SpeedKalandraApp
         ; done. Volume will be high (every Tick at ~300ms plus all
         ; gameplay events) — LogService size-based rotation (5MB) and
         ; daily rotation handle file growth.
-        try this.eventTracer.Start()
+        ;
+        ; OPT-IN (v0.1.4): only starts when cfg.eventTracingEnabled is
+        ; true. The interceptor persists raw Client.txt lines (via the
+        ; LogLineRead event payload) to speedkalandra.log, which the
+        ; user may share when reporting bugs. A normal install keeps
+        ; this off so that log attaches contain only INFO/WARN/ERROR
+        ; messages and no raw game text. To enable it, set the flag
+        ; manually in speedkalandra.ini under [Diagnostics] or via the
+        ; Settings dialog when this surface is exposed there.
+        if this._cfg.eventTracingEnabled
+        {
+            try this.eventTracer.Start()
+            try this.log.Info("Event tracing ENABLED (interceptor active). Disable in [Diagnostics] when not diagnosing.", "App")
+        }
 
         this._runPersistTimer := () => this._PersistRunData()
         try SetTimer(this._runPersistTimer, 5000)
@@ -1381,12 +1428,18 @@ If it helps your runs, great. If it doesn't fit your needs, that's fine too - th
     ;   2. _MarkUndoableSave stores runId + adds tray menu item
     ;      + arms a 60s SetTimer
     ;   3a. User clicks "Undo last save" -> UndoLastSave() deletes
-    ;       file + clears everything
+    ;       file + rebuilds PBs from the remaining runs
     ;   3b. 60s pass -> _ExpireUndoableSave() removes menu item and
     ;       clears runId
     ;
-    ; PBs are NOT reverted on undo (deliberate decision — see F1).
-    ; To clear an incorrect PB, use "Reset PBs" in the tray menu.
+    ; v0.1.4 — PBs ARE rebuilt on undo (changed from v17.14).
+    ;   Original v17.14 behavior left PBs pointing at the deleted run
+    ;   (the tray tip said "PBs were not reverted" and asked the user
+    ;   to use "Reset PBs" instead). That was inconsistent with the
+    ;   Delete button in RunHistoryDialog, which calls
+    ;   PersonalBestService.RebuildFromHistory to recompute PBs from
+    ;   the surviving runs. Now both paths share the same semantics:
+    ;   a deleted run no longer contributes to any PB.
     ; ============================================================
     _MarkUndoableSave(runId)
     {
@@ -1430,6 +1483,15 @@ If it helps your runs, great. If it doesn't fit your needs, that's fine too - th
         catch
             deleted := false
 
+        ; v0.1.4: rebuild PBs from the surviving runs so the deleted
+        ; run no longer contributes to global, per-act, or per-zone
+        ; PBs. Mirrors RunHistoryDialog._OnDeleteSelected.
+        pbChanged := false
+        if deleted
+        {
+            try pbChanged := this._RebuildPbsFromHistory()
+        }
+
         ; Clear internal state
         this._lastSavedRunId := ""
         if (this._undoTimerFn != "")
@@ -1442,15 +1504,53 @@ If it helps your runs, great. If it doesn't fit your needs, that's fine too - th
         if IsObject(this.log)
         {
             try this.log.Info("Undo last save: " . currentRunId
-                . (deleted ? " (removed)" : " (file not found)"), "App")
+                . (deleted ? " (removed)" : " (file not found)")
+                . (pbChanged ? " | PBs rebuilt from history" : ""), "App")
         }
         if !this._headless
         {
-            msg := deleted
-                ? "Last save removed from history. (PBs were not reverted.)"
-                : "Last save not found (already removed?)."
+            if deleted
+            {
+                msg := pbChanged
+                    ? "Last save removed. PBs were rebuilt from history."
+                    : "Last save removed (no PB changes)."
+            }
+            else
+            {
+                msg := "Last save not found (already removed?)."
+            }
             try TrayTip("SpeedKalandra", msg, "Mute")
         }
+    }
+
+    ; ============================================================
+    ; _RebuildPbsFromHistory (v0.1.4)
+    ;
+    ; Loads every surviving run from disk (full Load, including
+    ; details + actCheckpoints) and feeds them to
+    ; PersonalBestService.RebuildFromHistory. Returns true if any
+    ; PB changed, false otherwise.
+    ;
+    ; Cost: O(N) full INI reads. Typically N < 100, total < 500ms.
+    ; Acceptable for a user-initiated undo. Mirrors the helper of
+    ; the same name in RunHistoryDialog so both delete paths share
+    ; semantics.
+    ; ============================================================
+    _RebuildPbsFromHistory()
+    {
+        if !IsObject(this.personalBest)
+            return false
+        runs := []
+        try
+        {
+            for _, rid in this.runHistory.ListRunIds()
+            {
+                br := this.runHistory.Load(rid)
+                if IsObject(br)
+                    runs.Push(br)
+            }
+        }
+        return this.personalBest.RebuildFromHistory(runs)
     }
 
     _ExpireUndoableSave()

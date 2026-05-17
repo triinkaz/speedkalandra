@@ -456,10 +456,10 @@ AutoHotkey64.exe tests_v2\run_tests.ahk regression_bug
 | `domain/` | Duration, Ids, WindowState, RunState, XpRules, OverlayLayout, AppSettings | ~135 |
 | `infra/io/` | AtomicWriter, TextEncoding, IniFile, CsvFile, JsonFile, RunExportFormat | ~140 |
 | `infra/` repos | ZonesCatalog, PersonalBest, RunState, RunHistory, Settings | ~150 |
-| `app/services/` | All 20 services (TimerService gained 13 tests for `AddPenaltyMs` in v0.1.3) | ~840 |
+| `app/services/` | All 20 services (TimerService gained 13 tests for `AddPenaltyMs` in v0.1.3; ZoneTrackingService gained 2 for the hydrated-flag fix in v0.1.4) | ~840 |
 | `ui/` | Theme, HotkeyFormatter, WidgetBase, LayoutWidgetBase | ~115 |
-| `integration/` | SpeedKalandraApp full wire-up + Bug #9 regression + death penalty handler (v0.1.3, 6 tests) | ~28 |
-| **Total** | | **~1557** |
+| `integration/` | SpeedKalandraApp full wire-up + Bug #9 regression + death penalty handler (v0.1.3, 6 tests) + EventTraceLogger opt-in + Undo PB rebuild + hydration ordering (v0.1.4, 5 tests) | ~33 |
+| **Total** | | **~1567** |
 
 Tests run in ~25 s on a typical desktop. Headless mode (`headless := true` constructor arg on widgets/dialogs) skips Gui creation so the entire surface is exercisable.
 

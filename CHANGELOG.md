@@ -1,0 +1,84 @@
+# Changelog
+
+All notable changes to SpeedKalandra are tracked here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+Each release section is short and user-facing; engineering rationale lives next to the code (or in `ARCHITECTURE.md` when it shapes the design). Historical pre-release version tags (`v17.x`) survive in source comments as change-traceability metadata and are not surfaced in releases.
+
+## [Unreleased]
+
+### Fixed
+
+- **Hydration ordering bug (RunStatsRecorder silently dropped hydrated runs).** `SpeedKalandraApp.__New` used to call `RunService.Hydrate` mid-construction. When the loaded state had an active run, `Hydrate` published `Evt.RunStarted{hydrated:true}` before `RunStatsRecorder` (and other downstream subscribers) had been created. Finalizing the hydrated run later produced a snapshot with `runId=""`, which `RunHistoryRepository.Save` silently rejected — the run was lost. `Hydrate` is now deferred to the end of `__New` after `_WireEventHandlers()`, and `ZoneTrackingService._OnRunStarted` respects the `hydrated:true` flag so the in-flight event no longer wipes the totals that were just restored from disk. Regression tests added in `zone_tracking_service_tests.ahk` and `speedkalandra_app_integration_tests.ahk`.
+- **`LoadingDetectionService` false positives from non-game windows.** The default window provider matched the substring `"Path of Exile 2"`, which also matched Chrome tabs on the PoE2 wiki and Discord channels with that text. The HUD scanner then sampled pixels from the wrong window. Replaced with an `ahk_exe` scan over the same canonical list `FocusAutoPauseService` uses (`PathOfExile2Steam.exe`, `PathOfExile2_x64.exe`, etc.), and lock every follow-up `WinGetMinMax` / `WinGetPos` to the resolved HWND via `ahk_id`.
+- **`UndoLastSave` left personal bests pointing at the deleted run.** Inconsistent with `RunHistoryDialog.Delete`, which already rebuilt PBs. `UndoLastSave` now invokes a new `_RebuildPbsFromHistory` helper after a successful delete (mirrors the dialog), so deleting the most-recent run via the tray immediately purges any PBs the deleted run contributed to.
+
+### Changed
+
+- **`EventTraceLogger` is now opt-in.** New `[Diagnostics].EventTracingEnabled` INI flag (default `0`). When false, the bus interceptor is constructed but never registered, so a normal install never persists raw `Client.txt` lines into `speedkalandra.log`. Users who need event-level traces for a bug report flip the flag (see `CONTRIBUTING.md`). Documented in `AppSettings` and surfaced via `SettingsRepository._{Load,Save}Diagnostics`.
+
+### Build
+
+- **`build-dist.ps1` rejects descendant destinations.** Running `.\build-dist.ps1 -DestDir ".\dist"` used to enter a recursive copy. Now both ancestor and descendant relationships between source and destination are rejected with a clear error.
+
+### Documentation
+
+- README, `src_v2/README.md`, `CONTRIBUTING.md`, `tests_v2/README.md` reconciled with reality: the automated test suite is acknowledged in every doc that previously claimed it didn't exist. README now lists `Ctrl+F8 — Toggle Steve mode` alongside the other hotkeys.
+- `CONTRIBUTING.md` documents the `[Diagnostics].EventTracingEnabled` flag for bug reports.
+- This file (`CHANGELOG.md`) exists now.
+
+### Tests
+
+- +5 from the docs/opt-in/undo work: `AppSettings.defaults_event_tracing_disabled_by_default`, `AppSettings.from_map_reads_event_tracing_enabled`, `SettingsRepository.save_load_preserves_diagnostics_event_tracing`, `SpeedKalandraAppIntegration.constructor_event_tracer_not_enabled_by_default`, `SpeedKalandraAppIntegration.undo_last_save_rebuilds_pbs_from_history`.
+- +4 from the hydration fix: `ZoneTrackingService.run_started_with_hydrated_flag_preserves_totals`, `ZoneTrackingService.run_started_without_hydrated_flag_wipes_totals`, `SpeedKalandraAppIntegration.hydrated_run_propagates_run_id_to_stats_recorder`, `SpeedKalandraAppIntegration.hydrated_run_finalize_saves_to_history`.
+
+## [v0.1.3] — 2026-05
+
+### Added
+
+- **Client.txt setup dialog on first boot.** When `cfg.logFile` is empty or points to a missing file, a modal dialog appears with a pre-filled Steam path and a Browse button. Cancel calls `ExitApp()` — the app refuses to run without a valid log path.
+- **Death penalty applied to the live timer.** `TimerService.AddPenaltyMs(ms)` and an `_OnDeathApplyTimerPenalty` handler subscribed to `Evt.DeathDetected`. With `cfg.deathPenaltyEnabled = true` (default) the timer jumps forward by `cfg.deathPenaltyMs` (default 2 min 30 s) the moment a death is detected, so the user no longer sees an inconsistency between the overlay timer and the post-finalize plot.
+
+### Changed
+
+- **Settings UI cleanup.** Removed the unused `Patch` field; the value is still stored internally (`cfg.gamePatch = "Unknown"`) for back-compatibility with old saved runs. Fixed a visual bug where the Client.txt Edit auto-expanded vertically when the path was long.
+
+### Tests
+
+- 19 new tests (13 unit covering `TimerService.AddPenaltyMs`, 6 integration covering the death-penalty handler's guard paths).
+
+## [v0.1.2]
+
+### Fixed
+
+- **Loading-detection timeouts no longer silently discarded** (Bug #5). When a loading screen exceeded `cfg.loadingVisualMaxMs` (default 90 s, slow PCs), `LoadingDetectionService` correctly detected the timeout but then dropped the event via a `durationMs > maxMs` filter in `_End`. The HUD-return event for that loading never reached the bus, so the run plot underestimated total loading time. Timeouts now publish with the real duration (no clamp).
+
+### Changed
+
+- **Duration formatting consolidated** (audit #19). Four near-identical copies of `FormatMs` were collapsed into a single `Duration.FormatMs` in `domain/values/duration.ahk`. All call sites updated.
+- **Multi-line log entries are quieter** (audit #26). Stack-trace style entries now indent continuation lines instead of producing N separate timestamped rows.
+- **Version visible in three UI surfaces** (audit #30): tray tooltip, Settings window title, run plot footer.
+
+## [v0.1.1]
+
+### Fixed
+
+- **`TextEncoding.ConvertUtf16ToUtf8` and `MigrateIniToUtf8` removed** (Bug #2). The migration produced INIs with a UTF-8 BOM, and AHK v2's `IniRead(path, section, key, default)` silently returns the default on UTF-8 BOM files. Result: every key-based read after migration returned the fallback value — settings, run state, personal bests all looked freshly-installed. Reverted to UTF-16 LE BOM throughout. Documented in `text_encoding.ahk` and `ARCHITECTURE.md` §14.
+- **"Lechtansi" bug: zone timer kept ticking during pause.** A `[SCENE]` line emitted by the game while alt-tabbed became a `ZoneChanged` event, which restarted `_startMs` in `ZoneTrackingService` even though `TimerPaused` had been observed earlier. Added a `_timerPaused` flag so `_OnZoneChanged` respects pause state.
+
+## [v0.1.0] — first public release
+
+Switched to public SemVer (`MAJOR.MINOR.PATCH`). Pre-1.0 signals "functional, evolving, no API-stability commitment" and pairs with the in-app AI-assistance disclaimer.
+
+### Added
+
+- **Export / import of run history** as JSON. `RunExportService` serializes runs (optionally with PBs, optionally anonymized); `RunImportService` previews + applies imports with conflict resolution by content signature. Two new dialogs (`ExportOptionsDialog`, `ImportPreviewDialog`).
+
+### Removed
+
+- Legacy `_LIXEIRA/` (deleted from gitignored tree) — campaign route system, step-based splits, replay engine, gem planner, build planner. Pre-rewrite paradigm; no migration path. Final wave of the demolition that started in pre-public v17.x development.
+
+---
+
+## Pre-release history (`v17.x`, internal)
+
+The `v17.x` tags appear in source comments as change-traceability metadata from the pre-public iteration of the project, when the codebase was being incrementally rewritten under the paradigm now described in `ARCHITECTURE.md`. They have no SemVer mapping. The rewrite produced the layered architecture (`core/`, `domain/`, `infra/`, `app/`, `ui/`), the EventBus, the repository pattern around INI persistence, and the test framework — see `ARCHITECTURE.md` for the resulting design.

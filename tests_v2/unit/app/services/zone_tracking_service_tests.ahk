@@ -140,6 +140,8 @@ class ZoneTrackingServiceTests extends TestCase
         "run_started_sets_run_active_true",
         "run_started_starts_timer_when_zone_already_known",
         "run_started_does_not_start_timer_when_no_active_zone",
+        "run_started_with_hydrated_flag_preserves_totals",
+        "run_started_without_hydrated_flag_wipes_totals",
 
         ; --- RunReset / RunCancelled ---
         "run_reset_clears_totals_and_active_zone",
@@ -716,6 +718,46 @@ class ZoneTrackingServiceTests extends TestCase
     {
         this.bus.Publish(Events.RunStarted, Map("runId", "x"))
         Assert.False(this.svc.IsActive())
+    }
+
+    run_started_with_hydrated_flag_preserves_totals()
+    {
+        ; v0.1.4 regression: SpeedKalandraApp.__New now defers
+        ; runService.Hydrate to the very end so that subscribers
+        ; constructed downstream (RunStatsRecorder, etc.) receive
+        ; the RunStarted event. By the time the event fires,
+        ; ZoneTrackingService has already been hydrated from disk
+        ; (Hydrate(map) + SetRunActive(true)). If _OnRunStarted wiped
+        ; _totals here, every ms tracked before the previous shutdown
+        ; would be lost. The hydrated:true flag instructs the handler
+        ; to skip the wipe.
+        this.svc.Hydrate(Map("The Riverbank", 180000, "Mud Burrow", 60000))
+        this.svc.SetRunActive(true)
+
+        this.bus.Publish(Events.RunStarted, Map(
+            "runId", "hydrated_run",
+            "hydrated", true
+        ))
+
+        Assert.Equal(180000, this.svc.GetZoneTotal("The Riverbank"),
+            "Hydrated totals must survive RunStarted{hydrated:true}")
+        Assert.Equal(60000, this.svc.GetZoneTotal("Mud Burrow"))
+        Assert.True(this.svc.IsRunActive(),
+            "Run-active flag stays true after hydrated RunStarted")
+    }
+
+    run_started_without_hydrated_flag_wipes_totals()
+    {
+        ; Negative case for the previous test: a normal new run
+        ; (no hydrated flag) must STILL wipe totals — otherwise a
+        ; fresh run would inherit ghost time from the previous one.
+        this.svc.Hydrate(Map("Some Zone", 12345))
+
+        this.bus.Publish(Events.RunStarted, Map("runId", "fresh"))
+
+        Assert.Equal(0, this.svc.GetZoneTotal("Some Zone"),
+            "Normal RunStarted (no hydrated flag) still wipes totals")
+        Assert.True(this.svc.IsRunActive())
     }
 
     ; ============================================================

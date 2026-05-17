@@ -15,6 +15,8 @@ Open a GitHub issue with:
 - **What you expected** vs **what happened**
 - **Log snippet** from `data/speedkalandra.log` around the issue timestamp (the file rotates at 5MB; if you can't find the timestamp, attach the whole file)
 
+For bugs that depend on event order or timing, you can enable detailed event tracing first: set `EventTracingEnabled=1` under `[Diagnostics]` in `speedkalandra.ini`, reproduce the bug, then attach the log. Be aware that the trace includes raw lines from `Client.txt` (character names, zones visited), so review the file before posting publicly.
+
 If you can reproduce it consistently, say so. If it happened once and went away, describe the conditions.
 
 ## Suggesting features
@@ -36,7 +38,7 @@ For non-trivial changes, open an issue first to check it's a direction I'd merge
 1. Install [AutoHotkey v2](https://www.autohotkey.com/) (it must be v2, not v1)
 2. Clone the repo
 3. Open `speedkalandra.ahk` to test, edit files in `src_v2/`
-4. There is no automated test suite (the legacy one is archived in `_LIXEIRA/`, gitignored). Test manually against your own PoE2 logs.
+4. Automated test suite under `tests_v2/` (~1558 tests, pure AHK v2, no external deps). Run with `"C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe" tests_v2\run_tests.ahk`. Add tests for new behavior under `tests_v2/unit/<layer>/` — see `tests_v2/README.md` for conventions and the assertion API.
 
 ### Style
 

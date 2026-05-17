@@ -38,6 +38,7 @@ class SettingsRepositoryTests extends TestCase
         "save_load_preserves_auto_start_regex",
         "save_load_preserves_vendor_regexes",
         "save_load_preserves_disclaimer_ack",
+        "save_load_preserves_diagnostics_event_tracing",
         "save_load_preserves_hotkeys",
         "save_load_preserves_window_micro_locked",
         "save_load_preserves_overlay_hover_hide",
@@ -240,6 +241,33 @@ class SettingsRepositoryTests extends TestCase
 
         loaded := repo.Load()
         Assert.True(loaded.disclaimerAcknowledged)
+    }
+
+    save_load_preserves_diagnostics_event_tracing()
+    {
+        ; v0.1.4: opt-in event tracing flag.
+        ; Default is false (privacy-preserving), but the user can flip
+        ; it on for diagnosing event-order bugs and we must round-trip
+        ; the choice across app restarts.
+        mainIni := IniFile(Fixtures.TempPath("ini"))
+        repo := SettingsRepository(mainIni)
+
+        cfg := AppSettings.Defaults()
+        Assert.False(cfg.eventTracingEnabled, "sanity: default is false")
+
+        cfg.eventTracingEnabled := true
+        repo.Save(cfg)
+
+        loaded := repo.Load()
+        Assert.True(loaded.eventTracingEnabled,
+            "[Diagnostics].EventTracingEnabled round-trips through INI")
+
+        ; Flip back off and confirm the false value also round-trips
+        loaded.eventTracingEnabled := false
+        repo.Save(loaded)
+        reloaded := repo.Load()
+        Assert.False(reloaded.eventTracingEnabled,
+            "Flipping back to false also persists")
     }
 
     save_load_preserves_hotkeys()

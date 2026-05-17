@@ -88,6 +88,21 @@ class LoadingDetectionService
     static DEFAULT_MIN_MS  := 250
     static DEFAULT_MAX_MS  := 90000
 
+    ; v0.1.4: list of known PoE2 executables. Used by _DefaultWindowProvider
+    ; to locate the game window by ahk_exe (exact-match) instead of by
+    ; title substring. Keep in sync with FocusAutoPauseService.GAME_EXECUTABLES
+    ; — both lists must contain the same set of process names so a future
+    ; PoE2 build doesn't break one service while still working on the other.
+    static GAME_EXECUTABLES := [
+        "PathOfExile2Steam.exe",
+        "PathOfExile2_x64.exe",
+        "PathOfExile2.exe",
+        "PathOfExile_x64Steam.exe",
+        "PathOfExileSteam.exe",
+        "PathOfExile_x64.exe",
+        "PathOfExile.exe"
+    ]
+
     __New(bus, clock, scanner, cfg, timerSvc, zoneProvider, stepProvider, windowProvider := "", headless := false)
     {
         if !(bus is EventBus)
@@ -456,22 +471,42 @@ class LoadingDetectionService
 
     ; ============================================================
     ; Default window provider (in prod uses PoE2's WinGetPos)
+    ;
+    ; v0.1.4: rewritten to locate the game window by ahk_exe (exact
+    ; match on the process name) instead of by title substring. The
+    ; previous WinExist("Path of Exile 2") matched any window with
+    ; that substring in its title (Chrome on the PoE2 wiki, Discord
+    ; channel with that name, etc.) and the HUD scanner would read
+    ; pixels from the wrong window — producing garbage and effectively
+    ; disabling loading detection while those decoy windows were open.
+    ;
+    ; Once a match is found we lock all subsequent queries
+    ; (WinGetMinMax, WinGetPos) to the same HWND via "ahk_id" so a
+    ; second window with a colliding title cannot hijack the readout
+    ; between the two calls.
     ; ============================================================
 
     static _DefaultWindowProvider()
     {
         try
         {
-            hwnd := WinExist("Path of Exile 2")
+            hwnd := 0
+            for _, exeName in LoadingDetectionService.GAME_EXECUTABLES
+            {
+                hwnd := WinExist("ahk_exe " . exeName)
+                if hwnd
+                    break
+            }
             if !hwnd
                 return ""
+            winSpec := "ahk_id " . hwnd
             try
             {
-                if (WinGetMinMax("Path of Exile 2") = -1)
+                if (WinGetMinMax(winSpec) = -1)
                     return ""    ; minimized, not sampleable
             }
             x := 0, y := 0, w := 0, h := 0
-            try WinGetPos(&x, &y, &w, &h, "Path of Exile 2")
+            try WinGetPos(&x, &y, &w, &h, winSpec)
             if (w <= 0 || h <= 0)
                 return ""
             return Map("x", x, "y", y, "w", w, "h", h)

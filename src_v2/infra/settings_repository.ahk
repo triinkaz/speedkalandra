@@ -23,6 +23,7 @@
 ;   [AutoFinalize] Regex
 ;   [AutoStart]    Regex
 ;   [VendorRegexes] Slot1, Slot2, Slot3
+;   [Diagnostics]  EventTracingEnabled (v0.1.4 — opt-in only)
 ;   [Hotkeys]      <action> -> keyBind
 ;   [Window]       MicroLocked
 ;   [Overlay]      <widgetId>.{left,top,scale,visible,centered} + hoverHide
@@ -59,6 +60,7 @@ class SettingsRepository
         this._LoadAutoStart(cfg)
         this._LoadVendorRegexes(cfg)
         this._LoadDisclaimer(cfg)
+        this._LoadDiagnostics(cfg)
         this._LoadHotkeys(cfg)
         cfg.window  := this._LoadWindow()
         cfg.overlay := this._LoadOverlay()
@@ -78,6 +80,7 @@ class SettingsRepository
         this._SaveAutoStart(cfg)
         this._SaveVendorRegexes(cfg)
         this._SaveDisclaimer(cfg)
+        this._SaveDiagnostics(cfg)
         this._SaveHotkeys(cfg)
         this._SaveWindow(cfg.window)
         this._SaveOverlay(cfg.overlay)
@@ -263,6 +266,26 @@ class SettingsRepository
     _SaveDisclaimer(cfg)
     {
         this._ini.Write(cfg.disclaimerAcknowledged ? 1 : 0, "Disclaimer", "Acknowledged")
+    }
+
+    ; ============================================================
+    ; [Diagnostics] (v0.1.4)
+    ;
+    ; Opt-in flag for the EventTraceLogger interceptor. When true,
+    ; every EventBus Publish is appended to speedkalandra.log along
+    ; with the full payload (which includes raw Client.txt lines via
+    ; the LogLineRead event). Default false — a normal install never
+    ; persists that data unless the user explicitly enables it for
+    ; diagnostics. See app_settings.ahk for the field declaration.
+    ; ============================================================
+    _LoadDiagnostics(cfg)
+    {
+        cfg.eventTracingEnabled := this._ini.Read("Diagnostics", "EventTracingEnabled", "0") = "1"
+    }
+
+    _SaveDiagnostics(cfg)
+    {
+        this._ini.Write(cfg.eventTracingEnabled ? 1 : 0, "Diagnostics", "EventTracingEnabled")
     }
 
     ; ============================================================
