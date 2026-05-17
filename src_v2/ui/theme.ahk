@@ -1,26 +1,26 @@
 ; ============================================================
-; Theme — paleta de cores e fontes do overlay
+; Theme — overlay color palette and fonts
 ; ============================================================
 ;
-; Centraliza as constantes visuais usadas por todos os widgets:
-;   - Cores hex (sem '#') compatíveis com AHK Gui SetFont/Background.
-;   - Fontes padrão (UI vs monospace para timers).
-;   - Helper Size(scale, baseSize) que arredonda para inteiro >= 1.
+; Centralizes the visual constants used by all widgets:
+;   - Hex colors (no '#') compatible with AHK Gui SetFont/Background.
+;   - Default fonts (UI vs. monospace for timers).
+;   - Helper Size(scale, baseSize) that rounds to integer >= 1.
 ;
-; Uso:
+; Usage:
 ;   Theme.Color("text")        ; -> "E8E8EB"
-;   Theme.Size(scale, 18)       ; -> Round(18 * scale), mínimo 1
+;   Theme.Size(scale, 18)       ; -> Round(18 * scale), minimum 1
 ;   wg.SetFont("s10 c" Theme.Color("text") " bold", Theme.FONT_UI)
 ;
-; Por que estática?
-;   Sem state. Mesmo conjunto de cores em toda a aplicação. Uma
-;   eventual mudança de tema (claro/escuro) far-se-ia trocando a
-;   classe inteira ou tendo Theme.SetPalette("dark") — fora de escopo
-;   pra Fase 6.1.
+; Why static?
+;   No state. Same color set across the entire application. Any
+;   eventual theme change (light/dark) would be done by swapping the
+;   class entirely or by adding Theme.SetPalette("dark") — out of
+;   scope for Phase 6.1.
 ;
-; Por que erro em Color desconhecida?
-;   Strict por design. Typos em nome de cor estouram cedo, na
-;   construção do widget, em vez de produzir cor "default" silenciosa.
+; Why error on unknown Color?
+;   Strict by design. Color-name typos blow up early, at widget
+;   construction, instead of producing a silent "default" color.
 
 
 class Theme
@@ -28,27 +28,27 @@ class Theme
     static FONT_UI   := "Segoe UI"
     static FONT_MONO := "Consolas"
 
-    ; Mapa de cores hex (sem '#'). Usar via Theme.Color(name).
+    ; Hex color map (no '#'). Used via Theme.Color(name).
     ;
-    ; Paleta dividida em 2 grupos:
+    ; Palette split into 2 groups:
     ;
-    ; (B) Tema KALANDRA — PALETA OFICIAL DA V2:
+    ; (B) KALANDRA theme — OFFICIAL PALETTE OF V2:
     ;     surface/surface2/surface3/line/muted/subtle/accent/accentSoft/
     ;     good/warn/danger/steel
     ;
-    ;     Caracteristicas: bg quase preto (050506), surfaces com tom
-    ;     levemente azulado, accent laranja queimado D8492F. Usado
-    ;     por todos os widgets soltos (TimerWidget, ZoneWidget, etc),
-    ;     LayoutWidgets (Normal/Compact/Micro) e dialogs principais.
+    ;     Characteristics: near-black bg (050506), surfaces with a
+    ;     slight bluish tint, burnt-orange accent D8492F. Used by
+    ;     all loose widgets (TimerWidget, ZoneWidget, etc),
+    ;     LayoutWidgets (Normal/Compact/Micro) and main dialogs.
     ;
-    ; (A) Aliases LEGACY (DEPRECATED — backwards-compat apenas):
+    ; (A) LEGACY aliases (DEPRECATED — backwards-compat only):
     ;     bg/headerBg/border/inputBg/text/textDim/textFaint/green/red/
     ;     amber/purple/blue
     ;
-    ;     Os values ja estao alinhados com Kalandra (mesmos hex).
-    ;     Mantidos pra nao quebrar dialogs antigos (gem_planner_dialog,
-    ;     campaign_editor, plot_metrics, etc) que ainda usam esses nomes.
-    ;     Em codigo NOVO, prefira nomes Kalandra:
+    ;     The values are already aligned with Kalandra (same hex).
+    ;     Kept so as not to break old dialogs (gem_planner_dialog,
+    ;     campaign_editor, plot_metrics, etc.) that still use these
+    ;     names. In NEW code, prefer Kalandra names:
     ;       headerBg  -> surface2
     ;       border    -> line
     ;       inputBg   -> surface3
@@ -59,51 +59,51 @@ class Theme
     ;       red       -> danger
     ;       purple    -> accentSoft
     static _COLORS := Map(
-        ; --- (A) Aliases LEGACY (deprecated; mantidos pra back-compat) ---
-        "bg",         "050506",   ; (== Kalandra bg implicito — BackColor de Guis)
+        ; --- (A) LEGACY aliases (deprecated; kept for back-compat) ---
+        "bg",         "050506",   ; (== implicit Kalandra bg — BackColor of Guis)
         "headerBg",   "15181B",   ; alias — use "surface2"
         "border",     "3A3330",   ; alias — use "line"
         "inputBg",    "22252A",   ; alias — use "surface3"
-        "text",       "E8E2D6",   ; (mesmo nome em ambas as paletas)
+        "text",       "E8E2D6",   ; (same name in both palettes)
         "textDim",    "A49C91",   ; alias — use "muted"
         "textFaint",  "6E6962",   ; alias — use "subtle"
-        "green",      "4ADE80",   ; alias deprecated — use "good" (B8C7B0)
-        "red",        "EF4444",   ; alias deprecated — use "danger" (F87171)
+        "green",      "4ADE80",   ; deprecated alias — use "good" (B8C7B0)
+        "red",        "EF4444",   ; deprecated alias — use "danger" (F87171)
         "amber",      "F59E0B",   ; alias — use "warn"
-        "purple",     "A78BFA",   ; alias deprecated — use "accentSoft" (F07A3B)
-        "blue",       "60A5FA",   ; (sem equivalente Kalandra; usado em raros lugares)
+        "purple",     "A78BFA",   ; deprecated alias — use "accentSoft" (F07A3B)
+        "blue",       "60A5FA",   ; (no Kalandra equivalent; used in a few rare places)
 
-        ; --- (B) Tema Kalandra (paleta exata do legado) ---
-        "surface",    "0D0F11",   ; banda principal (header, reward, drops, tips)
-        "surface2",   "15181B",   ; banda secundaria (route, status)
-        "surface3",   "22252A",   ; backgrounds escuros (progress bg, bandas decorativas)
-        "line",       "3A3330",   ; bordas e separadores
-        "muted",      "A49C91",   ; texto secundario
-        "subtle",     "6E6962",   ; headers de bandas ("MAPA", "OBJETIVO")
-        "accent",     "D8492F",   ; laranja queimado — progresso, divisores, accent stripes
-        "accentSoft", "F07A3B",   ; laranja claro — buffs, XP
-        "good",       "B8C7B0",   ; verde dessaturado — dentro do alvo
-        "goodStrong", "4ADE80",   ; verde vibrante (v17.13) — pra destaques (timers PB)
-        "warn",       "F59E0B",   ; ambar — atencao
-        "danger",     "F87171",   ; vermelho dessaturado — alerta
-        "steel",      "C8C0B4"    ; cinza claro — destaque suave
+        ; --- (B) Kalandra theme (exact legacy palette) ---
+        "surface",    "0D0F11",   ; main band (header, reward, drops, tips)
+        "surface2",   "15181B",   ; secondary band (route, status)
+        "surface3",   "22252A",   ; dark backgrounds (progress bg, decorative bands)
+        "line",       "3A3330",   ; borders and separators
+        "muted",      "A49C91",   ; secondary text
+        "subtle",     "6E6962",   ; band headers ("MAP", "OBJECTIVE")
+        "accent",     "D8492F",   ; burnt orange — progress, dividers, accent stripes
+        "accentSoft", "F07A3B",   ; lighter orange — buffs, XP
+        "good",       "B8C7B0",   ; desaturated green — within target
+        "goodStrong", "4ADE80",   ; vibrant green (v17.13) — for highlights (PB timers)
+        "warn",       "F59E0B",   ; amber — attention
+        "danger",     "F87171",   ; desaturated red — alert
+        "steel",      "C8C0B4"    ; light gray — soft highlight
     )
 
     ; ============================================================
-    ; Color(name) — retorna cor hex (sem '#').
-    ;   Lança ValueError se nome desconhecido (strict).
+    ; Color(name) — returns hex color (no '#').
+    ;   Throws ValueError on unknown name (strict).
     ; ============================================================
     static Color(name)
     {
         if !Theme._COLORS.Has(name)
-            throw ValueError("Theme.Color: nome desconhecido: '" name "'")
+            throw ValueError("Theme.Color: unknown name: '" name "'")
         return Theme._COLORS[name]
     }
 
-    ; HasColor(name) — true se nome registrado. Util para fallbacks.
+    ; HasColor(name) — true if name is registered. Useful for fallbacks.
     static HasColor(name) => Theme._COLORS.Has(name)
 
-    ; ListColors() — retorna Array com todos os nomes de cor disponíveis.
+    ; ListColors() — returns Array with all available color names.
     static ListColors()
     {
         out := []
@@ -113,32 +113,32 @@ class Theme
     }
 
     ; ============================================================
-    ; InputStyle() — string de options compartilhada entre Edits/DropDowns
-    ; em dialogs do tema escuro. Define Background (inputBg) + cor de
-    ; texto explicita pra evitar branco-em-branco padrao do Windows.
+    ; InputStyle() — options string shared between Edits/DropDowns
+    ; in dark-theme dialogs. Defines Background (inputBg) + explicit
+    ; text color to avoid the Windows-default white-on-white.
     ;
-    ; Uso:
+    ; Usage:
     ;   g.SetFont(Theme.InputFont())
     ;   g.Add("Edit", "x10 y10 w200 " Theme.InputBg(), "")
     ;
-    ; Separar Background (na option string) de cor de fonte (via SetFont)
-    ; pq AHK v2 trata Background como prefixo da string de options e
-    ; cor de fonte via SetFont "cRRGGBB".
+    ; Separate Background (in the options string) from font color
+    ; (via SetFont) because AHK v2 treats Background as a prefix in
+    ; the options string and font color via SetFont "cRRGGBB".
     ; ============================================================
     static InputBg()   => "Background" Theme._COLORS["inputBg"]
     static InputFont() => "s9 c" Theme._COLORS["text"]
 
     ; ============================================================
-    ; Size(scale, baseSize) — escalona pixels.
-    ;   Arredonda para inteiro mais próximo, mínimo 1.
-    ;   Lança ValueError se scale <= 0 ou não-numérico.
+    ; Size(scale, baseSize) — scales pixels.
+    ;   Rounds to nearest integer, minimum 1.
+    ;   Throws ValueError if scale <= 0 or non-numeric.
     ; ============================================================
     static Size(scale, baseSize)
     {
         if (!IsNumber(scale) || scale <= 0)
-            throw ValueError("Theme.Size: 'scale' deve ser número positivo, recebi: " scale)
+            throw ValueError("Theme.Size: 'scale' must be a positive number, got: " scale)
         if !IsNumber(baseSize)
-            throw ValueError("Theme.Size: 'baseSize' deve ser número, recebi: " baseSize)
+            throw ValueError("Theme.Size: 'baseSize' must be a number, got: " baseSize)
         n := Round(baseSize * scale)
         return n < 1 ? 1 : n
     }

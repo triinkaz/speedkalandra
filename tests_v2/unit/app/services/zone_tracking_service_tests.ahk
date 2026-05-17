@@ -2,26 +2,29 @@
 ; ZoneTrackingServiceTests
 ; ============================================================
 ;
-; ZoneTrackingService eh o coracao do tracking por zona. Subscribers
-; a 8 eventos do bus, state machine com run-active + timer-paused,
-; e queries com semantica especifica (com/sem elapsed da zona ativa).
+; ZoneTrackingService is the heart of per-zone tracking. Subscribes
+; to 8 bus events, state machine with run-active + timer-paused, and
+; queries with specific semantics (with/without elapsed from the
+; active zone).
 ;
 ; Deps:
 ;   bus     : EventBus
-;   clock   : NowMs() (controlado via FakeClock pra determinismo)
-;   catalog : ZonesCatalog ou "" (opcional)
+;   clock   : NowMs() (controlled via FakeClock for determinism)
+;   catalog : ZonesCatalog or "" (optional)
 ;
-; Comportamentos cobertos:
-;   - Construtor + validacao + 8 subscribers + Dispose
-;   - Defaults + state inicial
-;   - ZoneChanged: com/sem run ativa, com/sem catalog, durante pausa
-;   - Queries: GetActiveElapsedMs, GetZoneTotal[WithActive], GetTotals,
-;     GetTotalsForSnapshot, GetActTotals, GetTownTotalsByAct,
-;     GetTotalTownMs, GetTotalRunMs
+; Behaviors covered:
+;   - Constructor + validation + 8 subscribers + Dispose
+;   - Defaults + initial state
+;   - ZoneChanged: with/without active run, with/without catalog,
+;     during pause
+;   - Queries: GetActiveElapsedMs, GetZoneTotal[WithActive],
+;     GetTotals, GetTotalsForSnapshot, GetActTotals,
+;     GetTownTotalsByAct, GetTotalTownMs, GetTotalRunMs
 ;   - Lifecycle: RunStarted/Reset/Cancelled/Completed
-;   - Timer: Paused/Resumed/Stopped (inc Bug Lechtansi e Bug #1 v17.15)
+;   - Timer: Paused/Resumed/Stopped (incl. Bug Lechtansi and
+;     Bug #1 v17.15)
 ;   - Hydrate / SetRunActive / Reset
-;   - Eventos publicados: ZoneEntered, ZoneTimeAccumulated
+;   - Published events: ZoneEntered, ZoneTimeAccumulated
 
 
 class ZoneTrackingServiceTests extends TestCase
@@ -35,9 +38,9 @@ class ZoneTrackingServiceTests extends TestCase
     Setup()
     {
         this.bus       := Fixtures.MakeBus()
-        this.stubClock := Fixtures.MakeFakeClock(10000)   ; comeca em 10s
+        this.stubClock := Fixtures.MakeFakeClock(10000)   ; starts at 10s
 
-        ; Catalogo de teste com 4 zonas
+        ; Test catalog with 4 zones
         this.catalogPath := Fixtures.TempPath("csv")
         this._SeedCatalog([
             "name;internal_id;act;is_town",
@@ -59,7 +62,7 @@ class ZoneTrackingServiceTests extends TestCase
     }
 
     static Tests := [
-        ; --- Construtor ---
+        ; --- Constructor ---
         "constructor_throws_when_bus_not_event_bus",
         "constructor_throws_when_clock_missing_now_ms",
         "constructor_throws_when_catalog_is_random_object",
@@ -75,7 +78,7 @@ class ZoneTrackingServiceTests extends TestCase
         "is_run_active_false_initially",
         "totals_empty_initially",
 
-        ; --- ZoneChanged sem run ativa ---
+        ; --- ZoneChanged without active run ---
         "zone_changed_without_run_sets_active_zone",
         "zone_changed_without_run_does_not_start_timer",
         "zone_changed_ignores_non_object_data",
@@ -83,7 +86,7 @@ class ZoneTrackingServiceTests extends TestCase
         "zone_changed_ignores_empty_zone_name",
         "zone_changed_publishes_zone_entered_event",
 
-        ; --- ZoneChanged com run ativa ---
+        ; --- ZoneChanged with active run ---
         "zone_changed_during_run_starts_timer_at_now_ms",
         "zone_changed_during_run_flushes_previous_zone",
         "zone_changed_during_run_publishes_zone_entered",
@@ -92,7 +95,7 @@ class ZoneTrackingServiceTests extends TestCase
         "zone_entered_act_zero_when_zone_not_in_catalog",
         "zone_entered_act_zero_when_no_catalog",
 
-        ; --- ZoneChanged durante pause (Bug Lechtansi) ---
+        ; --- ZoneChanged during pause (Bug Lechtansi) ---
         "zone_changed_during_pause_sets_active_zone",
         "zone_changed_during_pause_does_not_start_timer",
 
@@ -173,7 +176,7 @@ class ZoneTrackingServiceTests extends TestCase
         "set_run_active_false_clears_flag",
         "set_run_active_does_not_start_timer_when_zone_empty",
 
-        ; --- Reset manual ---
+        ; --- Manual Reset ---
         "reset_clears_totals",
         "reset_clears_active_zone",
         "reset_clears_run_active_flag",
@@ -202,8 +205,8 @@ class ZoneTrackingServiceTests extends TestCase
         FileAppend(content, this.catalogPath, "UTF-8")
     }
 
-    ; Captura eventos do bus pra um array (handler subscribe).
-    ; Retorna ref ao array que sera mutado pelos handlers.
+    ; Captures bus events into an array (subscribe handler).
+    ; Returns a ref to the array that will be mutated by handlers.
     _CaptureEvents(eventName)
     {
         capturedEvents := []
@@ -212,7 +215,7 @@ class ZoneTrackingServiceTests extends TestCase
     }
 
     ; ============================================================
-    ; Construtor
+    ; Constructor
     ; ============================================================
 
     constructor_throws_when_bus_not_event_bus()
@@ -275,7 +278,7 @@ class ZoneTrackingServiceTests extends TestCase
     totals_empty_initially()        => Assert.Equal(0,  this.svc.GetTotals().Count)
 
     ; ============================================================
-    ; ZoneChanged sem run ativa
+    ; ZoneChanged without active run
     ; ============================================================
 
     zone_changed_without_run_sets_active_zone()
@@ -287,7 +290,7 @@ class ZoneTrackingServiceTests extends TestCase
     zone_changed_without_run_does_not_start_timer()
     {
         this.bus.Publish(Events.ZoneChanged, Map("zoneName", "Mud Burrow"))
-        Assert.False(this.svc.IsActive(), "Sem run, IsActive deve continuar false")
+        Assert.False(this.svc.IsActive(), "Without a run, IsActive must stay false")
         Assert.Equal(0, this.svc.GetActiveElapsedMs())
     }
 
@@ -317,7 +320,7 @@ class ZoneTrackingServiceTests extends TestCase
     }
 
     ; ============================================================
-    ; ZoneChanged com run ativa
+    ; ZoneChanged with active run
     ; ============================================================
 
     zone_changed_during_run_starts_timer_at_now_ms()
@@ -326,7 +329,7 @@ class ZoneTrackingServiceTests extends TestCase
         this.stubClock.AdvanceMs(5000)   ; clock = 15000
         this.bus.Publish(Events.ZoneChanged, Map("zoneName", "Mud Burrow"))
         Assert.True(this.svc.IsActive())
-        Assert.Equal(0, this.svc.GetActiveElapsedMs(), "Mesmo NowMs apos start = 0 elapsed")
+        Assert.Equal(0, this.svc.GetActiveElapsedMs(), "Same NowMs after start = 0 elapsed")
         this.stubClock.AdvanceMs(3000)
         Assert.Equal(3000, this.svc.GetActiveElapsedMs())
     }
@@ -337,7 +340,7 @@ class ZoneTrackingServiceTests extends TestCase
         this.bus.Publish(Events.ZoneChanged, Map("zoneName", "Mud Burrow"))
         this.stubClock.AdvanceMs(5000)
         this.bus.Publish(Events.ZoneChanged, Map("zoneName", "Vastiri Outskirts"))
-        Assert.Equal(5000, this.svc.GetZoneTotal("Mud Burrow"), "Zona anterior flushed")
+        Assert.Equal(5000, this.svc.GetZoneTotal("Mud Burrow"), "Previous zone flushed")
         Assert.Equal("Vastiri Outskirts", this.svc.GetActiveZone())
     }
 
@@ -354,17 +357,17 @@ class ZoneTrackingServiceTests extends TestCase
     {
         capturedEvents := this._CaptureEvents(Events.ZoneEntered)
         this.bus.Publish(Events.ZoneChanged, Map("zoneName", "Vastiri Outskirts"))
-        Assert.Equal(2, capturedEvents[1]["actIndex"], "Vastiri Outskirts eh Act 2")
+        Assert.Equal(2, capturedEvents[1]["actIndex"], "Vastiri Outskirts is Act 2")
     }
 
     zone_entered_includes_is_town_from_catalog()
     {
         capturedEvents := this._CaptureEvents(Events.ZoneEntered)
         this.bus.Publish(Events.ZoneChanged, Map("zoneName", "Clearfell Encampment"))
-        Assert.True(capturedEvents[1]["isTown"], "Clearfell Encampment eh town")
+        Assert.True(capturedEvents[1]["isTown"], "Clearfell Encampment is a town")
 
         this.bus.Publish(Events.ZoneChanged, Map("zoneName", "Mud Burrow"))
-        Assert.False(capturedEvents[2]["isTown"], "Mud Burrow nao eh town")
+        Assert.False(capturedEvents[2]["isTown"], "Mud Burrow is not a town")
     }
 
     zone_entered_act_zero_when_zone_not_in_catalog()
@@ -377,8 +380,9 @@ class ZoneTrackingServiceTests extends TestCase
 
     zone_entered_act_zero_when_no_catalog()
     {
-        ; Cria bus + svc separados pra evitar interferencia do this.svc
-        ; (que tem catalog e mascararia o teste publicando actIndex=1).
+        ; Create separate bus + svc to avoid interference from this.svc
+        ; (which has a catalog and would mask the test by publishing
+        ; actIndex=1).
         bus2 := Fixtures.MakeBus()
         svc2 := ZoneTrackingService(bus2, this.stubClock, "")
         capturedEvents := []
@@ -390,7 +394,7 @@ class ZoneTrackingServiceTests extends TestCase
     }
 
     ; ============================================================
-    ; ZoneChanged durante pause (Bug Lechtansi - v0.1.1)
+    ; ZoneChanged during pause (Bug Lechtansi - v0.1.1)
     ; ============================================================
 
     zone_changed_during_pause_sets_active_zone()
@@ -400,7 +404,7 @@ class ZoneTrackingServiceTests extends TestCase
         this.bus.Publish(Events.TimerPaused, Map())
         this.bus.Publish(Events.ZoneChanged, Map("zoneName", "Vastiri Outskirts"))
         Assert.Equal("Vastiri Outskirts", this.svc.GetActiveZone(),
-            "Active zone deve refletir nova zona mesmo durante pause")
+            "Active zone must reflect new zone even during pause")
     }
 
     zone_changed_during_pause_does_not_start_timer()
@@ -409,7 +413,7 @@ class ZoneTrackingServiceTests extends TestCase
         this.bus.Publish(Events.TimerPaused, Map())
         this.bus.Publish(Events.ZoneChanged, Map("zoneName", "Mud Burrow"))
         Assert.False(this.svc.IsActive(),
-            "Durante pause, ZoneChanged nao reinicia timer (Bug Lechtansi)")
+            "During pause, ZoneChanged doesn't restart the timer (Bug Lechtansi)")
         this.stubClock.AdvanceMs(5000)
         Assert.Equal(0, this.svc.GetActiveElapsedMs())
     }
@@ -426,7 +430,7 @@ class ZoneTrackingServiceTests extends TestCase
 
     get_active_elapsed_zero_when_start_ms_zero()
     {
-        ; Set zone sem run = _startMs fica 0
+        ; Set zone without run = _startMs stays 0
         this.bus.Publish(Events.ZoneChanged, Map("zoneName", "Mud Burrow"))
         this.stubClock.AdvanceMs(5000)
         Assert.Equal(0, this.svc.GetActiveElapsedMs())
@@ -442,12 +446,12 @@ class ZoneTrackingServiceTests extends TestCase
 
     get_active_elapsed_clamps_to_zero_for_negative()
     {
-        ; Edge case: clock voltou (e.g., system clock change). Service
-        ; deve clampar pra 0 em vez de retornar negativo.
-        ; FakeClock.AdvanceMs aceita valores negativos (`_tickMs += ms`).
+        ; Edge case: clock went back (e.g., system clock change).
+        ; Service must clamp to 0 instead of returning negative.
+        ; FakeClock.AdvanceMs accepts negative values (`_tickMs += ms`).
         this.bus.Publish(Events.RunStarted, Map("runId", "x"))
         this.bus.Publish(Events.ZoneChanged, Map("zoneName", "Mud Burrow"))
-        this.stubClock.AdvanceMs(-7000)   ; clock retrocede abaixo de _startMs
+        this.stubClock.AdvanceMs(-7000)   ; clock goes below _startMs
         Assert.Equal(0, this.svc.GetActiveElapsedMs())
     }
 
@@ -481,7 +485,7 @@ class ZoneTrackingServiceTests extends TestCase
         this.stubClock.AdvanceMs(3000)
         this.bus.Publish(Events.ZoneChanged, Map("zoneName", "Vastiri Outskirts"))
         this.stubClock.AdvanceMs(2000)
-        ; Mud Burrow flushed (3000), Vastiri ativa por 2000
+        ; Mud Burrow flushed (3000), Vastiri active for 2000
         Assert.Equal(2000, this.svc.GetZoneTotalWithActive("Vastiri Outskirts"))
     }
 
@@ -492,7 +496,7 @@ class ZoneTrackingServiceTests extends TestCase
         this.stubClock.AdvanceMs(3000)
         this.bus.Publish(Events.ZoneChanged, Map("zoneName", "Vastiri Outskirts"))
         this.stubClock.AdvanceMs(2000)
-        ; Mud Burrow nao eh ativa: so retorna base flushed (3000)
+        ; Mud Burrow is not active: only returns flushed base (3000)
         Assert.Equal(3000, this.svc.GetZoneTotalWithActive("Mud Burrow"))
     }
 
@@ -517,7 +521,7 @@ class ZoneTrackingServiceTests extends TestCase
         this.bus.Publish(Events.ZoneChanged, Map("zoneName", "Mud Burrow"))
         this.stubClock.AdvanceMs(4000)
         snap := this.svc.GetTotalsForSnapshot()
-        Assert.Equal(4000, snap["Mud Burrow"], "Inclui elapsed da zona ativa")
+        Assert.Equal(4000, snap["Mud Burrow"], "Includes elapsed from the active zone")
     }
 
     get_totals_for_snapshot_does_not_modify_internal_state()
@@ -526,15 +530,15 @@ class ZoneTrackingServiceTests extends TestCase
         this.bus.Publish(Events.ZoneChanged, Map("zoneName", "Mud Burrow"))
         this.stubClock.AdvanceMs(4000)
         this.svc.GetTotalsForSnapshot()
-        ; State interno nao deve ter sido flushed
+        ; Internal state must not have been flushed
         Assert.Equal(0, this.svc.GetZoneTotal("Mud Burrow"),
-            "GetTotalsForSnapshot nao faz flush — _totals continua sem essa zona")
-        Assert.True(this.svc.IsActive(), "Continua active")
+            "GetTotalsForSnapshot doesn't flush — _totals still lacks this zone")
+        Assert.True(this.svc.IsActive(), "Stays active")
     }
 
     get_totals_for_snapshot_skips_active_when_start_ms_zero()
     {
-        ; Zona registrada mas sem run = startMs=0 = nao inclui no snapshot
+        ; Zone registered but no run = startMs=0 = doesn't enter snapshot
         this.bus.Publish(Events.ZoneChanged, Map("zoneName", "Mud Burrow"))
         snap := this.svc.GetTotalsForSnapshot()
         Assert.False(snap.Has("Mud Burrow"))
@@ -542,17 +546,17 @@ class ZoneTrackingServiceTests extends TestCase
 
     get_totals_for_snapshot_accumulates_when_active_zone_in_totals()
     {
-        ; Cenario: zona visitada antes (flushed pra _totals), depois
-        ; revisitada (ativa de novo). Snapshot soma os dois.
+        ; Scenario: zone visited before (flushed to _totals), then
+        ; revisited (active again). Snapshot sums both.
         this.bus.Publish(Events.RunStarted, Map("runId", "x"))
         this.bus.Publish(Events.ZoneChanged, Map("zoneName", "Mud Burrow"))
         this.stubClock.AdvanceMs(3000)
         this.bus.Publish(Events.ZoneChanged, Map("zoneName", "Vastiri Outskirts"))
         this.stubClock.AdvanceMs(1000)
-        this.bus.Publish(Events.ZoneChanged, Map("zoneName", "Mud Burrow"))   ; revisita
+        this.bus.Publish(Events.ZoneChanged, Map("zoneName", "Mud Burrow"))   ; revisit
         this.stubClock.AdvanceMs(2000)
         snap := this.svc.GetTotalsForSnapshot()
-        Assert.Equal(5000, snap["Mud Burrow"], "3000 flushed + 2000 ativo")
+        Assert.Equal(5000, snap["Mud Burrow"], "3000 flushed + 2000 active")
     }
 
     ; ============================================================
@@ -575,7 +579,7 @@ class ZoneTrackingServiceTests extends TestCase
         this.stubClock.AdvanceMs(1000)
         this.bus.Publish(Events.ZoneChanged, Map("zoneName", "Vastiri Outskirts"))   ; act 2
         this.stubClock.AdvanceMs(2000)
-        this.bus.Publish(Events.ZoneChanged, Map("zoneName", "X"))   ; flush ultimo
+        this.bus.Publish(Events.ZoneChanged, Map("zoneName", "X"))   ; flush last
 
         acts := this.svc.GetActTotals()
         Assert.Equal(4000, acts[1], "Act 1 = Mud Burrow + Clearfell")
@@ -589,7 +593,7 @@ class ZoneTrackingServiceTests extends TestCase
         this.stubClock.AdvanceMs(5000)
         this.bus.Publish(Events.ZoneChanged, Map("zoneName", "Mud Burrow"))
         Assert.Equal(0, this.svc.GetActTotals().Count,
-            "Unknown zone (sem entry no catalog) eh ignorada")
+            "Unknown zone (no catalog entry) is ignored")
     }
 
     get_town_totals_by_act_filters_towns_only()
@@ -597,13 +601,13 @@ class ZoneTrackingServiceTests extends TestCase
         this.bus.Publish(Events.RunStarted, Map("runId", "x"))
         this.bus.Publish(Events.ZoneChanged, Map("zoneName", "Clearfell Encampment"))   ; town act 1
         this.stubClock.AdvanceMs(2000)
-        this.bus.Publish(Events.ZoneChanged, Map("zoneName", "Mud Burrow"))   ; zona act 1
+        this.bus.Publish(Events.ZoneChanged, Map("zoneName", "Mud Burrow"))   ; zone act 1
         this.stubClock.AdvanceMs(5000)
         this.bus.Publish(Events.ZoneChanged, Map("zoneName", "X"))   ; flush
 
         towns := this.svc.GetTownTotalsByAct()
-        Assert.Equal(2000, towns[1], "So Clearfell, nao Mud Burrow")
-        Assert.False(towns.Has(2), "Nenhuma town no act 2 visitada")
+        Assert.Equal(2000, towns[1], "Only Clearfell, not Mud Burrow")
+        Assert.False(towns.Has(2), "No town in act 2 visited")
     }
 
     ; ============================================================
@@ -622,11 +626,11 @@ class ZoneTrackingServiceTests extends TestCase
         this.bus.Publish(Events.RunStarted, Map("runId", "x"))
         this.bus.Publish(Events.ZoneChanged, Map("zoneName", "Clearfell Encampment"))   ; town
         this.stubClock.AdvanceMs(2000)
-        this.bus.Publish(Events.ZoneChanged, Map("zoneName", "Mud Burrow"))   ; nao town
+        this.bus.Publish(Events.ZoneChanged, Map("zoneName", "Mud Burrow"))   ; not a town
         this.stubClock.AdvanceMs(3000)
         this.bus.Publish(Events.ZoneChanged, Map("zoneName", "The Ardura Caravan"))   ; town
         this.stubClock.AdvanceMs(1000)
-        this.bus.Publish(Events.ZoneChanged, Map("zoneName", "X"))   ; flush ultimo
+        this.bus.Publish(Events.ZoneChanged, Map("zoneName", "X"))   ; flush last
 
         Assert.Equal(3000, this.svc.GetTotalTownMs(), "Clearfell (2000) + Ardura (1000)")
     }
@@ -634,16 +638,16 @@ class ZoneTrackingServiceTests extends TestCase
     get_total_town_ms_includes_active_when_town()
     {
         this.bus.Publish(Events.RunStarted, Map("runId", "x"))
-        this.bus.Publish(Events.ZoneChanged, Map("zoneName", "Clearfell Encampment"))   ; town ativa
+        this.bus.Publish(Events.ZoneChanged, Map("zoneName", "Clearfell Encampment"))   ; active town
         this.stubClock.AdvanceMs(2500)
         Assert.Equal(2500, this.svc.GetTotalTownMs(),
-            "Inclui elapsed da town ativa (mesmo sem flush)")
+            "Includes elapsed of the active town (even without flush)")
     }
 
     get_total_town_ms_excludes_active_when_not_town()
     {
         this.bus.Publish(Events.RunStarted, Map("runId", "x"))
-        this.bus.Publish(Events.ZoneChanged, Map("zoneName", "Mud Burrow"))   ; NAO town
+        this.bus.Publish(Events.ZoneChanged, Map("zoneName", "Mud Burrow"))   ; NOT a town
         this.stubClock.AdvanceMs(2500)
         Assert.Equal(0, this.svc.GetTotalTownMs())
     }
@@ -668,7 +672,7 @@ class ZoneTrackingServiceTests extends TestCase
         this.bus.Publish(Events.RunStarted, Map("runId", "x"))
         this.bus.Publish(Events.ZoneChanged, Map("zoneName", "Mud Burrow"))
         this.stubClock.AdvanceMs(4000)
-        Assert.Equal(4000, this.svc.GetTotalRunMs(), "Inclui elapsed da ativa")
+        Assert.Equal(4000, this.svc.GetTotalRunMs(), "Includes active elapsed")
     }
 
     ; ============================================================
@@ -677,14 +681,14 @@ class ZoneTrackingServiceTests extends TestCase
 
     run_started_zeroes_totals()
     {
-        ; Popula totals primeiro via uma "run anterior"
+        ; Populate totals first via a "previous run"
         this.bus.Publish(Events.RunStarted, Map("runId", "old"))
         this.bus.Publish(Events.ZoneChanged, Map("zoneName", "Mud Burrow"))
         this.stubClock.AdvanceMs(3000)
         this.bus.Publish(Events.ZoneChanged, Map("zoneName", "X"))
         Assert.Equal(3000, this.svc.GetZoneTotal("Mud Burrow"))
 
-        ; Nova run zera
+        ; New run zeroes
         this.bus.Publish(Events.RunStarted, Map("runId", "new"))
         Assert.Equal(0, this.svc.GetTotals().Count)
     }
@@ -697,13 +701,13 @@ class ZoneTrackingServiceTests extends TestCase
 
     run_started_starts_timer_when_zone_already_known()
     {
-        ; ZoneChanged ANTES do RunStarted (seed do LogMonitor)
+        ; ZoneChanged BEFORE RunStarted (seeded by LogMonitor)
         this.bus.Publish(Events.ZoneChanged, Map("zoneName", "Mud Burrow"))
-        Assert.False(this.svc.IsActive(), "Ainda nao timing")
+        Assert.False(this.svc.IsActive(), "Not timing yet")
 
         this.stubClock.AdvanceMs(2000)
         this.bus.Publish(Events.RunStarted, Map("runId", "x"))
-        Assert.True(this.svc.IsActive(), "RunStarted ativou cronometro")
+        Assert.True(this.svc.IsActive(), "RunStarted activated the timer")
         this.stubClock.AdvanceMs(1000)
         Assert.Equal(1000, this.svc.GetActiveElapsedMs())
     }
@@ -761,13 +765,13 @@ class ZoneTrackingServiceTests extends TestCase
 
     run_completed_preserves_totals_for_final_plot()
     {
-        ; Diferente de Reset/Cancelled, Completed NAO zera _totals
+        ; Unlike Reset/Cancelled, Completed does NOT zero _totals
         this.bus.Publish(Events.RunStarted, Map("runId", "x"))
         this.bus.Publish(Events.ZoneChanged, Map("zoneName", "Mud Burrow"))
         this.stubClock.AdvanceMs(3000)
         this.bus.Publish(Events.RunCompleted, Map())
         Assert.True(this.svc.GetTotals().Count > 0,
-            "RunCompleted preserva totals pro plot final")
+            "RunCompleted preserves totals for the final plot")
     }
 
     run_completed_sets_run_active_false()
@@ -788,7 +792,7 @@ class ZoneTrackingServiceTests extends TestCase
         this.stubClock.AdvanceMs(2500)
         this.bus.Publish(Events.TimerPaused, Map())
         Assert.Equal(2500, this.svc.GetZoneTotal("Mud Burrow"),
-            "TimerPaused flush soma elapsed em _totals")
+            "TimerPaused flush sums elapsed into _totals")
     }
 
     timer_paused_keeps_active_zone_logical()
@@ -798,7 +802,7 @@ class ZoneTrackingServiceTests extends TestCase
         this.stubClock.AdvanceMs(2500)
         this.bus.Publish(Events.TimerPaused, Map())
         Assert.Equal("Mud Burrow", this.svc.GetActiveZone(),
-            "Zona logica preservada (keepActive=true)")
+            "Logical zone preserved (keepActive=true)")
     }
 
     timer_paused_zeroes_start_ms()
@@ -807,9 +811,9 @@ class ZoneTrackingServiceTests extends TestCase
         this.bus.Publish(Events.ZoneChanged, Map("zoneName", "Mud Burrow"))
         this.stubClock.AdvanceMs(2500)
         this.bus.Publish(Events.TimerPaused, Map())
-        this.stubClock.AdvanceMs(10000)   ; tempo passa
+        this.stubClock.AdvanceMs(10000)   ; time passes
         Assert.Equal(0, this.svc.GetActiveElapsedMs(),
-            "_startMs zerado, elapsed nao acumula durante pause")
+            "_startMs zeroed, elapsed doesn't accumulate during pause")
     }
 
     timer_resumed_restarts_start_ms_for_active_zone()
@@ -818,11 +822,11 @@ class ZoneTrackingServiceTests extends TestCase
         this.bus.Publish(Events.ZoneChanged, Map("zoneName", "Mud Burrow"))
         this.stubClock.AdvanceMs(2000)
         this.bus.Publish(Events.TimerPaused, Map())
-        this.stubClock.AdvanceMs(5000)   ; pause de 5s nao deveria contar
+        this.stubClock.AdvanceMs(5000)   ; 5s pause should not count
         this.bus.Publish(Events.TimerResumed, Map())
         this.stubClock.AdvanceMs(1000)
         Assert.Equal(1000, this.svc.GetActiveElapsedMs(),
-            "So elapsed pos-resume (pause nao contado)")
+            "Only post-resume elapsed (pause not counted)")
     }
 
     timer_resumed_does_nothing_without_active_zone()
@@ -834,16 +838,16 @@ class ZoneTrackingServiceTests extends TestCase
 
     timer_resumed_does_nothing_without_run_active()
     {
-        ; Zone setada SEM run ativa, depois TimerResumed
+        ; Zone set WITHOUT active run, then TimerResumed
         this.bus.Publish(Events.ZoneChanged, Map("zoneName", "Mud Burrow"))
         this.bus.Publish(Events.TimerResumed, Map())
         Assert.False(this.svc.IsActive(),
-            "Sem run ativa, TimerResumed nao restaura cronometro")
+            "Without active run, TimerResumed doesn't restore the timer")
     }
 
     timer_paused_then_zone_changed_does_not_restart_timer()
     {
-        ; Bug Lechtansi: ZoneChanged durante pause nao reinicia _startMs
+        ; Bug Lechtansi: ZoneChanged during pause doesn't restart _startMs
         this.bus.Publish(Events.RunStarted, Map("runId", "x"))
         this.bus.Publish(Events.ZoneChanged, Map("zoneName", "Mud Burrow"))
         this.stubClock.AdvanceMs(2000)
@@ -852,7 +856,7 @@ class ZoneTrackingServiceTests extends TestCase
         this.bus.Publish(Events.ZoneChanged, Map("zoneName", "Vastiri Outskirts"))
         this.stubClock.AdvanceMs(5000)
         Assert.False(this.svc.IsActive(),
-            "Bug Lechtansi: ZoneChanged durante pause NAO reinicia timer")
+            "Bug Lechtansi: ZoneChanged during pause does NOT restart timer")
         Assert.Equal(0, this.svc.GetActiveElapsedMs())
     }
 
@@ -867,7 +871,7 @@ class ZoneTrackingServiceTests extends TestCase
         this.stubClock.AdvanceMs(3500)
         this.bus.Publish(Events.TimerStopped, Map())
         Assert.Equal(3500, this.svc.GetZoneTotal("Mud Burrow"),
-            "Bug #1 v17.15: flush ANTES de zerar _startMs")
+            "Bug #1 v17.15: flush BEFORE zeroing _startMs")
     }
 
     timer_stopped_keeps_active_zone()
@@ -877,7 +881,7 @@ class ZoneTrackingServiceTests extends TestCase
         this.stubClock.AdvanceMs(2000)
         this.bus.Publish(Events.TimerStopped, Map())
         Assert.Equal("Mud Burrow", this.svc.GetActiveZone(),
-            "TimerStopped usa keepActive=true")
+            "TimerStopped uses keepActive=true")
     }
 
     ; ============================================================
@@ -926,7 +930,8 @@ class ZoneTrackingServiceTests extends TestCase
 
     set_run_active_true_starts_timer_when_zone_known()
     {
-        ; Cenario boot: Hydrate seguido de SetRunActive(true) com zona conhecida
+        ; Boot scenario: Hydrate followed by SetRunActive(true) with a
+        ; known zone
         this.bus.Publish(Events.ZoneChanged, Map("zoneName", "Mud Burrow"))
         this.svc.SetRunActive(true)
         this.stubClock.AdvanceMs(1000)
@@ -945,11 +950,11 @@ class ZoneTrackingServiceTests extends TestCase
     {
         this.svc.SetRunActive(true)
         Assert.False(this.svc.IsActive(),
-            "Sem zona conhecida, SetRunActive(true) nao inicia cronometro")
+            "Without a known zone, SetRunActive(true) doesn't start the timer")
     }
 
     ; ============================================================
-    ; Reset manual
+    ; Manual Reset
     ; ============================================================
 
     reset_clears_totals()
@@ -1029,10 +1034,10 @@ class ZoneTrackingServiceTests extends TestCase
         capturedEvents := this._CaptureEvents(Events.ZoneTimeAccumulated)
         this.bus.Publish(Events.RunStarted, Map("runId", "x"))
         this.bus.Publish(Events.ZoneChanged, Map("zoneName", "Mud Burrow"))
-        ; sem AdvanceMs = elapsed=0
+        ; no AdvanceMs = elapsed=0
         this.bus.Publish(Events.ZoneChanged, Map("zoneName", "X"))
         Assert.Equal(0, capturedEvents.Length,
-            "elapsed=0 nao publica ZoneTimeAccumulated")
+            "elapsed=0 doesn't publish ZoneTimeAccumulated")
     }
 
     zone_time_accumulated_includes_zone_name_duration_total()

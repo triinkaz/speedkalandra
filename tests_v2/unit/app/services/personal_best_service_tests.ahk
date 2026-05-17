@@ -2,22 +2,24 @@
 ; PersonalBestServiceTests
 ; ============================================================
 ;
-; PersonalBestService eh o service mais complexo da Wave 5a.
-; Mantem em memoria 4 PBs (run global, run-por-ato, zone PBs),
-; carrega do disco no construtor e persiste sempre que muda.
+; PersonalBestService is the most complex service of Wave 5a.
+; Keeps 4 PBs in memory (global run, run-per-act, zone PBs),
+; loads from disk in the constructor and persists whenever it
+; changes.
 ;
-; Como o construtor faz `if !(repo is PersonalBestRepository)`, usamos
-; repos reais com tempfile (UTF-16 BOM por causa do issue documentado
-; em Wave 4: IniRead key-lookup nao funciona em UTF-8 BOM).
+; Since the constructor does `if !(repo is PersonalBestRepository)`,
+; we use real repos with a tempfile (UTF-16 BOM because of the
+; issue documented in Wave 4: IniRead key-lookup doesn't work on
+; UTF-8 BOM).
 ;
-; Cobertura:
-;   - Construtor + _LoadFromRepo automatico
-;   - Queries (legacy + por ato + zone PBs)
-;   - UpdateFromRun (pull-based, persiste se mudou)
-;   - Reset (apaga tudo + persiste)
-;   - LoadFromExternal (substituicao total p/ import)
-;   - SetAsRunPb (pina uma run, NAO toca zonePbs)
-;   - RebuildFromHistory (reconstroi apos delete de run)
+; Coverage:
+;   - Constructor + automatic _LoadFromRepo
+;   - Queries (legacy + per act + zone PBs)
+;   - UpdateFromRun (pull-based, persists if changed)
+;   - Reset (clears everything + persists)
+;   - LoadFromExternal (full replacement for import)
+;   - SetAsRunPb (pins a run, does NOT touch zonePbs)
+;   - RebuildFromHistory (rebuilds after run delete)
 
 
 class PersonalBestServiceTests extends TestCase
@@ -39,7 +41,7 @@ class PersonalBestServiceTests extends TestCase
     }
 
     static Tests := [
-        ; --- Construtor + _LoadFromRepo ---
+        ; --- Constructor + _LoadFromRepo ---
         "constructor_throws_when_repo_not_personal_best_repository",
         "constructor_with_empty_repo_initializes_to_zeros",
         "constructor_loads_run_pb_from_repo",
@@ -47,7 +49,7 @@ class PersonalBestServiceTests extends TestCase
         "constructor_loads_run_pbs_by_act_from_repo",
         "constructor_loads_zone_pbs_from_repo",
 
-        ; --- Queries legacy ---
+        ; --- Legacy queries ---
         "get_run_pb_ms_zero_initially",
         "get_run_pb_run_id_empty_initially",
         "has_run_pb_false_initially",
@@ -58,7 +60,7 @@ class PersonalBestServiceTests extends TestCase
         "has_zone_pb_true_when_exists",
         "get_all_zone_pbs_returns_defensive_copy",
 
-        ; --- Queries PB por ato ---
+        ; --- Per-act PB queries ---
         "get_run_pb_for_act_zero_for_unknown",
         "get_run_pb_for_act_zero_for_negative",
         "get_run_pb_for_act_zero_for_non_number",
@@ -68,7 +70,7 @@ class PersonalBestServiceTests extends TestCase
         "count_act_pbs_zero_initially",
         "count_act_pbs_returns_correct_count",
 
-        ; --- UpdateFromRun: run global ---
+        ; --- UpdateFromRun: global run ---
         "update_records_first_run_pb",
         "update_improves_run_pb_when_faster",
         "update_does_not_overwrite_run_pb_when_slower",
@@ -79,7 +81,7 @@ class PersonalBestServiceTests extends TestCase
         "update_with_non_number_run_ms_skipped",
         "update_persists_change_to_repo",
 
-        ; --- UpdateFromRun: PB por ato ---
+        ; --- UpdateFromRun: per-act PB ---
         "update_records_act_checkpoints",
         "update_improves_act_pb_when_faster",
         "update_does_not_overwrite_act_pb_when_slower",
@@ -132,8 +134,9 @@ class PersonalBestServiceTests extends TestCase
     ; Helpers
     ; ============================================================
 
-    ; Cria um repo no path e retorna um service novo com state carregado.
-    ; Util pra testar _LoadFromRepo sem depender do Setup geral.
+    ; Creates a repo at path and returns a new service with state
+    ; loaded. Useful for testing _LoadFromRepo without depending on
+    ; the general Setup.
     _MakeServiceWithPreSeededRepo(pbData)
     {
         path := Fixtures.TempPath("ini")
@@ -142,7 +145,7 @@ class PersonalBestServiceTests extends TestCase
         return PersonalBestService(seedRepo)
     }
 
-    ; Le repo de disco e retorna data (pra checar persistencia)
+    ; Reads repo from disk and returns data (to check persistence)
     _ReadRepoFromDisk()
     {
         freshRepo := PersonalBestRepository(this.path)
@@ -150,7 +153,7 @@ class PersonalBestServiceTests extends TestCase
     }
 
     ; ============================================================
-    ; Construtor + _LoadFromRepo
+    ; Constructor + _LoadFromRepo
     ; ============================================================
 
     constructor_throws_when_repo_not_personal_best_repository()
@@ -160,8 +163,8 @@ class PersonalBestServiceTests extends TestCase
 
     constructor_with_empty_repo_initializes_to_zeros()
     {
-        ; Setup ja cria com repo apontando pra arquivo nao existente.
-        ; Service deve estar zerado.
+        ; Setup already creates with repo pointing to a non-existent file.
+        ; Service must be zeroed.
         Assert.Equal(0,  this.svc.GetRunPbMs())
         Assert.Equal("", this.svc.GetRunPbRunId())
         Assert.Equal(0,  this.svc.CountActPbs())
@@ -216,7 +219,7 @@ class PersonalBestServiceTests extends TestCase
     }
 
     ; ============================================================
-    ; Queries legacy
+    ; Legacy queries
     ; ============================================================
 
     get_run_pb_ms_zero_initially()   => Assert.Equal(0, this.svc.GetRunPbMs())
@@ -259,7 +262,7 @@ class PersonalBestServiceTests extends TestCase
     }
 
     ; ============================================================
-    ; Queries PB por ato
+    ; Per-act PB queries
     ; ============================================================
 
     get_run_pb_for_act_zero_for_unknown()
@@ -308,7 +311,7 @@ class PersonalBestServiceTests extends TestCase
     }
 
     ; ============================================================
-    ; UpdateFromRun: run global
+    ; UpdateFromRun: global run
     ; ============================================================
 
     update_records_first_run_pb()
@@ -372,7 +375,7 @@ class PersonalBestServiceTests extends TestCase
     }
 
     ; ============================================================
-    ; UpdateFromRun: PB por ato
+    ; UpdateFromRun: per-act PB
     ; ============================================================
 
     update_records_act_checkpoints()
@@ -399,13 +402,13 @@ class PersonalBestServiceTests extends TestCase
     update_ignores_invalid_act_keys()
     {
         this.svc.UpdateFromRun(0, "", "", Map(1, 100000, 0, 99, -1, 88, "abc", 77))
-        Assert.Equal(1, this.svc.CountActPbs(), "Apenas act=1 deve ser aceito")
+        Assert.Equal(1, this.svc.CountActPbs(), "Only act=1 must be accepted")
     }
 
     update_ignores_invalid_act_ms_values()
     {
         this.svc.UpdateFromRun(0, "", "", Map(1, 0, 2, -50, 3, "abc", 4, 100000))
-        Assert.Equal(1, this.svc.CountActPbs(), "Apenas act=4 com ms valido")
+        Assert.Equal(1, this.svc.CountActPbs(), "Only act=4 with valid ms")
         Assert.Equal(100000, this.svc.GetRunPbForAct(4))
     }
 
@@ -529,14 +532,14 @@ class PersonalBestServiceTests extends TestCase
             "runPbByAct", Map(),
             "zonePbs",    Map("NewZone", 50000)
         ))
-        Assert.Equal(0,     this.svc.GetZonePbMs("OldZone"), "Old apagado")
+        Assert.Equal(0,     this.svc.GetZonePbMs("OldZone"), "Old cleared")
         Assert.Equal(50000, this.svc.GetZonePbMs("NewZone"))
     }
 
     load_from_external_missing_fields_default_to_empty()
     {
         this.svc.UpdateFromRun(500000, "old", Map("Z", 100), Map(1, 1000))
-        this.svc.LoadFromExternal(Map())   ; tudo faltando
+        this.svc.LoadFromExternal(Map())   ; everything missing
         Assert.Equal(0, this.svc.GetRunPbMs())
         Assert.Equal("", this.svc.GetRunPbRunId())
         Assert.Equal(0, this.svc.CountActPbs())
@@ -564,12 +567,12 @@ class PersonalBestServiceTests extends TestCase
             "runPbByAct", Map(1, 100, 0, 999, -1, 888, 2, 0, 3, -50, 4, "abc"),
             "zonePbs",    Map()
         ))
-        Assert.Equal(1, this.svc.CountActPbs(), "Apenas act=1 valido")
+        Assert.Equal(1, this.svc.CountActPbs(), "Only act=1 valid")
         Assert.Equal(100, this.svc.GetRunPbForAct(1))
     }
 
     ; ============================================================
-    ; SetAsRunPb (pina uma run)
+    ; SetAsRunPb (pins a run)
     ; ============================================================
 
     set_as_run_pb_sets_run_ms_and_run_id()
@@ -588,23 +591,23 @@ class PersonalBestServiceTests extends TestCase
     {
         this.svc.SetAsRunPb(500000, "run_x")
         Assert.False(this.svc.SetAsRunPb(500000, "run_x"),
-            "Mesma run + mesmos params: nada muda")
+            "Same run + same params: nothing changes")
     }
 
     set_as_run_pb_replaces_act_pbs_when_checkpoints_provided()
     {
-        this.svc.UpdateFromRun(0, "", "", Map(1, 999999, 2, 888888))   ; PBs antigos
+        this.svc.UpdateFromRun(0, "", "", Map(1, 999999, 2, 888888))   ; old PBs
         this.svc.SetAsRunPb(500000, "pinned", Map(1, 100000, 2, 200000))
-        Assert.Equal(100000, this.svc.GetRunPbForAct(1), "Substituido pelo checkpoint da pinned")
+        Assert.Equal(100000, this.svc.GetRunPbForAct(1), "Replaced by the pinned run's checkpoint")
         Assert.Equal(200000, this.svc.GetRunPbForAct(2))
     }
 
     set_as_run_pb_keeps_act_pbs_when_no_checkpoints()
     {
-        this.svc.UpdateFromRun(0, "", "", Map(1, 100000))   ; PB antigo intacto
-        this.svc.SetAsRunPb(500000, "pinned")                ; sem checkpoints
+        this.svc.UpdateFromRun(0, "", "", Map(1, 100000))   ; old PB intact
+        this.svc.SetAsRunPb(500000, "pinned")                ; no checkpoints
         Assert.Equal(100000, this.svc.GetRunPbForAct(1),
-            "Act PB antigo preservado (checkpoints nao fornecidos)")
+            "Old Act PB preserved (checkpoints not provided)")
     }
 
     set_as_run_pb_does_not_touch_zone_pbs()
@@ -612,7 +615,7 @@ class PersonalBestServiceTests extends TestCase
         this.svc.UpdateFromRun(0, "", Map("Clearfell", 50000))
         this.svc.SetAsRunPb(500000, "pinned", Map(1, 100000))
         Assert.Equal(50000, this.svc.GetZonePbMs("Clearfell"),
-            "zonePbs NUNCA tocado por SetAsRunPb")
+            "zonePbs NEVER touched by SetAsRunPb")
     }
 
     set_as_run_pb_rejects_zero_run_ms()
@@ -673,7 +676,7 @@ class PersonalBestServiceTests extends TestCase
 
     rebuild_from_history_picks_best_zone_pbs_from_details()
     {
-        ; Details com category=mapa|cidade entram em zonePbs
+        ; Details with category=mapa|cidade enter zonePbs
         runs := [
             Map("runId", "a", "totalMs", 1000, "actCheckpoints", Map(), "details", [
                 Map("category", "mapa",   "label", "Clearfell",  "ms", 50000),
@@ -686,10 +689,10 @@ class PersonalBestServiceTests extends TestCase
             ])
         ]
         this.svc.RebuildFromHistory(runs)
-        Assert.Equal(40000, this.svc.GetZonePbMs("Clearfell"), "best entre as 2 runs")
+        Assert.Equal(40000, this.svc.GetZonePbMs("Clearfell"), "best across the 2 runs")
         Assert.Equal(5000,  this.svc.GetZonePbMs("The Hub"))
-        Assert.Equal(0,     this.svc.GetZonePbMs("X -> Y"), "loading nao entra em zonePbs")
-        Assert.Equal(0,     this.svc.GetZonePbMs("1 death"), "morte nao entra em zonePbs")
+        Assert.Equal(0,     this.svc.GetZonePbMs("X -> Y"), "loading doesn't enter zonePbs")
+        Assert.Equal(0,     this.svc.GetZonePbMs("1 death"), "morte doesn't enter zonePbs")
     }
 
     rebuild_from_history_ignores_runs_without_total_ms()
@@ -700,7 +703,7 @@ class PersonalBestServiceTests extends TestCase
             Map("runId", "worse", "totalMs", -100, "actCheckpoints", Map(), "details", [])
         ]
         this.svc.RebuildFromHistory(runs)
-        Assert.Equal(1000, this.svc.GetRunPbMs(), "So a run 'ok' contou")
+        Assert.Equal(1000, this.svc.GetRunPbMs(), "Only the 'ok' run counted")
     }
 
     rebuild_from_history_persists_to_repo()

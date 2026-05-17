@@ -2,8 +2,9 @@
 ; WindowState tests
 ; ============================================================
 ;
-; Cobre o value object minimalista WindowState (microLocked, steveLocked).
-; Pequeno em superficie, mas valida coercoes de bool e roundtrip ToMap.
+; Covers the minimalist WindowState value object (microLocked,
+; steveLocked). Small surface area, but validates bool coercions
+; and ToMap roundtrip.
 
 class WindowStateTests extends TestCase
 {
@@ -82,7 +83,7 @@ class WindowStateTests extends TestCase
         Assert.Equal(true,  m["microLocked"])
         Assert.Equal(false, m["steveLocked"])
 
-        ; Roundtrip: ToMap -> FromMap deveria preservar
+        ; Roundtrip: ToMap -> FromMap should preserve
         ws2 := WindowState.FromMap(m)
         Assert.Equal(ws.microLocked, ws2.microLocked)
         Assert.Equal(ws.steveLocked, ws2.steveLocked)

@@ -2,10 +2,11 @@
 ; AutoFinalizeServiceTests
 ; ============================================================
 ;
-; AutoFinalizeService subscribe a LogLineRead + lifecycle. Quando uma
-; linha bate com cfg.autoFinalizeRegex E ainda nao disparou nesta run,
-; publica Cmd.FinalizeRunRequested. Tolerante a regex invalida. Dedup
-; por flag _hasFiredForCurrentRun (reset em RunStarted/Ended).
+; AutoFinalizeService subscribes to LogLineRead + lifecycle. When a
+; line matches cfg.autoFinalizeRegex AND hasn't fired in this run
+; yet, publishes Cmd.FinalizeRunRequested. Tolerant to invalid
+; regex. Dedup via _hasFiredForCurrentRun flag (reset on
+; RunStarted/Ended).
 
 
 class AutoFinalizeServiceTests extends TestCase
@@ -18,7 +19,7 @@ class AutoFinalizeServiceTests extends TestCase
     {
         this.bus := Fixtures.MakeBus()
         this.cfg := AppSettings.Defaults()
-        this.cfg.autoFinalizeRegex := "Doryani has been slain"   ; final boss canonico
+        this.cfg.autoFinalizeRegex := "Doryani has been slain"   ; canonical final boss
         this.svc := AutoFinalizeService(this.bus, this.cfg)
     }
 
@@ -30,13 +31,13 @@ class AutoFinalizeServiceTests extends TestCase
     }
 
     static Tests := [
-        ; --- Construtor ---
+        ; --- Constructor ---
         "constructor_throws_when_bus_not_event_bus",
         "constructor_throws_when_cfg_not_app_settings",
         "constructor_subscribes_to_log_line_read",
         "constructor_subscribes_to_all_run_lifecycle",
 
-        ; --- LogLine handler: precondicoes ---
+        ; --- LogLine handler: preconditions ---
         "log_line_ignored_when_data_non_object",
         "log_line_ignored_when_line_key_missing",
         "log_line_ignored_when_line_empty",
@@ -48,7 +49,7 @@ class AutoFinalizeServiceTests extends TestCase
         "log_line_no_match_publishes_nothing",
         "log_line_match_event_includes_source_auto",
 
-        ; --- Regex invalida (tolerancia) ---
+        ; --- Invalid regex (tolerance) ---
         "log_line_with_invalid_regex_does_not_crash",
         "log_line_with_invalid_regex_does_not_publish",
 
@@ -61,7 +62,7 @@ class AutoFinalizeServiceTests extends TestCase
         "run_cancelled_resets_fired_flag",
         "run_completed_resets_fired_flag",
 
-        ; --- Fluxo completo ---
+        ; --- Full flow ---
         "after_run_started_can_fire_for_next_run",
 
         ; --- Dispose ---
@@ -81,7 +82,7 @@ class AutoFinalizeServiceTests extends TestCase
     }
 
     ; ============================================================
-    ; Construtor
+    ; Constructor
     ; ============================================================
 
     constructor_throws_when_bus_not_event_bus()
@@ -110,7 +111,7 @@ class AutoFinalizeServiceTests extends TestCase
     }
 
     ; ============================================================
-    ; LogLine handler: precondicoes
+    ; LogLine handler: preconditions
     ; ============================================================
 
     log_line_ignored_when_data_non_object()
@@ -144,7 +145,7 @@ class AutoFinalizeServiceTests extends TestCase
 
     log_line_ignored_when_already_fired_for_current_run()
     {
-        ; Primeiro match dispara, segundo NAO (dedup)
+        ; First match fires, second does NOT (dedup)
         capturedEvents := this._CaptureEvents(Commands.FinalizeRunRequested)
         this.bus.Publish(Events.LogLineRead, Map("line", "Doryani has been slain"))
         this.bus.Publish(Events.LogLineRead, Map("line", "Doryani has been slain again"))
@@ -177,14 +178,14 @@ class AutoFinalizeServiceTests extends TestCase
     }
 
     ; ============================================================
-    ; Regex invalida (tolerancia)
+    ; Invalid regex (tolerance)
     ; ============================================================
 
     log_line_with_invalid_regex_does_not_crash()
     {
         this.cfg.autoFinalizeRegex := "(unclosed"
         this.bus.Publish(Events.LogLineRead, Map("line", "(unclosed"))
-        Assert.True(true, "Sobreviveu a regex invalida")
+        Assert.True(true, "Survived invalid regex")
     }
 
     log_line_with_invalid_regex_does_not_publish()
@@ -215,7 +216,7 @@ class AutoFinalizeServiceTests extends TestCase
     {
         capturedEvents := this._CaptureEvents(Commands.FinalizeRunRequested)
         this.bus.Publish(Events.LogLineRead, Map("line", "Doryani has been slain"))   ; fired
-        this.bus.Publish(Events.RunStarted, Map("runId", "new_run"))                  ; reseta
+        this.bus.Publish(Events.RunStarted, Map("runId", "new_run"))                  ; resets
         this.bus.Publish(Events.LogLineRead, Map("line", "Doryani has been slain"))   ; fires again
         Assert.Equal(2, capturedEvents.Length)
     }
@@ -248,7 +249,7 @@ class AutoFinalizeServiceTests extends TestCase
     }
 
     ; ============================================================
-    ; Fluxo completo
+    ; Full flow
     ; ============================================================
 
     after_run_started_can_fire_for_next_run()
@@ -258,7 +259,7 @@ class AutoFinalizeServiceTests extends TestCase
         this.bus.Publish(Events.LogLineRead, Map("line", "Doryani has been slain"))
         this.bus.Publish(Events.RunStarted, Map("runId", "run_2"))
         this.bus.Publish(Events.LogLineRead, Map("line", "Doryani has been slain"))
-        Assert.Equal(2, capturedEvents.Length, "Cada run pode disparar uma vez")
+        Assert.Equal(2, capturedEvents.Length, "Each run can fire once")
     }
 
     ; ============================================================

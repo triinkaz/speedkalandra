@@ -1,15 +1,15 @@
 ; ============================================================
-; RunState - estado persistivel de uma run (Onda 6, minimal)
+; RunState - persistable state of a run (Wave 6, minimal)
 ; ============================================================
 ;
-; VERSAO POS-DEMOLICAO: 4 campos apenas.
+; POST-DEMOLITION VERSION: 4 fields only.
 ;
-;   runId     : "YYYYMMDD_HHMMSS" (id estavel da run em curso) ou ""
-;   startedAt : timestamp "yyyy-MM-dd HH:mm:ss" do inicio (string)
+;   runId     : "YYYYMMDD_HHMMSS" (stable id of the ongoing run) or ""
+;   startedAt : "yyyy-MM-dd HH:mm:ss" start timestamp (string)
 ;   status    : "idle" | "running" | "paused" | "completed" | "cancelled"
-;   runBaseMs : ms acumulados commitados (TimerService persiste)
+;   runBaseMs : committed accumulated ms (TimerService persists)
 ;
-; SERIALIZACAO (INI section [RunState]):
+; SERIALIZATION (INI section [RunState]):
 ;   RunId=20260512_142345
 ;   StartedAt=2026-05-12 14:23:45
 ;   Status=running

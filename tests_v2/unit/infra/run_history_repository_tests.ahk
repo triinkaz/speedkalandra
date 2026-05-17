@@ -2,12 +2,12 @@
 ; RunHistoryRepository tests
 ; ============================================================
 ;
-; Persiste runs finalizadas como 1 INI por run em `<dir>/{runId}.ini`.
+; Persists finalized runs as 1 INI per run at `<dir>/{runId}.ini`.
 ; Sections: [meta], [totals], [checkpoints], [details].
-; Details serializados como linha pipe-delimitada com escape `\|`/`\\`.
+; Details serialized as a pipe-delimited line with `\|`/`\\` escape.
 ;
-; Nomenclatura: usamos `runItem`/`currentRun` em vez de `run` pra
-; nao colidir case-insensitively com a builtin function `Run`.
+; Naming: we use `runItem`/`currentRun` instead of `run` to avoid
+; the case-insensitive collision with the builtin function `Run`.
 
 class RunHistoryRepositoryTests extends TestCase
 {
@@ -17,7 +17,7 @@ class RunHistoryRepositoryTests extends TestCase
     }
 
     static Tests := [
-        ; --- Construtor ---
+        ; --- Constructor ---
         "constructor_throws_on_empty_dir",
         "constructor_creates_directory",
         "get_dir_returns_constructor_arg",
@@ -98,7 +98,7 @@ class RunHistoryRepositoryTests extends TestCase
     }
 
     ; ============================================================
-    ; Construtor
+    ; Constructor
     ; ============================================================
 
     constructor_throws_on_empty_dir()
@@ -144,7 +144,7 @@ class RunHistoryRepositoryTests extends TestCase
     {
         repo := RunHistoryRepository(Fixtures.TempDir())
         currentRun := this._MakeBuildResult()
-        currentRun["totalMs"] := 500   ; < 1000ms minimo
+        currentRun["totalMs"] := 500   ; < 1000ms minimum
         Assert.False(repo.Save(currentRun))
     }
 
@@ -230,7 +230,7 @@ class RunHistoryRepositoryTests extends TestCase
         ; Save 1: 2 details
         repo.Save(this._MakeBuildResult())
 
-        ; Save 2: 1 detail (sobrescreve) - mesmo runId
+        ; Save 2: 1 detail (overwrites) - same runId
         replacement := this._MakeBuildResult()
         replacement["details"] := [
             Map("category", "mapa", "label", "OnlyOne", "ms", 1000, "note", "", "timestamp", "")
@@ -239,7 +239,7 @@ class RunHistoryRepositoryTests extends TestCase
         repo.Save(replacement)
 
         loaded := repo.Load("20260512_142345")
-        Assert.Equal(1,       loaded["details"].Length, "Re-save deve substituir, nao acumular")
+        Assert.Equal(1,       loaded["details"].Length, "Re-save must replace, not accumulate")
         Assert.Equal(9999999, loaded["totalMs"])
     }
 
@@ -249,12 +249,13 @@ class RunHistoryRepositoryTests extends TestCase
 
     list_run_ids_returns_empty_when_dir_missing()
     {
-        ; Cria repo apontando pra subdir que vai existir (construtor cria),
-        ; depois apaga manualmente.
+        ; Create repo pointing to a subdir that will exist (constructor
+        ; creates it), then delete manually.
         tmpDir := Fixtures.TempDir()
         subDir := tmpDir "\nonexistent_subdir"
-        ; Nao usa construtor (que cria), mas precisa-se de ListRunIds em
-        ; dir ausente. Solucao: cria repo, mas depois apaga manualmente.
+        ; Doesn't use the constructor (which creates), but we need
+        ; ListRunIds on a missing dir. Workaround: create repo, then
+        ; delete manually.
         repo := RunHistoryRepository(subDir)
         DirDelete(subDir, false)
         Assert.Equal(0, repo.ListRunIds().Length)
@@ -269,12 +270,12 @@ class RunHistoryRepositoryTests extends TestCase
 
         ids := repo.ListRunIds()
         Assert.Equal(2, ids.Length)
-        ; Bug #12 fix: runIds nao devem ter ".ini" anexado.
-        ; `runId` colide com classe `RunId` -> usamos `currentRunId`.
+        ; Bug #12 fix: runIds must not have ".ini" appended.
+        ; `runId` collides with the `RunId` class -> we use `currentRunId`.
         for _, currentRunId in ids
         {
             Assert.False(InStr(currentRunId, ".ini") > 0,
-                "runId nao deve conter '.ini': " currentRunId)
+                "runId must not contain '.ini': " currentRunId)
         }
     }
 
@@ -283,11 +284,11 @@ class RunHistoryRepositoryTests extends TestCase
         tmpDir := Fixtures.TempDir()
         repo := RunHistoryRepository(tmpDir)
         repo.Save(this._MakeBuildResult("20260512_142345"))
-        ; Cria um .txt no dir
+        ; Creates a .txt in the dir
         FileAppend("not an ini", tmpDir "\garbage.txt", "UTF-8")
 
         ids := repo.ListRunIds()
-        Assert.Equal(1, ids.Length, ".txt deve ser ignorado")
+        Assert.Equal(1, ids.Length, ".txt should be ignored")
     }
 
     list_run_ids_respects_max_n()
@@ -368,7 +369,7 @@ class RunHistoryRepositoryTests extends TestCase
         repo.Save(this._MakeBuildResult())
 
         loaded := repo.Load("20260512_142345")
-        ; categoryLabel vem do fallback (RunStatsPlotBuilder nao incluido):
+        ; categoryLabel comes from the fallback (RunStatsPlotBuilder not included):
         ;   mapa -> "Map", cidade -> "Town"
         Assert.Equal("Map",  loaded["details"][1]["categoryLabel"])
         Assert.Equal("Town", loaded["details"][2]["categoryLabel"])
@@ -388,7 +389,7 @@ class RunHistoryRepositoryTests extends TestCase
         Assert.Equal("20260512_142345", summaries[1]["runId"])
         Assert.Equal(2918000,           summaries[1]["totals"]["mapa"])
         Assert.Equal(0, summaries[1]["details"].Length,
-            "Summaries devem trazer details vazio (otimizacao)")
+            "Summaries must bring empty details (optimization)")
     }
 
     load_summaries_respects_max_n()
@@ -448,7 +449,7 @@ class RunHistoryRepositoryTests extends TestCase
             "timestamp", ""
         )
         line := RunHistoryRepository._SerializeDetail(detail)
-        ; Pipe vira \|, backslash vira \\
+        ; Pipe becomes \|, backslash becomes \\
         Assert.Contains("Zone\|With\|Pipes", line)
         Assert.Contains("back\\slash",       line)
     }
@@ -479,7 +480,7 @@ class RunHistoryRepositoryTests extends TestCase
 
     parse_detail_returns_empty_for_too_few_parts()
     {
-        ; Soh tem 2 partes (precisa >= 3)
+        ; Only has 2 parts (needs >= 3)
         Assert.Equal("", RunHistoryRepository._ParseDetail("only|two"))
     }
 
@@ -510,7 +511,7 @@ class RunHistoryRepositoryTests extends TestCase
 
     safe_category_label_passes_through_unknown()
     {
-        ; Categoria desconhecida -> retorna a propria string
+        ; Unknown category -> returns the string itself
         Assert.Equal("custom_cat", RunHistoryRepository._SafeCategoryLabel("custom_cat"))
     }
 }

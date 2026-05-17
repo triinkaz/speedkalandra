@@ -2,29 +2,31 @@
 ; LoadingDetectionServiceTests
 ; ============================================================
 ;
-; LoadingDetectionService eh um state machine que:
-;   1. ARM: AreaLevelChanged (do log) ou ArmFromAreaChange direto
-;   2. POLL: Tick periodico chama scanner.Scan
-;   3. END: scan retorna visible=true OU timeout
+; LoadingDetectionService is a state machine that:
+;   1. ARM: AreaLevelChanged (from log) or ArmFromAreaChange direct
+;   2. POLL: periodic Tick calls scanner.Scan
+;   3. END: scan returns visible=true OR timeout
 ;
-; Publica LoadingMeasured no fim com duration/fromZone/toZone/source/etc.
-; Pre-condicoes pra arm: setting habilitado + timer ativo + nao ja-armado.
+; Publishes LoadingMeasured at the end with duration/fromZone/
+; toZone/source/etc. Preconditions to arm: setting enabled + timer
+; active + not already-armed.
 ;
 ; STUBS:
-;   - _LdsStubScanner: subclasse de HudPixelScanner com flag `visible`
-;     controlavel (override de Scan). Passa typecheck `is HudPixelScanner`.
-;   - _LdsStubCallable: classe minima com .Call() pra zoneProvider/
-;     stepProvider/windowProvider. Field `value` setavel externamente.
+;   - _LdsStubScanner: subclass of HudPixelScanner with a controllable
+;     `visible` flag (Scan override). Passes the `is HudPixelScanner`
+;     typecheck.
+;   - _LdsStubCallable: minimal class with .Call() for zoneProvider/
+;     stepProvider/windowProvider. Externally settable `value` field.
 ;
-; DEPS REAIS:
+; REAL DEPS:
 ;   - EventBus (Fixtures.MakeBus)
 ;   - FakeClock (Fixtures.MakeFakeClock)
-;   - AppSettings (AppSettings.Defaults com loadingVisualEnabled=true)
-;   - TimerService (real, Start() pra IsActive=true)
+;   - AppSettings (AppSettings.Defaults with loadingVisualEnabled=true)
+;   - TimerService (real, Start() for IsActive=true)
 
 
 ; ============================================================
-; Stubs top-level (subclasse e callable)
+; Top-level stubs (subclass and callable)
 ; ============================================================
 
 class _LdsStubScanner extends HudPixelScanner
@@ -33,7 +35,7 @@ class _LdsStubScanner extends HudPixelScanner
 
     __New()
     {
-        ; Inicializa parent com pixelReader dummy (nao usado)
+        ; Initializes parent with dummy pixelReader (unused)
         super.__New((x, y) => 0)
     }
 
@@ -85,7 +87,7 @@ class LoadingDetectionServiceTests extends TestCase
         this.cfg.loadingVisualMinMs   := 250
         this.cfg.loadingVisualMaxMs   := 90000
 
-        ; Timer service real, Start() pra IsActive=true
+        ; Real timer service, Start() for IsActive=true
         this.timerSvc := TimerService(this.stubClock, this.bus)
         this.timerSvc.Start()
 
@@ -93,7 +95,7 @@ class LoadingDetectionServiceTests extends TestCase
         this.stepProvider   := _LdsStubCallable(Map("actIndex", 1, "stepId", "step_1"))
         this.windowProvider := _LdsStubCallable(Map("x", 0, "y", 0, "w", 1920, "h", 1080))
 
-        ; headless=true pra evitar SetTimer real
+        ; headless=true to avoid real SetTimer
         this.svc := LoadingDetectionService(
             this.bus, this.stubClock, this.stubScanner, this.cfg,
             this.timerSvc, this.zoneProvider, this.stepProvider,
@@ -109,7 +111,7 @@ class LoadingDetectionServiceTests extends TestCase
     }
 
     static Tests := [
-        ; --- Construtor ---
+        ; --- Constructor ---
         "constructor_throws_when_bus_not_event_bus",
         "constructor_throws_when_clock_missing_now_ms",
         "constructor_throws_when_scanner_not_hud_pixel_scanner",
@@ -134,7 +136,7 @@ class LoadingDetectionServiceTests extends TestCase
         "dispose_unsubscribes_handlers",
         "dispose_is_idempotent",
 
-        ; --- ArmFromAreaChange precondicoes ---
+        ; --- ArmFromAreaChange preconditions ---
         "arm_returns_false_when_loading_visual_disabled",
         "arm_returns_false_when_timer_not_active",
         "arm_returns_false_when_already_active",
@@ -160,28 +162,28 @@ class LoadingDetectionServiceTests extends TestCase
         "suppress_for_panel_when_idle_only_sets_ignore_until",
         "suppress_for_panel_when_active_cancels_state",
 
-        ; --- Tick: precondicoes ---
+        ; --- Tick: preconditions ---
         "tick_no_op_when_state_idle",
         "tick_no_op_when_window_provider_returns_empty",
         "tick_no_op_during_ignore_until_period",
 
     ; --- Tick: timeout ---
-        ; v0.1.2 (Bug #5 fix): timeout AGORA publica LoadingMeasured com
-        ; durationMs real (>= maxMs por construcao). Antes era descartado
-        ; silenciosamente pelo filtro `> maxMs` em _End, causando loading
-        ; time subestimado em PCs lentos.
+        ; v0.1.2 (Bug #5 fix): timeout NOW publishes LoadingMeasured
+        ; with real durationMs (>= maxMs by construction). Before it
+        ; was silently discarded by the `> maxMs` filter in _End,
+        ; causing underestimated loading time on slow PCs.
         "tick_timeout_publishes_loading_measured",
         "tick_timeout_event_has_source_timeout_no_hud_return",
         "tick_timeout_event_duration_reflects_real_time_above_max",
         "tick_timeout_event_includes_from_zone",
         "tick_returns_to_idle_after_timeout",
 
-        ; Bug #5 regression: loadings entre 90s e absurdos ainda devem
-        ; sair publicados. Cobertura de PC lento.
+        ; Bug #5 regression: loadings between 90s and absurd must still
+        ; be published. Slow PC coverage.
         "bug5_loading_100s_publishes_with_real_duration",
         "bug5_loading_300s_publishes_with_real_duration",
 
-        ; --- Tick: timer parado ---
+        ; --- Tick: timer stopped ---
         "tick_cancels_when_timer_inactive",
         "tick_cancel_returns_to_idle",
 
@@ -200,7 +202,7 @@ class LoadingDetectionServiceTests extends TestCase
         "tick_continues_polling_when_hud_absent",
         "tick_does_not_publish_when_hud_absent",
 
-        ; --- End filtering por duracao ---
+        ; --- End filtering by duration ---
         "end_discards_loading_measured_when_below_min_ms",
 
         ; --- AreaLevelChanged subscribe handler ---
@@ -224,14 +226,14 @@ class LoadingDetectionServiceTests extends TestCase
         return capturedEvents
     }
 
-    ; Avanca clock alem do periodo de ignore inicial (150ms apos arm)
+    ; Advances the clock past the initial ignore period (150ms after arm)
     _SkipIgnorePeriod()
     {
         this.stubClock.AdvanceMs(200)
     }
 
     ; ============================================================
-    ; Construtor
+    ; Constructor
     ; ============================================================
 
     constructor_throws_when_bus_not_event_bus()
@@ -360,7 +362,7 @@ class LoadingDetectionServiceTests extends TestCase
         this.svc.ArmFromAreaChange(10, "G1_2")
         this.svc.Stop()
         Assert.False(this.svc.IsActive(),
-            "Stop deve cancelar state ativo")
+            "Stop must cancel active state")
     }
 
     stop_is_idempotent()
@@ -385,7 +387,7 @@ class LoadingDetectionServiceTests extends TestCase
     }
 
     ; ============================================================
-    ; ArmFromAreaChange precondicoes
+    ; ArmFromAreaChange preconditions
     ; ============================================================
 
     arm_returns_false_when_loading_visual_disabled()
@@ -402,8 +404,8 @@ class LoadingDetectionServiceTests extends TestCase
 
     arm_returns_false_when_already_active()
     {
-        Assert.True(this.svc.ArmFromAreaChange(10, "G1_2"), "Primeiro arm passa")
-        Assert.False(this.svc.ArmFromAreaChange(11, "G1_3"), "Segundo nao re-arma")
+        Assert.True(this.svc.ArmFromAreaChange(10, "G1_2"), "First arm passes")
+        Assert.False(this.svc.ArmFromAreaChange(11, "G1_3"), "Second doesn't re-arm")
     }
 
     arm_returns_true_when_preconditions_met()
@@ -425,7 +427,7 @@ class LoadingDetectionServiceTests extends TestCase
     {
         this.svc.ArmFromAreaChange(10, "G1_2")
         Assert.Equal(100000, this.svc.GetStartTick(),
-            "FakeClock.NowMs no momento do arm")
+            "FakeClock.NowMs at the moment of arm")
     }
 
     arm_captures_zone_via_provider()
@@ -433,7 +435,7 @@ class LoadingDetectionServiceTests extends TestCase
         this.zoneProvider.value := "Vastiri Outskirts"
         this.svc.ArmFromAreaChange(10, "G2_1")
 
-        ; Pra verificar: precisamos end e checar fromZone no event publicado
+        ; To verify: we need to end and check fromZone in the published event
         capturedEvents := this._CaptureEvents(Events.LoadingMeasured)
         this._SkipIgnorePeriod()
         this.stubScanner.visible := true
@@ -458,17 +460,17 @@ class LoadingDetectionServiceTests extends TestCase
 
     arm_sets_ignore_until_tick_offset_150()
     {
-        ; Apos arm, Tick durante os primeiros 150ms nao scanea (early ignore)
+        ; After arm, Tick during the first 150ms doesn't scan (early ignore)
         this.svc.ArmFromAreaChange(10, "G1_2")
-        this.stubScanner.visible := true   ; se scanease, encerraria
-        this.stubClock.AdvanceMs(100)      ; ainda dentro do ignore period
+        this.stubScanner.visible := true   ; if it scanned, would end
+        this.stubClock.AdvanceMs(100)      ; still within ignore period
         this.svc.Tick()
-        Assert.True(this.svc.IsActive(), "Ignore period ainda valido — Tick no-op")
+        Assert.True(this.svc.IsActive(), "Ignore period still valid — Tick no-op")
     }
 
     arm_zeros_scene_seen_tick()
     {
-        ; Apos arm fresh, anchor nao tem "scene:" prefix
+        ; After a fresh arm, anchor has no "scene:" prefix
         this.svc.ArmFromAreaChange(10, "G1_2")
         Assert.False(InStr(this.svc.GetLastAnchor(), "scene:"))
     }
@@ -491,7 +493,7 @@ class LoadingDetectionServiceTests extends TestCase
     notify_scene_returns_false_when_duration_below_min()
     {
         this.svc.ArmFromAreaChange(10, "G1_2")
-        ; Sem AdvanceMs: duration=0 < minMs(250)
+        ; No AdvanceMs: duration=0 < minMs(250)
         Assert.False(this.svc.NotifyScene("Some Zone"))
     }
 
@@ -508,7 +510,7 @@ class LoadingDetectionServiceTests extends TestCase
         this.stubClock.AdvanceMs(300)
         this.svc.NotifyScene("Mud Burrow")
 
-        ; Agora end com hud visible: source deve ser "scene_then_hud_return"
+        ; Now end with hud visible: source must be "scene_then_hud_return"
         capturedEvents := this._CaptureEvents(Events.LoadingMeasured)
         this.stubScanner.visible := true
         this.svc.Tick()
@@ -530,8 +532,8 @@ class LoadingDetectionServiceTests extends TestCase
     suppress_for_panel_when_idle_only_sets_ignore_until()
     {
         this.svc.SuppressForPanel("panel")
-        ; Idle continua, mas ignoreUntilTick foi setado.
-        ; Pra verificar indireto: armar depois e ver se Tick respeita.
+        ; Idle continues, but ignoreUntilTick has been set.
+        ; To verify indirectly: arm later and see if Tick respects it.
         Assert.False(this.svc.IsActive())
     }
 
@@ -543,12 +545,12 @@ class LoadingDetectionServiceTests extends TestCase
     }
 
     ; ============================================================
-    ; Tick: precondicoes
+    ; Tick: preconditions
     ; ============================================================
 
     tick_no_op_when_state_idle()
     {
-        ; State eh idle, scanner.visible=true. Tick nao publica nada.
+        ; State is idle, scanner.visible=true. Tick publishes nothing.
         this.stubScanner.visible := true
         capturedEvents := this._CaptureEvents(Events.LoadingMeasured)
         this.svc.Tick()
@@ -559,22 +561,22 @@ class LoadingDetectionServiceTests extends TestCase
     {
         this.svc.ArmFromAreaChange(10, "G1_2")
         this._SkipIgnorePeriod()
-        this.windowProvider.value := ""   ; janela nao amostravel
+        this.windowProvider.value := ""   ; window not sampleable
         this.stubScanner.visible := true
         capturedEvents := this._CaptureEvents(Events.LoadingMeasured)
         this.svc.Tick()
-        Assert.True(this.svc.IsActive(), "Mantem state ativo aguardando janela")
+        Assert.True(this.svc.IsActive(), "Keeps active state awaiting window")
         Assert.Equal(0, capturedEvents.Length)
     }
 
     tick_no_op_during_ignore_until_period()
     {
         this.svc.ArmFromAreaChange(10, "G1_2")
-        this.stubClock.AdvanceMs(100)   ; ainda dentro de 150ms post-arm
+        this.stubClock.AdvanceMs(100)   ; still within 150ms post-arm
         this.stubScanner.visible := true
         capturedEvents := this._CaptureEvents(Events.LoadingMeasured)
         this.svc.Tick()
-        Assert.Equal(0, capturedEvents.Length, "Ignore period ativo")
+        Assert.Equal(0, capturedEvents.Length, "Ignore period active")
     }
 
     ; ============================================================
@@ -583,16 +585,16 @@ class LoadingDetectionServiceTests extends TestCase
 
     tick_timeout_publishes_loading_measured()
     {
-        ; Quando Tick detecta now - startTick > maxMs, chama
-        ; _End("timeout_no_hud_return"). Apos o fix do Bug #5, o
-        ; evento eh publicado com a duracao REAL (>= maxMs).
+        ; When Tick detects now - startTick > maxMs, it calls
+        ; _End("timeout_no_hud_return"). After the Bug #5 fix, the
+        ; event is published with the REAL duration (>= maxMs).
         this.svc.ArmFromAreaChange(10, "G1_2")
         this.stubClock.AdvanceMs(100000)   ; > maxMs (90000)
         capturedEvents := this._CaptureEvents(Events.LoadingMeasured)
         this.svc.Tick()
         Assert.Equal(1, capturedEvents.Length,
-            "Bug #5 fix: timeout DEVE publicar LoadingMeasured "
-            . "(antes era descartado silenciosamente)")
+            "Bug #5 fix: timeout MUST publish LoadingMeasured "
+            . "(before it was silently discarded)")
     }
 
     tick_timeout_event_has_source_timeout_no_hud_return()
@@ -606,15 +608,16 @@ class LoadingDetectionServiceTests extends TestCase
 
     tick_timeout_event_duration_reflects_real_time_above_max()
     {
-        ; A duracao publicada eh a REAL (clock delta), nao clampada ao maxMs.
-        ; Justificativa: se o user tem PC lento e loading dura 100s,
-        ; queremos a soma da run refletir 100s (verdade), nao 90s (cap).
+        ; The published duration is the REAL one (clock delta), not
+        ; clamped to maxMs. Rationale: if the user has a slow PC and
+        ; loading lasts 100s, we want the run sum to reflect 100s
+        ; (truth), not 90s (cap).
         this.svc.ArmFromAreaChange(10, "G1_2")
         this.stubClock.AdvanceMs(100000)   ; 100s real
         capturedEvents := this._CaptureEvents(Events.LoadingMeasured)
         this.svc.Tick()
         Assert.Equal(100000, capturedEvents[1]["durationMs"],
-            "Duracao real preservada (sem clamp a maxMs)")
+            "Real duration preserved (no clamp to maxMs)")
     }
 
     tick_timeout_event_includes_from_zone()
@@ -636,26 +639,26 @@ class LoadingDetectionServiceTests extends TestCase
     }
 
     ; ============================================================
-    ; Bug #5 regression: PC lento (loadings extra-longos)
+    ; Bug #5 regression: slow PC (extra-long loadings)
     ; ============================================================
 
     bug5_loading_100s_publishes_with_real_duration()
     {
-        ; Cenario tipico de PC lento: loading de 100s (> maxMs 90s).
-        ; Antes do fix: descartado silenciosamente. PB stats mostrava
-        ; total de loading subestimado em 100s.
+        ; Typical slow-PC scenario: 100s loading (> maxMs 90s).
+        ; Before the fix: silently discarded. PB stats showed total
+        ; loading underestimated by 100s.
         this.svc.ArmFromAreaChange(10, "G1_2")
         capturedEvents := this._CaptureEvents(Events.LoadingMeasured)
         this.stubClock.AdvanceMs(100000)
         this.svc.Tick()
-        Assert.Equal(1, capturedEvents.Length, "Loading de 100s publicado")
+        Assert.Equal(1, capturedEvents.Length, "100s loading published")
         Assert.Equal(100000, capturedEvents[1]["durationMs"])
     }
 
     bug5_loading_300s_publishes_with_real_duration()
     {
-        ; Caso extremo: loading de 5 minutos. Ainda assim deve ser
-        ; visivel nas estatisticas (sinaliza problema real ao usuario).
+        ; Extreme case: 5-minute loading. Must still be visible in
+        ; the statistics (signals a real problem to the user).
         this.svc.ArmFromAreaChange(10, "G1_2")
         capturedEvents := this._CaptureEvents(Events.LoadingMeasured)
         this.stubClock.AdvanceMs(300000)
@@ -665,7 +668,7 @@ class LoadingDetectionServiceTests extends TestCase
     }
 
     ; ============================================================
-    ; Tick: timer parado
+    ; Tick: timer stopped
     ; ============================================================
 
     tick_cancels_when_timer_inactive()
@@ -675,7 +678,7 @@ class LoadingDetectionServiceTests extends TestCase
         this.timerSvc.Stop()
         capturedEvents := this._CaptureEvents(Events.LoadingMeasured)
         this.svc.Tick()
-        Assert.Equal(0, capturedEvents.Length, "Cancel NAO publica LoadingMeasured")
+        Assert.Equal(0, capturedEvents.Length, "Cancel does NOT publish LoadingMeasured")
     }
 
     tick_cancel_returns_to_idle()
@@ -696,7 +699,7 @@ class LoadingDetectionServiceTests extends TestCase
         this.svc.ArmFromAreaChange(10, "G1_2")
         this._SkipIgnorePeriod()
         this.stubScanner.visible := true
-        this.stubClock.AdvanceMs(100)   ; duration ~300ms (200+100), passa min
+        this.stubClock.AdvanceMs(100)   ; duration ~300ms (200+100), passes min
         this.svc.Tick()
         Assert.False(this.svc.IsActive())
     }
@@ -741,7 +744,7 @@ class LoadingDetectionServiceTests extends TestCase
         capturedEvents := this._CaptureEvents(Events.LoadingMeasured)
         this._SkipIgnorePeriod()
         this.stubClock.AdvanceMs(100)   ; total 300ms > minMs(250)
-        this.zoneProvider.value := "Different Zone"   ; mudou apos arm
+        this.zoneProvider.value := "Different Zone"   ; changed after arm
         this.stubScanner.visible := true
         this.svc.Tick()
         Assert.Equal("Original Zone", capturedEvents[1]["fromZone"])
@@ -793,7 +796,7 @@ class LoadingDetectionServiceTests extends TestCase
     }
 
     ; ============================================================
-    ; Tick: HUD absent (continua poll)
+    ; Tick: HUD absent (continues polling)
     ; ============================================================
 
     tick_continues_polling_when_hud_absent()
@@ -802,7 +805,7 @@ class LoadingDetectionServiceTests extends TestCase
         this._SkipIgnorePeriod()
         ; scanner.visible default false
         this.svc.Tick()
-        Assert.True(this.svc.IsActive(), "Continua aguardando HUD voltar")
+        Assert.True(this.svc.IsActive(), "Keeps waiting for HUD to return")
     }
 
     tick_does_not_publish_when_hud_absent()
@@ -820,16 +823,16 @@ class LoadingDetectionServiceTests extends TestCase
 
     end_discards_loading_measured_when_below_min_ms()
     {
-        ; Forçar end com duration < minMs: nao da pra esperar minMs no
-        ; tick natural (early-ignore eh 150ms, minMs eh 250ms). So da
-        ; reduzindo minMs no cfg e armando + scanando rapido.
+        ; Force end with duration < minMs: can't wait for minMs in the
+        ; natural tick (early-ignore is 150ms, minMs is 250ms). Only
+        ; possible by reducing minMs in cfg and arming + scanning fast.
         this.cfg.loadingVisualMinMs := 1000
         this.svc.ArmFromAreaChange(10, "G1_2")
         capturedEvents := this._CaptureEvents(Events.LoadingMeasured)
         this._SkipIgnorePeriod()
-        this.stubScanner.visible := true   ; volta rapido (300ms < 1000ms)
+        this.stubScanner.visible := true   ; returns fast (300ms < 1000ms)
         this.svc.Tick()
-        Assert.Equal(0, capturedEvents.Length, "duration < minMs descartado")
+        Assert.Equal(0, capturedEvents.Length, "duration < minMs discarded")
     }
 
     ; ============================================================
@@ -855,7 +858,7 @@ class LoadingDetectionServiceTests extends TestCase
     zone_changed_event_calls_notify_scene_when_active()
     {
         this.svc.ArmFromAreaChange(10, "G1_2")
-        this.stubClock.AdvanceMs(300)   ; passa minMs
+        this.stubClock.AdvanceMs(300)   ; passes minMs
         this.bus.Publish(Events.ZoneChanged, Map("zoneName", "Mud Burrow"))
         Assert.Equal("scene:Mud Burrow", this.svc.GetLastAnchor())
     }
@@ -866,12 +869,12 @@ class LoadingDetectionServiceTests extends TestCase
         anchorBefore := this.svc.GetLastAnchor()
         this.bus.Publish(Events.ZoneChanged, Map("zoneName", ""))
         Assert.Equal(anchorBefore, this.svc.GetLastAnchor(),
-            "ZoneChanged com zoneName vazio nao atualiza anchor")
+            "ZoneChanged with empty zoneName doesn't update anchor")
     }
 
     zone_changed_when_idle_no_op()
     {
-        ; Idle: ZoneChanged via NotifyScene retorna false sem efeito
+        ; Idle: ZoneChanged via NotifyScene returns false with no effect
         this.bus.Publish(Events.ZoneChanged, Map("zoneName", "X"))
         Assert.False(this.svc.IsActive())
     }

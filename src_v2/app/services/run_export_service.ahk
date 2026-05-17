@@ -1,36 +1,36 @@
 ; ============================================================
-; RunExportService - orquestra export de runs pra JSON (v0.1.0)
+; RunExportService - orchestrates export of runs to JSON (v0.1.0)
 ; ============================================================
 ;
-; Responsabilidade unica: dado uma lista de runIds + caminho de
-; saida + opcoes, carrega as runs do RunHistoryRepository, monta
-; o payload via RunExportFormat, e escreve em disco via JsonFile.
+; Single responsibility: given a list of runIds + output path +
+; options, load the runs from RunHistoryRepository, build the
+; payload via RunExportFormat, and write to disk via JsonFile.
 ;
-; NAO faz UI \u2014 isso eh trabalho do ExportOptionsDialog. NAO escolhe
-; quais runs exportar \u2014 caller decide.
+; Does NOT do UI — that is ExportOptionsDialog's job. Does NOT pick
+; which runs to export — the caller decides.
 ;
 ; DEPS:
-;   bus          : EventBus (pra publicar Evt.RunsExported no sucesso)
-;   runHistory   : RunHistoryRepository (pra Load(runId))
-;   personalBest : PersonalBestService (opcional, pra includePbs)
+;   bus          : EventBus (to publish Evt.RunsExported on success)
+;   runHistory   : RunHistoryRepository (for Load(runId))
+;   personalBest : PersonalBestService (optional, for includePbs)
 ;
 ; ExportResult:
 ;   Map{
 ;     success      : bool,
-;     path         : string (caminho final do arquivo),
-;     runsExported : int (quantas runs efetivamente foram escritas),
-;     errors       : Array<string> (problemas, possivelmente parciais)
+;     path         : string (final file path),
+;     runsExported : int (how many runs were effectively written),
+;     errors       : Array<string> (problems, possibly partial)
 ;   }
 ;
-; SEMANTICA DE ERRO:
-;   - Se UMA run falha em Load, eh registrada em errors e pulada,
-;     mas o export continua com as outras (partial success).
-;   - Se NENHUMA run carrega (todas falharam ou lista vazia), retorna
-;     success=false sem escrever o arquivo.
-;   - Se o write em si falha (disco, permissao), retorna success=false
-;     com erro descritivo.
+; ERROR SEMANTICS:
+;   - If ONE run fails to Load, it is recorded in errors and skipped,
+;     but the export continues with the others (partial success).
+;   - If NO run loads (all failed or empty list), returns
+;     success=false without writing the file.
+;   - If the write itself fails (disk, permission), returns
+;     success=false with a descriptive error.
 ;
-; CONSTRUCAO:
+; CONSTRUCTION:
 ;   svc := RunExportService(bus, runHistory, personalBest)
 
 
@@ -45,11 +45,11 @@ class RunExportService
     __New(bus, runHistory, personalBest := "")
     {
         if !(bus is EventBus)
-            throw TypeError("RunExportService: 'bus' deve ser EventBus")
+            throw TypeError("RunExportService: 'bus' must be EventBus")
         if !(runHistory is RunHistoryRepository)
-            throw TypeError("RunExportService: 'runHistory' deve ser RunHistoryRepository")
+            throw TypeError("RunExportService: 'runHistory' must be RunHistoryRepository")
         if (personalBest != "" && !(personalBest is PersonalBestService))
-            throw TypeError("RunExportService: 'personalBest' deve ser PersonalBestService ou vazio")
+            throw TypeError("RunExportService: 'personalBest' must be PersonalBestService or empty")
 
         this._bus          := bus
         this._runHistory   := runHistory
@@ -59,31 +59,31 @@ class RunExportService
     ; ============================================================
     ; Export(runIds, outputPath, options) -> ExportResult
     ;
-    ; runIds      : Array<string> de runIds a exportar
-    ; outputPath  : caminho absoluto do .json
-    ; options     : Map com:
+    ; runIds      : Array<string> of runIds to export
+    ; outputPath  : absolute path of the .json
+    ; options     : Map with:
     ;   "anonymized" : bool (default false) - blank profile name
-    ;   "includePbs" : bool (default true)  - inclui bloco personalBests
+    ;   "includePbs" : bool (default true)  - includes personalBests block
     ; ============================================================
     Export(runIds, outputPath, options := "")
     {
         errors := []
 
-        ; --- Validacao de input ---
+        ; --- Input validation ---
         if !IsObject(runIds) || !(runIds is Array)
         {
-            errors.Push("runIds deve ser Array")
+            errors.Push("runIds must be Array")
             return this._FailResult(outputPath, errors)
         }
         if (runIds.Length = 0)
         {
-            errors.Push("Nenhuma run para exportar")
+            errors.Push("No runs to export")
             return this._FailResult(outputPath, errors)
         }
         outputPath := String(outputPath)
         if (Trim(outputPath) = "")
         {
-            errors.Push("Caminho de saida vazio")
+            errors.Push("Empty output path")
             return this._FailResult(outputPath, errors)
         }
 
@@ -91,24 +91,24 @@ class RunExportService
         anonymize := opts.Has("anonymized") && opts["anonymized"]
         includePbs := !opts.Has("includePbs") || opts["includePbs"]   ; default true
 
-        ; --- Carrega cada run ---
+        ; --- Load each run ---
         runs := []
         for _, rid in runIds
         {
             ridStr := String(rid)
             if (ridStr = "")
             {
-                errors.Push("runId vazio na lista")
+                errors.Push("Empty runId in list")
                 continue
             }
             try
             {
-                ; v0.1.1: `run` local colide com builtin `Run` (case-insensitive).
-                ; Usar `runItem`.
+                ; v0.1.1: local `run` collides with builtin `Run` (case-insensitive).
+                ; Use `runItem`.
                 runItem := this._runHistory.Load(ridStr)
                 if !IsObject(runItem)
                 {
-                    errors.Push("Run " ridStr ": nao encontrada no historico")
+                    errors.Push("Run " ridStr ": not found in history")
                     continue
                 }
                 runs.Push(runItem)
@@ -121,11 +121,11 @@ class RunExportService
 
         if (runs.Length = 0)
         {
-            errors.Push("Nenhuma run carregou com sucesso")
+            errors.Push("No run loaded successfully")
             return this._FailResult(outputPath, errors)
         }
 
-        ; --- Coleta PBs se requisitado ---
+        ; --- Collect PBs if requested ---
         pbData := ""
         if includePbs && IsObject(this._personalBest)
         {
@@ -140,24 +140,24 @@ class RunExportService
             }
             catch as ex
             {
-                ; Nao bloqueia o export \u2014 so loga e segue sem PBs
-                errors.Push("Falha ao coletar PBs (export continuara sem eles): " ex.Message)
+                ; Doesn't block the export — just logs and proceeds without PBs
+                errors.Push("Failed to collect PBs (export will proceed without them): " ex.Message)
                 pbData := ""
             }
         }
 
-        ; --- Garante diretorio de saida ---
+        ; --- Ensure output directory ---
         try
         {
             RunExportService._EnsureDirFor(outputPath)
         }
         catch as ex
         {
-            errors.Push("Falha ao criar diretorio: " ex.Message)
+            errors.Push("Failed to create directory: " ex.Message)
             return this._FailResult(outputPath, errors)
         }
 
-        ; --- Serializa via RunExportFormat ---
+        ; --- Serialize via RunExportFormat ---
         payload := ""
         try
         {
@@ -168,11 +168,11 @@ class RunExportService
         }
         catch as ex
         {
-            errors.Push("Falha na serializacao: " ex.Message)
+            errors.Push("Serialization failed: " ex.Message)
             return this._FailResult(outputPath, errors)
         }
 
-        ; --- Escreve em disco (via JsonFile que usa AtomicWriter) ---
+        ; --- Write to disk (via JsonFile which uses AtomicWriter) ---
         try
         {
             jf := JsonFile(outputPath)
@@ -180,11 +180,11 @@ class RunExportService
         }
         catch as ex
         {
-            errors.Push("Falha ao escrever arquivo: " ex.Message)
+            errors.Push("Failed to write file: " ex.Message)
             return this._FailResult(outputPath, errors)
         }
 
-        ; --- Publica evento de sucesso ---
+        ; --- Publish success event ---
         try this._bus.Publish(Events.RunsExported, Map(
             "path", outputPath,
             "count", runs.Length
@@ -199,9 +199,9 @@ class RunExportService
     }
 
     ; ============================================================
-    ; GetDefaultExportPath() - gera path default no exports/ dir
+    ; GetDefaultExportPath() - generates default path in exports/ dir
     ;
-    ; Formato: exports/runs-YYYYMMDD_HHMMSS.json
+    ; Format: exports/runs-YYYYMMDD_HHMMSS.json
     ; ============================================================
     static GetDefaultExportPath()
     {
@@ -210,7 +210,7 @@ class RunExportService
     }
 
     ; ============================================================
-    ; EnsureExportDir() - cria diretorio default se nao existir
+    ; EnsureExportDir() - creates default directory if missing
     ; ============================================================
     static EnsureExportDir()
     {
@@ -223,7 +223,7 @@ class RunExportService
     }
 
     ; ============================================================
-    ; Helpers privados
+    ; Private helpers
     ; ============================================================
 
     _FailResult(path, errors)
@@ -236,7 +236,7 @@ class RunExportService
         )
     }
 
-    ; Cria diretorio pai de `filePath` se nao existir.
+    ; Creates the parent directory of `filePath` if missing.
     static _EnsureDirFor(filePath)
     {
         SplitPath(filePath, , &dir)

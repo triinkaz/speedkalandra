@@ -2,19 +2,19 @@
 ; RunExportFormat tests
 ; ============================================================
 ;
-; Schema v1 para export/import de runs:
-;   - Serialize(runs, pbData, options) -> Map JSON-ready
+; Schema v1 for export/import of runs:
+;   - Serialize(runs, pbData, options) -> JSON-ready Map
 ;   - ValidateSchema(parsed)           -> Map{valid, errors, warnings}
 ;   - Deserialize(parsed)              -> Map{runs, personalBests, meta}
 ;
-; A maior parte dos asserts checa propriedades estruturais do
-; schema (campos obrigatorios, conversao de Map<int> <-> Map<str>
-; nas chaves de actCheckpoints, anonimizacao de profile).
+; Most asserts check structural properties of the schema (required
+; fields, Map<int> <-> Map<str> conversion on actCheckpoints keys,
+; profile anonymization).
 ;
-; Testes de roundtrip cobrem o caminho completo:
+; Roundtrip tests cover the full path:
 ;   Serialize -> Stringify -> Parse -> ValidateSchema -> Deserialize
 ;
-; Helper local: _MakeRun() monta um buildResult valido pra reuso.
+; Local helper: _MakeRun() builds a valid buildResult for reuse.
 
 class RunExportFormatTests extends TestCase
 {
@@ -24,7 +24,7 @@ class RunExportFormatTests extends TestCase
     }
 
     static Tests := [
-        ; --- Serialize: schema basico ---
+        ; --- Serialize: basic schema ---
         "serialize_includes_schema_version",
         "serialize_includes_exported_at",
         "serialize_includes_exported_by_with_version",
@@ -107,7 +107,7 @@ class RunExportFormatTests extends TestCase
     }
 
     ; ============================================================
-    ; Serialize: schema basico
+    ; Serialize: basic schema
     ; ============================================================
 
     serialize_includes_schema_version()
@@ -120,7 +120,7 @@ class RunExportFormatTests extends TestCase
     {
         payload := RunExportFormat.Serialize([this._MakeRun()])
         Assert.True(payload.Has("exportedAt"))
-        ; Formato "YYYY-MM-DD HH:MM:SS"
+        ; Format "YYYY-MM-DD HH:MM:SS"
         Assert.True(RegExMatch(payload["exportedAt"],
             "^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$") > 0)
     }
@@ -136,7 +136,7 @@ class RunExportFormatTests extends TestCase
     serialize_anonymized_flag_defaults_false()
     {
         payload := RunExportFormat.Serialize([this._MakeRun()])
-        ; anonymized e' wrapper JsonBool - testamos via .value
+        ; anonymized is a JsonBool wrapper - we test it via .value
         Assert.IsType(JsonBool, payload["anonymized"])
         Assert.False(payload["anonymized"].value)
     }
@@ -149,7 +149,7 @@ class RunExportFormatTests extends TestCase
 
     serialize_skips_non_object_runs()
     {
-        ; runs com itens nao-Map sao puladas silenciosamente
+        ; runs with non-Map items are silently skipped
         payload := RunExportFormat.Serialize([this._MakeRun(), "not a map", 42])
         Assert.Equal(1, payload["runs"].Length)
     }
@@ -197,8 +197,8 @@ class RunExportFormatTests extends TestCase
     serialize_run_preserves_basic_fields()
     {
         payload := RunExportFormat.Serialize([this._MakeRun()])
-        ; `run` colide com a builtin function `Run` (case-insensitive).
-        ; Usamos `serializedRun` pra evitar #Warn LocalSameAsGlobal.
+        ; `run` collides with the builtin function `Run` (case-insensitive).
+        ; We use `serializedRun` to avoid #Warn LocalSameAsGlobal.
         serializedRun := payload["runs"][1]
         Assert.Equal("20260515_103045",     serializedRun["runId"])
         Assert.Equal("0.2.0",               serializedRun["patch"])
@@ -212,7 +212,7 @@ class RunExportFormatTests extends TestCase
     {
         payload := RunExportFormat.Serialize([this._MakeRun()])
         ckpts := payload["runs"][1]["actCheckpoints"]
-        ; JSON keys sao sempre strings
+        ; JSON keys are always strings
         Assert.True(ckpts.Has("1"))
         Assert.True(ckpts.Has("5"))
         Assert.Equal(1200000, ckpts["1"])
@@ -221,7 +221,7 @@ class RunExportFormatTests extends TestCase
 
     serialize_run_skips_invalid_act_checkpoints()
     {
-        ; Construir run com checkpoint key invalido (0 ou negativo)
+        ; Build a run with an invalid checkpoint key (0 or negative)
         bad := this._MakeRun()
         bad["actCheckpoints"] := Map(1, 100, 0, 200, -1, 300, 2, 400)
 
@@ -230,8 +230,8 @@ class RunExportFormatTests extends TestCase
 
         Assert.True(ckpts.Has("1"))
         Assert.True(ckpts.Has("2"))
-        Assert.False(ckpts.Has("0"),  "key 0 deve ser pulada")
-        Assert.False(ckpts.Has("-1"), "key negativa deve ser pulada")
+        Assert.False(ckpts.Has("0"),  "key 0 must be skipped")
+        Assert.False(ckpts.Has("-1"), "negative key must be skipped")
     }
 
     serialize_run_preserves_details_fields()
@@ -323,7 +323,7 @@ class RunExportFormatTests extends TestCase
             )]
         ))
         Assert.True(validation["valid"],
-            "Schema minimo deveria validar. Errors: "
+            "Minimal schema should validate. Errors: "
             . (validation["errors"].Length > 0 ? validation["errors"][1] : "(none)"))
     }
 
@@ -333,7 +333,7 @@ class RunExportFormatTests extends TestCase
             "schemaVersion", 1,
             "runs", [Map("runId", "20260101_000000", "totalMs", 1000)]
         ))
-        Assert.True(validation["valid"], "exportedAt e' apenas warning, nao bloqueia")
+        Assert.True(validation["valid"], "exportedAt is only a warning, doesn't block")
         Assert.True(validation["warnings"].Length > 0)
     }
 
@@ -360,7 +360,7 @@ class RunExportFormatTests extends TestCase
         payload := RunExportFormat.Serialize([this._MakeRun()])
         decoded := RunExportFormat.Deserialize(payload)
         ckpts := decoded["runs"][1]["actCheckpoints"]
-        ; Keys sao integers depois do Deserialize (revertidas de "1" -> 1)
+        ; Keys are integers after Deserialize (reverted from "1" -> 1)
         Assert.True(ckpts.Has(1))
         Assert.True(ckpts.Has(5))
         Assert.Equal(1200000, ckpts[1])
@@ -378,7 +378,7 @@ class RunExportFormatTests extends TestCase
     deserialize_returns_empty_string_for_missing_pbs()
     {
         payload := RunExportFormat.Serialize([this._MakeRun()])
-        ; Sem pbData -> sem personalBests
+        ; No pbData -> no personalBests
         decoded := RunExportFormat.Deserialize(payload)
         Assert.Equal("", decoded["personalBests"])
     }
@@ -406,10 +406,10 @@ class RunExportFormatTests extends TestCase
         ; 4. Validate
         validation := RunExportFormat.ValidateSchema(parsed)
         Assert.True(validation["valid"],
-            "Roundtrip deveria validar. Errors: "
+            "Roundtrip should validate. Errors: "
             . (validation["errors"].Length > 0 ? validation["errors"][1] : "(none)"))
 
-        ; 5. Deserialize e compara
+        ; 5. Deserialize and compare
         decoded := RunExportFormat.Deserialize(parsed)
         Assert.Equal(1, decoded["runs"].Length)
 
@@ -420,11 +420,11 @@ class RunExportFormatTests extends TestCase
         Assert.Equal(originalRun["deathCount"],    decodedRun["deathCount"])
         Assert.Equal(originalRun["maxActReached"], decodedRun["maxActReached"])
 
-        ; actCheckpoints: voltam pra Map<int, int>
+        ; actCheckpoints: back to Map<int, int>
         Assert.Equal(1200000, decodedRun["actCheckpoints"][1])
         Assert.Equal(7665873, decodedRun["actCheckpoints"][5])
 
-        ; details preservados
+        ; details preserved
         Assert.Equal(2, decodedRun["details"].Length)
         Assert.Equal("Mud Burrow", decodedRun["details"][1]["label"])
 

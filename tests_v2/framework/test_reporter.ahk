@@ -1,20 +1,20 @@
 ; ============================================================
-; TestReporter - saida formatada do resultado dos testes
+; TestReporter - formatted output for test results
 ; ============================================================
 ;
-; Trilha:
-;   - Arquivo  tests_output.log  ao lado de run_tests.ahk
-;     (linha-a-linha, greppable, persiste entre runs)
-;   - MsgBox final com sumario (passed/failed/errored + duracao)
-;   - ExitApp(N) onde N = failed + errored (0 = tudo verde)
+; Trail:
+;   - File  tests_output.log  next to run_tests.ahk
+;     (line-by-line, greppable, persists between runs)
+;   - Final MsgBox with summary (passed/failed/errored + duration)
+;   - ExitApp(N) where N = failed + errored (0 = all green)
 ;
-; AHK v2 nao tem stdout confiavel sem AllocConsole. O log file
-; cobre o caso CI / inspecao posterior, o MsgBox cobre dev local.
+; AHK v2 has no reliable stdout without AllocConsole. The log file
+; covers the CI / post-inspection case, the MsgBox covers local dev.
 
 class TestReporter
 {
     static _logPath  := ""
-    static _started  := 0     ; A_TickCount no inicio
+    static _started  := 0     ; A_TickCount at start
 
     static Init()
     {
@@ -57,7 +57,7 @@ class TestReporter
             TestReporter._Write("         at " err.File ":" (err.HasOwnProp("Line") ? err.Line : "?"))
         if (err.HasOwnProp("Stack") && err.Stack != "")
         {
-            ; Imprime stack indentado (algumas linhas no maximo)
+            ; Prints stack indented (a few lines at most)
             for _, stackLine in StrSplit(err.Stack, "`n", "`r")
             {
                 if (stackLine = "")
@@ -99,8 +99,8 @@ class TestReporter
             durationMs, TestReporter._logPath
         )
 
-        ; MsgBox simples (sem AlwaysOnTop pra nao herdar problemas
-        ; de overlay quando rodar testes com PoE aberto)
+        ; Simple MsgBox (no AlwaysOnTop to avoid inheriting overlay
+        ; issues when running tests with PoE open)
         MsgBox(body, title)
 
         ExitApp(bad > 0 ? 1 : 0)

@@ -1,48 +1,50 @@
 ; ============================================================
-; MicroLayoutWidget - barra minima (Onda 4)
+; MicroLayoutWidget - minimal bar (Wave 4)
 ; ============================================================
 ;
-; Versao ultra-reduzida do overlay. Aparece quando OverlayModeService
-; entra em MICRO (ativado via Ctrl+F9 — lock manual). A v17.2 removeu
-; o trigger AUTO via panel keys; agora MICRO so eh ativado manualmente.
+; Ultra-reduced version of the overlay. Appears when OverlayModeService
+; enters MICRO (activated via Ctrl+F9 — manual lock). v17.2 removed
+; the AUTO trigger via panel keys; now MICRO is only activated manually.
 ;
-; LAYOUT BASE (200x32 em scale=1.0):
+; BASE LAYOUT (200x32 at scale=1.0):
 ;
 ;   +-----------------------+
 ;   | 01:24:17  Lv 47   XP  |
 ;   +-----------------------+
 ;
-; Dois controles:
-;   - main (esquerda): tempo total da run + char level
-;   - xp_indicator (direita): texto fixo "XP" cuja COR comunica status
-;                              (verde/amber/vermelho/cinza)
+; Two controls:
+;   - main (left): total run time + char level
+;   - xp_indicator (right): fixed "XP" text whose COLOR communicates
+;                            status (green/amber/red/gray)
 ;
-; INDICADOR DE XP (v17.3):
-;   xp_indicator eh um Text control com texto FIXO "XP" cuja cor muda
-;   conforme o status calculado pelo XpRules. Texto sempre "XP" — nao
-;   mostra o status textual (OK/LIMITE/PENALTY/?) por preferencia de UX.
+; XP INDICATOR (v17.3):
+;   xp_indicator is a Text control with FIXED "XP" text whose color
+;   changes according to the status computed by XpRules. Text is
+;   always "XP" — does not show textual status (OK/LIMIT/PENALTY/?)
+;   as a UX preference.
 ;
-;   Status -> cor (de XpRules):
-;     ok       -> verde dessaturado (B8C7B0)
+;   Status -> color (from XpRules):
+;     ok       -> desaturated green (B8C7B0)
 ;     limit    -> amber (F59E0B)
-;     penalty  -> vermelho dessaturado (F87171)
-;     unknown  -> cinza (8B8B8B)
+;     penalty  -> desaturated red (F87171)
+;     unknown  -> gray (8B8B8B)
 ;
-;   Text controls do AHK so suportam UMA cor por controle. A cor eh
-;   atualizada via ctrl.SetFont quando o status XP muda (cache evita
-;   repaint a cada tick).
+;   AHK Text controls only support ONE color per control. The color
+;   is updated via ctrl.SetFont when the XP status changes (cache
+;   avoids repaint every tick).
 ;
-; BOSS TIMER (REMOVIDO em v17.13):
-;   Feature de boss timer foi removida da app (voice lines de classe
-;   nao iam pra Client.txt do PoE2, detection era inviavel pra maioria
-;   dos bosses). Micro perdeu o "Boss MM:SS" / "✓ MM:SS" especial.
+; BOSS TIMER (REMOVED in v17.13):
+;   Boss timer feature was removed from the app (class voice lines
+;   did not go to PoE2's Client.txt, detection was unfeasible for
+;   most bosses). Micro lost the special "Boss MM:SS" / "✓ MM:SS".
 ;
 ; SCALE:
-;   Widget inteiro escala por _position.scale via Ctrl+wheel (mesma
-;   infra do CompactLayoutWidget). _BuildGui le this._w/this._h (ja
-;   escalados pelo Show) e propaga scale em font size + paddings.
+;   The entire widget scales by _position.scale via Ctrl+wheel (same
+;   infra as CompactLayoutWidget). _BuildGui reads this._w/this._h
+;   (already scaled by Show) and propagates scale into font size +
+;   paddings.
 ;
-; CONSTRUCAO:
+; CONSTRUCTION:
 ;   widget := MicroLayoutWidget(bus, position, onPersist, timer, xp)
 
 class MicroLayoutWidget extends LayoutWidgetBase
@@ -50,26 +52,26 @@ class MicroLayoutWidget extends LayoutWidgetBase
     static WIDGET_ID := "microLayout"
     static DISPLAY_NAME := "Layout Micro"
 
-    ; Tamanho BASE (scale=1.0)
+    ; BASE size (scale=1.0)
     static FIXED_W := 200
     static FIXED_H := 32
 
-    ; Layout BASE (scale=1.0)
+    ; BASE layout (scale=1.0)
     static STRIPE_H  := 2
     static PADDING_X := 6
     static PADDING_Y := 6
     static FONT_MAIN := 11
 
-    ; Largura reservada pro xp_indicator (alinhado direita).
-    ; Como o texto eh fixo "XP" (~2 chars), 30px da margem confortavel
-    ; em scale 1.0 e bastante folga em scales maiores.
+    ; Width reserved for xp_indicator (right-aligned).
+    ; Since the text is fixed "XP" (~2 chars), 30px provides
+    ; comfortable margin at scale 1.0 and plenty of slack at larger scales.
     static XP_INDICATOR_W := 30
 
     _timer     := ""
     _xp        := ""
 
     _lastRenderMs := 0
-    _lastXpColor   := ""    ; pra evitar SetFont desnecessario
+    _lastXpColor   := ""    ; to avoid unnecessary SetFont
 
     _handlerTick := ""
 
@@ -98,12 +100,12 @@ class MicroLayoutWidget extends LayoutWidgetBase
     _BuildGui()
     {
         wg := this._gui
-        ; _w / _h ja vem escalados do LayoutWidgetBase.Show()
+        ; _w / _h already come scaled from LayoutWidgetBase.Show()
         w  := this._w
         h  := this._h
         s  := this._GetScale()
 
-        ; Dimensoes escaladas
+        ; Scaled dimensions
         stripeH := Max(1, Round(MicroLayoutWidget.STRIPE_H * s))
         padX    := Max(2, Round(MicroLayoutWidget.PADDING_X * s))
         padY    := Max(2, Round(MicroLayoutWidget.PADDING_Y * s))
@@ -112,14 +114,14 @@ class MicroLayoutWidget extends LayoutWidgetBase
 
         ; Background
         this._BuildKalandraBand(0, 0, w, h, "surface")
-        ; Accent stripe topo
+        ; Top accent stripe
         this._BuildAccentStripe(0, 0, w, stripeH)
 
-        ; Altura util do texto (subindo um pouco pra respiro vertical)
+        ; Useful text height (raising a bit for vertical breathing room)
         textH := h - 2*padY + Round(padY/3)
 
-        ; --- main (esquerda): "01:24:17 Lv 47" ---
-        ; Largura: total - 2*padX - largura do xp_indicator
+        ; --- main (left): "01:24:17 Lv 47" ---
+        ; Width: total - 2*padX - xp_indicator width
         mainW := w - 2*padX - xpW
         this._SetFont(fontMain, "text", "")
         this._ctrls["main"] := wg.Add("Text",
@@ -129,7 +131,7 @@ class MicroLayoutWidget extends LayoutWidgetBase
             " Background" Theme.Color("surface"),
             "")
 
-        ; --- xp_indicator (direita): texto fixo "XP", cor dinamica ---
+        ; --- xp_indicator (right): fixed "XP" text, dynamic color ---
         this._SetFont(fontMain, "muted", "bold")
         this._ctrls["xp_indicator"] := wg.Add("Text",
             "x" (w - padX - xpW) " y" padY
@@ -138,7 +140,7 @@ class MicroLayoutWidget extends LayoutWidgetBase
             " Background" Theme.Color("surface"),
             "")
 
-        ; Reset cache pra forcar primeiro SetFont
+        ; Reset cache to force first SetFont
         this._lastXpColor := ""
 
         this._Refresh()
@@ -149,7 +151,7 @@ class MicroLayoutWidget extends LayoutWidgetBase
         if !this._gui
             return
 
-        ; Tempo total da run + char level
+        ; Total run time + char level
         runMs  := IsObject(this._timer) ? this._timer.GetRunMs() : 0
         charLv := IsObject(this._xp) ? this._xp.GetCharacterLevel() : 0
         mainText := this._FormatMs(runMs)
@@ -159,18 +161,18 @@ class MicroLayoutWidget extends LayoutWidgetBase
         if this._ctrls.Has("main")
             try this._ctrls["main"].Value := mainText
 
-        ; XP indicator com cor dinamica
+        ; XP indicator with dynamic color
         this._RefreshXpIndicator()
     }
 
     ; ============================================================
-    ; _RefreshXpIndicator - atualiza COR do texto "XP" fixo
+    ; _RefreshXpIndicator - updates the COLOR of the fixed "XP" text
     ;
-    ; Texto: sempre "XP" — nao mostra OK/LIMITE/PENALTY/? por
-    ; preferencia de UX (apenas a cor comunica o status).
+    ; Text: always "XP" — does not show OK/LIMIT/PENALTY/? as a UX
+    ; preference (only the color communicates status).
     ;
-    ; Cor vem de XpRules.Calculate (via xpService.GetXpPenaltyInfo).
-    ; Otimizacao: so chama SetFont quando a cor mudou.
+    ; Color comes from XpRules.Calculate (via xpService.GetXpPenaltyInfo).
+    ; Optimization: only calls SetFont when the color changed.
     ; ============================================================
     _RefreshXpIndicator()
     {
@@ -193,7 +195,7 @@ class MicroLayoutWidget extends LayoutWidgetBase
         try ctrl.Value := "XP"
     }
 
-    ; v0.1.2 (auditoria #19): consolidado em Duration.FormatMs.
+    ; v0.1.2 (audit #19): consolidated into Duration.FormatMs.
     _FormatMs(ms) => Duration.FormatMs(ms)
 
     _OnTick(data)

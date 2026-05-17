@@ -1,29 +1,32 @@
 ; ============================================================
-; AutoStartService - inicia run automaticamente via regex de log
+; AutoStartService - automatically starts a run via log regex
 ; ============================================================
 ;
-; Subscribe Evt.LogLineRead e testa cada linha contra cfg.autoStartRegex.
-; Match -> publica Cmd.NewRunRequested (que RunService consome).
+; Subscribes to Evt.LogLineRead and tests each line against
+; cfg.autoStartRegex. Match -> publishes Cmd.NewRunRequested (which
+; RunService consumes).
 ;
-; CASO DE USO CANONICO:
-;   Speedrun POE2 — a fala do Wounded Man ("By the First Ones! You're
-;   alive!") aparece no primeiro contato logo no comeco da campanha, antes
-;   do Clearfell Encampment. Usar essa fala como gatilho de inicio padroniza
-;   o ponto-zero da run para todos os jogadores e dispensa hotkey manual.
+; CANONICAL USE CASE:
+;   PoE2 speedrun — the Wounded Man's line ("By the First Ones! You're
+;   alive!") appears in the first contact right at the start of the
+;   campaign, before Clearfell Encampment. Using that line as the
+;   start trigger standardizes the run zero-point for all players
+;   and removes the need for a manual hotkey.
 ;
-; FILOSOFIA:
-;   - Service simples, sem estado complexo.
-;   - Nao dispara se ja existe run ativa (tracking via _runActive flag,
-;     atualizada por Evt.RunStarted / RunReset / RunCancelled / RunCompleted).
-;   - Regex vazia -> service eh no-op (mas continua subscribed).
-;   - Regex invalida -> silencia (proxima edicao do user corrige sem crash).
+; PHILOSOPHY:
+;   - Simple service, no complex state.
+;   - Does not fire if there is already an active run (tracked via
+;     the _runActive flag, updated by Evt.RunStarted / RunReset /
+;     RunCancelled / RunCompleted).
+;   - Empty regex -> service is a no-op (but stays subscribed).
+;   - Invalid regex -> silences (next user edit fixes it without crash).
 ;
-; EVENTOS:
+; EVENTS:
 ;   Subscribe:  Evt.LogLineRead, Evt.RunStarted, Evt.RunReset,
 ;               Evt.RunCancelled, Evt.RunCompleted
-;   Publica:    Cmd.NewRunRequested  { source: "auto" }
+;   Publishes:  Cmd.NewRunRequested  { source: "auto" }
 ;
-; CONSTRUCAO:
+; CONSTRUCTION:
 ;   svc := AutoStartService(bus, cfg)
 
 
@@ -43,20 +46,20 @@ class AutoStartService
     __New(bus, cfg, runService := "")
     {
         if !(bus is EventBus)
-            throw TypeError("AutoStartService: 'bus' deve ser EventBus")
+            throw TypeError("AutoStartService: 'bus' must be EventBus")
         if !(cfg is AppSettings)
-            throw TypeError("AutoStartService: 'cfg' deve ser AppSettings")
+            throw TypeError("AutoStartService: 'cfg' must be AppSettings")
         this._bus := bus
         this._cfg := cfg
 
-        ; v17.15 (Bug #4): query runService no boot.
+        ; v17.15 (Bug #4): query runService on boot.
         ;
-        ; Sem isso, ao reload com run em andamento, RunService.Hydrate
-        ; publicava RunStarted{hydrated:true} ANTES deste service
-        ; existir. AutoStartService ficava com _runActive=false apesar
-        ; da run ativa, e qualquer linha do log que casasse autoStartRegex
-        ; (ex: re-entrada de zona, replay de cinematica) disparava
-        ; NewRunRequested -> RunService.ResetRun -> wipe da run.
+        ; Without this, on reload with a run in progress, RunService.Hydrate
+        ; would publish RunStarted{hydrated:true} BEFORE this service
+        ; existed. AutoStartService would end up with _runActive=false
+        ; despite the active run, and any log line matching autoStartRegex
+        ; (e.g. zone re-entry, cinematic replay) would fire
+        ; NewRunRequested -> RunService.ResetRun -> wiping the run.
         if (IsObject(runService) && runService.HasMethod("IsActive"))
             this._runActive := runService.IsActive()
 
@@ -106,9 +109,9 @@ class AutoStartService
 
     _OnLogLine(data)
     {
-        ; Nao dispara se ja ha run em andamento — usuario pode estar
-        ; rodando segunda run da sessao e o LogMonitor pode estar
-        ; lendo um trecho de log que contem a fala antiga.
+        ; Does not fire if there's already a run in progress — the
+        ; user may be doing a second session run and the LogMonitor
+        ; could be reading a log chunk that contains the old line.
         if this._runActive
             return
         if !IsObject(data) || !data.Has("line")
@@ -120,8 +123,8 @@ class AutoStartService
         if (regex = "")
             return
 
-        ; Tolerante a regex invalida — usuario pode estar editando
-        ; em settings; nao queremos crashar o tracker por causa disso.
+        ; Tolerant of invalid regex — user may be editing in settings;
+        ; we don't want to crash the tracker over that.
         matched := false
         try
         {
@@ -134,10 +137,10 @@ class AutoStartService
         if !matched
             return
 
-        ; Marca otimisticamente — o handler de RunStarted vai confirmar.
-        ; Se o NewRun falhar silenciosamente (improvavel), o proximo
-        ; LogLineRead com a mesma frase nao re-dispara durante esta
-        ; "pseudo run". Reset/Cancel liberam o flag.
+        ; Optimistically mark — the RunStarted handler will confirm.
+        ; If NewRun silently fails (unlikely), the next LogLineRead
+        ; with the same phrase won't re-fire during this "pseudo run".
+        ; Reset/Cancel free the flag.
         this._runActive := true
         this._bus.Publish(Commands.NewRunRequested, Map("source", "auto"))
     }

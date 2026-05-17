@@ -1,22 +1,22 @@
 ﻿; ============================================================
-; XpRules — calculo de penalidade de XP de PoE2
+; XpRules — PoE2 XP penalty calculation
 ; ============================================================
 ;
-; Port direto de GetXpPenaltyInfo (xp.ahk legado), removendo dependencia
-; de globais. Pure function: recebe (charLevel, areaLevel) -> XpPenaltyInfo.
+; Direct port of GetXpPenaltyInfo (legacy xp.ahk), removing the dependency
+; on globals. Pure function: takes (charLevel, areaLevel) -> XpPenaltyInfo.
 ;
-; Regra do jogo:
+; Game rule:
 ;   threshold = 3 + floor(charLevel / 16)
 ;   diff      = charLevel - areaLevel
 ;   absDiff   = |diff|
 ;   outside   = absDiff - threshold
 ;
-;   if outside > 0   -> penalty   (vermelho)
-;     direction = diff > 0 ? "zona baixa" : "zona alta"
+;   if outside > 0   -> penalty   (red)
+;     direction = diff > 0 ? "low zone" : "high zone"
 ;   if absDiff = threshold -> limit (amber)
-;   else             -> ok        (verde)
+;   else             -> ok        (green)
 ;
-; Uso:
+; Usage:
 ;   info := XpRules.Calculate(15, 12)
 ;   info.status     ; "ok"
 ;   info.color      ; "22C55E"
@@ -36,7 +36,7 @@ class XpPenaltyInfo
     outside    := 0
     level      := 0
     areaLevel  := 0
-    direction  := ""           ; "" | "zona baixa" | "zona alta"
+    direction  := ""           ; "" | "low zone" | "high zone"
 }
 
 
@@ -50,8 +50,8 @@ class XpRules
     ; ------------------------------------------------------------
     ; Calculate(charLevel, areaLevel) -> XpPenaltyInfo
     ;
-    ; Se qualquer parametro for <= 0, retorna info com status "unknown"
-    ; (cor cinza, threshold 0). Nao estoura.
+    ; If any parameter is <= 0, returns info with status "unknown"
+    ; (gray color, threshold 0). Does not throw.
     ; ------------------------------------------------------------
     static Calculate(charLevel, areaLevel)
     {
@@ -61,7 +61,7 @@ class XpRules
 
         if (info.level <= 0 || info.areaLevel <= 0)
         {
-            ; Sem dados suficientes
+            ; Not enough data
             info.text := "XP ?"
             return info
         }
@@ -78,14 +78,14 @@ class XpRules
         {
             info.status    := "penalty"
             info.color     := XpRules.COLOR_PENALTY
-            info.direction := diff > 0 ? "zona baixa" : "zona alta"
+            info.direction := diff > 0 ? "low zone" : "high zone"
             info.text      := "XP PENALTY"
         }
         else if (absDiff = threshold)
         {
             info.status := "limit"
             info.color  := XpRules.COLOR_LIMIT
-            info.text   := "XP LIMITE"
+            info.text   := "XP LIMIT"
         }
         else
         {
@@ -100,8 +100,8 @@ class XpRules
     ; ------------------------------------------------------------
     ; SafeRange(charLevel) -> [min, max]
     ;
-    ; Helper: faixa de areaLevel onde NAO ha penalty para o personagem.
-    ; Retorna [0, 0] se charLevel for invalido.
+    ; Helper: areaLevel range where NO penalty applies for the character.
+    ; Returns [0, 0] if charLevel is invalid.
     ; ------------------------------------------------------------
     static SafeRange(charLevel)
     {

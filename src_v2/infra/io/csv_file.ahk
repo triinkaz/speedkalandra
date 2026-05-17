@@ -1,38 +1,38 @@
 ﻿; ============================================================
-; CsvFile — leitura/escrita CSV no formato do tracker
+; CsvFile — CSV read/write in the tracker's format
 ; ============================================================
 ;
-; Formato do projeto:
-;   - Separador: ';' (porque alguns campos do log tem virgula)
+; Project format:
+;   - Separator: ';' (because some log fields contain commas)
 ;   - Encoding: UTF-8
-;   - Cada campo entre aspas duplas: "valor1";"valor2";"valor3"
-;   - Aspas internas escapadas como duas aspas: "ele disse ""oi""."
-;   - Primeira linha eh header (key=column name)
-;   - LF no fim de cada linha (`n)
+;   - Each field wrapped in double quotes: "val1";"val2";"val3"
+;   - Internal quotes escaped as two quotes: "he said ""hi""."
+;   - First line is the header (key = column name)
+;   - LF at the end of each line (`n)
 ;
-; Exemplos reais (splits.csv com 16 campos):
+; Real examples (splits.csv with 16 fields):
 ;   "2026-04-25 07:20:55";"20260425_072055";"Default";"Unknown";"1";...
 ;
-; Uso:
+; Usage:
 ;   csv := CsvFile(SPLITS_FILE)
 ;   csv.EnsureHeader(["timestamp", "run_id", "profile", ...])
 ;   csv.AppendRow(["2026-...", "20260425_072055", ...])
 ;
-;   for _, fields in csv.ReadAllRows()  ; pula header automaticamente
+;   for _, fields in csv.ReadAllRows()  ; automatically skips header
 ;       ProcessFields(fields)
 ;
-; Erros isolados — leitura de arquivo inexistente retorna [] (nao
-; estoura), igual o legado faz hoje.
+; Errors are isolated — reading a non-existent file returns [] (does
+; not throw), same as the legacy code does today.
 
 class CsvFile
 {
     path     := ""
-    expected := 0   ; numero esperado de colunas (0 = nao validar)
+    expected := 0   ; expected number of columns (0 = do not validate)
 
     __New(path, expectedColumns := 0)
     {
         if (path = "")
-            throw ValueError("CsvFile: 'path' obrigatorio")
+            throw ValueError("CsvFile: 'path' is required")
         this.path     := path
         this.expected := expectedColumns
         this._EnsureDir()
@@ -40,42 +40,43 @@ class CsvFile
 
     ; ------------------------------------------------------------
     ; EnsureHeader(headerArray)
-    ;   Se o arquivo nao existe, cria com a linha de cabecalho.
-    ;   Se existe, nao mexe (preserva conteudo).
+    ;   If the file does not exist, creates it with the header line.
+    ;   If it exists, does nothing (preserves content).
     ; ------------------------------------------------------------
     EnsureHeader(headerArray)
     {
         if !IsObject(headerArray) || headerArray.Length = 0
-            throw ValueError("CsvFile.EnsureHeader: 'headerArray' deve ser Array nao-vazio")
+            throw ValueError("CsvFile.EnsureHeader: 'headerArray' must be a non-empty Array")
 
         if FileExist(this.path)
             return false
 
-        ; Header SEM aspas (compatibilidade com legado)
+        ; Header WITHOUT quotes (legacy compatibility)
         line := ""
         for i, col in headerArray
             line .= (i > 1 ? ";" : "") . col
         FileAppend(line "`n", this.path, "UTF-8")
 
-        ; NOTA: NAO auto-configurar 'expected' a partir do header.
-        ; Se o usuario passou CsvFile(path) sem 'expectedColumns', a intencao
-        ; foi "sem validacao". Auto-detectar baseado no header rouba essa
-        ; decisao e contradiz o teste "AppendRow no validation when expected zero".
-        ; Quem quer validacao: passa explicitamente CsvFile(path, N).
+        ; NOTE: do NOT auto-configure 'expected' from the header.
+        ; If the user passed CsvFile(path) without 'expectedColumns', the
+        ; intent was "no validation". Auto-detecting based on the header
+        ; would steal that decision and contradict the test "AppendRow no
+        ; validation when expected zero". Whoever wants validation passes
+        ; CsvFile(path, N) explicitly.
         return true
     }
 
     ; ------------------------------------------------------------
     ; AppendRow(fields)
-    ;   Acrescenta uma linha. Cada campo eh enquoted ("...") e
-    ;   aspas internas viram "" (duplas). Termina com `n.
+    ;   Appends a line. Each field is quoted ("...") and internal
+    ;   quotes are doubled (""). Ends with `n.
     ; ------------------------------------------------------------
     AppendRow(fields)
     {
         if !IsObject(fields)
-            throw TypeError("CsvFile.AppendRow: 'fields' deve ser Array")
+            throw TypeError("CsvFile.AppendRow: 'fields' must be an Array")
         if (this.expected > 0 && fields.Length != this.expected)
-            throw ValueError("CsvFile.AppendRow: esperava " this.expected " colunas, recebi " fields.Length)
+            throw ValueError("CsvFile.AppendRow: expected " this.expected " columns, got " fields.Length)
 
         line := CsvFile._FormatRow(fields)
         FileAppend(line, this.path, "UTF-8")
@@ -83,64 +84,64 @@ class CsvFile
 
     ; ------------------------------------------------------------
     ; WriteAllRows(headerArray, rowsList)
-    ;   Refactor R10: rewrite completo do CSV em UMA escrita atomica.
-    ;   Substitui o pattern legado (FileDelete + EnsureHeader +
-    ;   loop AppendRow) que era vulneravel a corrupcao em crash.
+    ;   Refactor R10: full rewrite of the CSV in ONE atomic write.
+    ;   Replaces the legacy pattern (FileDelete + EnsureHeader +
+    ;   AppendRow loop) that was vulnerable to corruption on crash.
     ;
-    ;   Builda buffer com header (sem aspas, igual EnsureHeader)
-    ;   + N linhas formatadas via _FormatRow, e escreve via
+    ;   Builds a buffer with header (no quotes, same as EnsureHeader)
+    ;   + N lines formatted via _FormatRow, and writes via
     ;   AtomicWriter (.tmp + FileMove).
     ;
     ;   Args:
-    ;     headerArray : Array<string>, nomes das colunas
-    ;     rowsList    : Array<Array<*>>, cada elemento eh row
+    ;     headerArray : Array<string>, column names
+    ;     rowsList    : Array<Array<*>>, each element is a row
     ;
-    ;   Validação de colunas: cada row precisa ter expected colunas
-    ;   se 'expectedColumns' foi configurado no construtor (ValueError
-    ;   antes de tocar disco — nada parcial chega no .tmp).
+    ;   Column validation: each row must have expected columns
+    ;   if 'expectedColumns' was configured in the constructor (ValueError
+    ;   before touching disk — nothing partial reaches the .tmp).
     ; ------------------------------------------------------------
     WriteAllRows(headerArray, rowsList)
     {
         if !IsObject(headerArray) || headerArray.Length = 0
-            throw ValueError("CsvFile.WriteAllRows: 'headerArray' deve ser Array nao-vazio")
+            throw ValueError("CsvFile.WriteAllRows: 'headerArray' must be a non-empty Array")
         if !IsObject(rowsList)
-            throw TypeError("CsvFile.WriteAllRows: 'rowsList' deve ser Array")
+            throw TypeError("CsvFile.WriteAllRows: 'rowsList' must be an Array")
 
-        ; Valida todas as rows ANTES de tocar disco (early throw)
+        ; Validate all rows BEFORE touching disk (early throw)
         if (this.expected > 0)
         {
             for idx, row in rowsList
             {
                 if !IsObject(row)
-                    throw TypeError("CsvFile.WriteAllRows: row #" idx " deve ser Array")
+                    throw TypeError("CsvFile.WriteAllRows: row #" idx " must be an Array")
                 if (row.Length != this.expected)
-                    throw ValueError("CsvFile.WriteAllRows: row #" idx " tem " row.Length " colunas, esperava " this.expected)
+                    throw ValueError("CsvFile.WriteAllRows: row #" idx " has " row.Length " columns, expected " this.expected)
             }
         }
 
-        ; Build buffer: header (formato sem aspas, paridade EnsureHeader)
-        ; v0.1.0: renomeado de `buffer` pra `outBuffer` (case-insensitive
-        ; collision com classe builtin `Buffer` disparava #Warn).
+        ; Build buffer: header (no-quote format, parity with EnsureHeader)
+        ; v0.1.0: renamed from `buffer` to `outBuffer` (case-insensitive
+        ; collision with the builtin class `Buffer` was triggering #Warn).
         outBuffer := ""
         for i, col in headerArray
             outBuffer .= (i > 1 ? ";" : "") . col
         outBuffer .= "`n"
 
-        ; Append cada row formatada
+        ; Append each formatted row
         for _, row in rowsList
             outBuffer .= CsvFile._FormatRow(row)
 
-        ; Escreve atomico
+        ; Atomic write
         AtomicWriter.WriteAll(this.path, outBuffer, "UTF-8")
     }
 
     ; ------------------------------------------------------------
     ; ReadAllRows() -> Array<Array<string>>
-    ;   Le o arquivo inteiro, pula a primeira linha (header), e
-    ;   retorna uma lista de listas com os campos parseados.
-    ;   Linhas com numero errado de colunas sao puladas (nao estoura)
-    ;   se 'expectedColumns' foi configurado no construtor.
-    ;   Retorna [] se o arquivo nao existe.
+    ;   Reads the whole file, skips the first line (header), and
+    ;   returns a list of lists with the parsed fields.
+    ;   Lines with the wrong column count are skipped (does not throw)
+    ;   if 'expectedColumns' was configured in the constructor.
+    ;   Returns [] if the file does not exist.
     ; ------------------------------------------------------------
     ReadAllRows()
     {
@@ -154,7 +155,7 @@ class CsvFile
 
         for index, line in lines
         {
-            ; pula header e linhas vazias
+            ; skip header and empty lines
             if (index = 1 || Trim(line) = "")
                 continue
             fields := CsvFile._ParseLine(line)
@@ -166,7 +167,7 @@ class CsvFile
     }
 
     ; ------------------------------------------------------------
-    ; CountDataRows() -> int (numero de linhas excluindo header)
+    ; CountDataRows() -> int (number of lines excluding the header)
     ; ------------------------------------------------------------
     CountDataRows()
     {
@@ -178,29 +179,29 @@ class CsvFile
         if (raw = "")
             return 0
         total := StrSplit(raw, "`n").Length
-        return Max(0, total - 1)   ; menos o header
+        return Max(0, total - 1)   ; minus the header
     }
 
     Exists()  => FileExist(this.path) != ""
     GetPath() => this.path
 
     ; ------------------------------------------------------------
-    ; Estaticos: parse e format de uma linha (publicos para testes
-    ; e para reuso por repositorios sem instanciar CsvFile).
+    ; Statics: parse and format a single line (public for tests
+    ; and for reuse by repositories without instantiating CsvFile).
     ; ------------------------------------------------------------
     static ParseLine(line) => CsvFile._ParseLine(line)
     static FormatRow(fields) => CsvFile._FormatRow(fields)
     static EscapeField(value) => CsvFile._EscapeField(value)
 
     ; ============================================================
-    ; Internos
+    ; Internals
     ; ============================================================
 
-    ; _ParseLine — parser stateful que lida com:
-    ;   - Campos entre aspas: "valor"
-    ;   - Aspas internas: ""
-    ;   - Separadores ';' fora de aspas
-    ;   - Campos sem aspas (back-compat com header e legado)
+    ; _ParseLine — stateful parser that handles:
+    ;   - Quoted fields: "value"
+    ;   - Internal quotes: ""
+    ;   - ';' separators outside of quotes
+    ;   - Unquoted fields (back-compat with header and legacy)
     static _ParseLine(line)
     {
         out := []
@@ -211,7 +212,7 @@ class CsvFile
         i := 1
         current := ""
         inQuotes := false
-        sawQuotes := false   ; lembra se o campo abriu com aspas
+        sawQuotes := false   ; remembers whether the field opened with quotes
 
         while (i <= len)
         {
@@ -221,7 +222,7 @@ class CsvFile
             {
                 if (ch = '"')
                 {
-                    ; aspas dentro: pode ser fim do campo ou aspas escapadas ("")
+                    ; quote inside: may be end of field or escaped quote ("")
                     if (i < len && SubStr(line, i + 1, 1) = '"')
                     {
                         current .= '"'
@@ -237,7 +238,7 @@ class CsvFile
                 continue
             }
 
-            ; fora de aspas
+            ; outside of quotes
             if (ch = '"')
             {
                 inQuotes  := true
@@ -264,7 +265,7 @@ class CsvFile
     static _EscapeField(value)
     {
         s := String(value)
-        ; Sempre enquoted, com aspas internas duplicadas
+        ; Always quoted, with internal quotes doubled
         s := StrReplace(s, '"', '""')
         return '"' s '"'
     }

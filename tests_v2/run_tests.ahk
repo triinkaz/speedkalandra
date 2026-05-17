@@ -2,30 +2,30 @@
 ; SpeedKalandra Test Suite - entry point
 ; ============================================================
 ;
-; Como rodar:
+; How to run:
 ;
 ;   "C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe" tests_v2\run_tests.ahk
 ;
-; ou duplo-clique se a extensao estiver associada ao AHK v2.
+; or double-click if the extension is associated with AHK v2.
 ;
-; Filtrar testes:
+; Filter tests:
 ;
 ;   AutoHotkey64.exe tests_v2\run_tests.ahk EventBus
 ;   AutoHotkey64.exe tests_v2\run_tests.ahk Duration
 ;
-; roda apenas testes cujo "ClassName::method" contenha o substring.
+; runs only tests whose "ClassName::method" contains the substring.
 ;
 ; ============================================================
-; Ordem de includes (CRITICO):
+; Include order (CRITICAL):
 ;
-;   1. Framework primeiro.
+;   1. Framework first.
 ;
-;   2. SUT (System Under Test) - em ordem de dependencia:
+;   2. SUT (System Under Test) - in dependency order:
 ;      core -> domain -> infra -> app -> ui
-;      Dentro de cada camada, deps primeiro.
+;      Within each layer, deps first.
 ;
-;   3. Suites - cada suite, no final do arquivo, chama
-;      TestRegistry.Register(Classe).
+;   3. Suites - each suite, at the end of the file, calls
+;      TestRegistry.Register(Class).
 ;
 ;   4. Bootstrap - TestReporter.Init() + TestRunner.Run().
 
@@ -54,8 +54,8 @@
 
 ; ------------------------------------------------------------
 ; SUT - domain
-; (values primeiro, depois compostos; AppSettings por ultimo
-; porque depende de WindowState e OverlayLayout)
+; (values first, then composites; AppSettings last because it
+; depends on WindowState and OverlayLayout)
 ; ------------------------------------------------------------
 #Include ..\src_v2\domain\values\duration.ahk
 #Include ..\src_v2\domain\values\ids.ahk
@@ -67,8 +67,8 @@
 
 ; ------------------------------------------------------------
 ; SUT - infra/io
-; (atomic_write primeiro pois eh dep de varios; json/csv/text_encoding
-; usam AtomicWriter; run_export_format usa JsonFile + JsonBool/Null)
+; (atomic_write first since it's a dep of many; json/csv/text_encoding
+; use AtomicWriter; run_export_format uses JsonFile + JsonBool/Null)
 ; ------------------------------------------------------------
 #Include ..\src_v2\infra\io\atomic_write.ahk
 #Include ..\src_v2\infra\io\text_encoding.ahk
@@ -78,10 +78,10 @@
 #Include ..\src_v2\infra\io\run_export_format.ahk
 
 ; ------------------------------------------------------------
-; SUT - infra/ (repositorios)
-; (todos dependem de IniFile/AtomicWriter ja incluidos acima;
-; settings_repository depende de AppSettings/WindowState/OverlayLayout
-; do domain)
+; SUT - infra/ (repositories)
+; (all depend on IniFile/AtomicWriter already included above;
+; settings_repository depends on AppSettings/WindowState/OverlayLayout
+; from the domain)
 ; ------------------------------------------------------------
 #Include ..\src_v2\infra\zones_catalog.ahk
 #Include ..\src_v2\infra\personal_best_repository.ahk
@@ -90,15 +90,15 @@
 #Include ..\src_v2\infra\settings_repository.ahk
 
 ; ------------------------------------------------------------
-; SUT - app/bus (Events + Commands enums: deps de todos os services)
+; SUT - app/bus (Events + Commands enums: deps of all services)
 ; ------------------------------------------------------------
 #Include ..\src_v2\app\bus\events.ahk
 #Include ..\src_v2\app\bus\commands.ahk
 
 ; ------------------------------------------------------------
-; SUT - app/services (Wave 5a: services puros / com state simples)
-; Ordem por dependencias: state-only -> bus-only -> bus+clock/timer
-; -> com repos -> com catalog+cfg
+; SUT - app/services (Wave 5a: pure services / with simple state)
+; Order by dependency: state-only -> bus-only -> bus+clock/timer
+; -> with repos -> with catalog+cfg
 ; ------------------------------------------------------------
 #Include ..\src_v2\app\services\xp_service.ahk
 #Include ..\src_v2\app\services\app_tick_emitter.ahk
@@ -125,7 +125,7 @@
 
 ; ------------------------------------------------------------
 ; SUT - ui/ (Wave 7: UI layer)
-; Ordem: puros (Theme, HotkeyFormatter) primeiro
+; Order: pure ones (Theme, HotkeyFormatter) first
 ; ------------------------------------------------------------
 #Include ..\src_v2\ui\theme.ahk
 #Include ..\src_v2\ui\hotkey_formatter.ahk
@@ -144,20 +144,19 @@
 ; ------------------------------------------------------------
 ; SUT - app/ (Wave 8: composition root)
 ; ------------------------------------------------------------
-; Stubs de helpers globais que normalmente vivem em speedkalandra.ahk
-; (entry point) — em testes nao temos esse arquivo, mas app.ahk
-; referencia esses simbolos em paths que rodam mesmo em headless
-; (envoltos em try). Definidos como no-ops aqui pra satisfazer o
-; parser.
+; Stubs of global helpers that normally live in speedkalandra.ahk
+; (entry point) — in tests we don't have that file, but app.ahk
+; references these symbols in paths that run even in headless mode
+; (wrapped in try). Defined as no-ops here to satisfy the parser.
 SpeedKalandraTrayAddUndoItem() {
-    ; no-op em headless
+    ; no-op in headless
 }
 SpeedKalandraTrayRemoveUndoItem() {
-    ; no-op em headless
+    ; no-op in headless
 }
 SpeedKalandraMsgBox(text, title := "", options := "") {
-    ; no-op em headless — retorna "Cancel" pra que codigos que esperam
-    ; "Yes" tratem como negacao (path destrutivo nao se executa em test)
+    ; no-op in headless — returns "Cancel" so code that expects
+    ; "Yes" treats it as a denial (destructive path doesn't run in tests)
     return "Cancel"
 }
 
@@ -194,7 +193,7 @@ SpeedKalandraMsgBox(text, title := "", options := "") {
 #Include unit\infra\io\run_export_format_tests.ahk
 
 ; ------------------------------------------------------------
-; Suites - Wave 4: infra/ (repositorios)
+; Suites - Wave 4: infra/ (repositories)
 ; ------------------------------------------------------------
 #Include unit\infra\zones_catalog_tests.ahk
 #Include unit\infra\personal_best_repository_tests.ahk
@@ -203,7 +202,7 @@ SpeedKalandraMsgBox(text, title := "", options := "") {
 #Include unit\infra\settings_repository_tests.ahk
 
 ; ------------------------------------------------------------
-; Suites - Wave 5a: app/services (puros)
+; Suites - Wave 5a: app/services (pure)
 ; ------------------------------------------------------------
 #Include unit\app\services\xp_service_tests.ahk
 #Include unit\app\services\app_tick_emitter_tests.ahk

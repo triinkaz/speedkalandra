@@ -2,15 +2,15 @@
 ; ZonesCatalog + ZoneEntry tests
 ; ============================================================
 ;
-; ZonesCatalog parseia data/zones.csv (formato `;` delimitado:
+; ZonesCatalog parses data/zones.csv (format `;` delimited:
 ;   name;internal_id;act;is_town
-; ) e expoe queries por nome (case-insensitive) e por internal_id
-; (case-sensitive). Pula header, comments (# e ;), e linhas com
-; menos de 4 campos.
+; ) and exposes queries by name (case-insensitive) and by
+; internal_id (case-sensitive). Skips header, comments (# and ;),
+; and lines with fewer than 4 fields.
 ;
-; ZoneEntry e' value object: name, internalId, act, isTown.
+; ZoneEntry is a value object: name, internalId, act, isTown.
 ;
-; Helper local: _WriteCsv(path, lines) cria arquivo CSV via FileAppend.
+; Local helper: _WriteCsv(path, lines) creates a CSV file via FileAppend.
 
 class ZonesCatalogTests extends TestCase
 {
@@ -23,11 +23,11 @@ class ZonesCatalogTests extends TestCase
         ; --- ZoneEntry ---
         "zone_entry_stores_constructor_args",
 
-        ; --- Construtor ZonesCatalog ---
+        ; --- ZonesCatalog constructor ---
         "constructor_throws_on_empty_path",
         "constructor_with_missing_file_returns_empty_catalog",
 
-        ; --- Parsing basico ---
+        ; --- Basic parsing ---
         "loads_valid_csv_zones",
         "count_returns_zone_count",
         "all_returns_array_of_zone_entries",
@@ -80,8 +80,8 @@ class ZonesCatalogTests extends TestCase
 
     _WriteCsv(path, lines)
     {
-        ; lines: Array<string>, cada uma vira uma linha do CSV.
-        ; `ln` colide com builtin function `Ln` (logaritmo natural).
+        ; lines: Array<string>, each becomes a CSV line.
+        ; `ln` collides with the builtin function `Ln` (natural log).
         content := ""
         for _, csvLine in lines
             content .= csvLine "`n"
@@ -90,7 +90,7 @@ class ZonesCatalogTests extends TestCase
 
     _MakeStandardCatalog()
     {
-        ; Catalogo de teste com 4 zonas (2 towns, 2 normais, em 2 atos)
+        ; Test catalog with 4 zones (2 towns, 2 normal, across 2 acts)
         path := Fixtures.TempPath("csv")
         this._WriteCsv(path, [
             "name;internal_id;act;is_town",
@@ -116,7 +116,7 @@ class ZonesCatalogTests extends TestCase
     }
 
     ; ============================================================
-    ; Construtor ZonesCatalog
+    ; ZonesCatalog constructor
     ; ============================================================
 
     constructor_throws_on_empty_path()
@@ -126,13 +126,13 @@ class ZonesCatalogTests extends TestCase
 
     constructor_with_missing_file_returns_empty_catalog()
     {
-        ; Arquivo inexistente nao estoura - retorna catalogo vazio
+        ; Non-existent file does not throw - returns empty catalog
         catalog := ZonesCatalog("C:\\__nonexistent_zones__.csv")
         Assert.Equal(0, catalog.Count())
     }
 
     ; ============================================================
-    ; Parsing basico
+    ; Basic parsing
     ; ============================================================
 
     loads_valid_csv_zones()
@@ -169,9 +169,9 @@ class ZonesCatalogTests extends TestCase
 
     skips_header_line_with_name_internal_id()
     {
-        ; A primeira linha "name;internal_id;..." e' pulada
+        ; The first line "name;internal_id;..." is skipped
         catalog := this._MakeStandardCatalog()
-        ; So conta dados, nao o header
+        ; Only counts data rows, not the header
         Assert.False(catalog.HasName("name"))
         Assert.Equal(4, catalog.Count())
     }
@@ -180,9 +180,9 @@ class ZonesCatalogTests extends TestCase
     {
         path := Fixtures.TempPath("csv")
         this._WriteCsv(path, [
-            "# Comentario 1",
+            "# Comment 1",
             "Clearfell;G1_town;1;1",
-            "# Comentario 2",
+            "# Comment 2",
             "Mud Burrow;G1_2;1;0"
         ])
         catalog := ZonesCatalog(path)
@@ -193,7 +193,7 @@ class ZonesCatalogTests extends TestCase
     {
         path := Fixtures.TempPath("csv")
         this._WriteCsv(path, [
-            "; Outro estilo de comentario",
+            "; Another comment style",
             "Clearfell;G1_town;1;1"
         ])
         catalog := ZonesCatalog(path)
@@ -279,7 +279,7 @@ class ZonesCatalogTests extends TestCase
     {
         catalog := this._MakeStandardCatalog()
         Assert.IsType(ZoneEntry, catalog.FindById("G1_2"))
-        ; Lowercase nao da match
+        ; Lowercase doesn't match
         Assert.Equal("", catalog.FindById("g1_2"))
     }
 
@@ -399,7 +399,7 @@ class ZonesCatalogTests extends TestCase
         catalog := ZonesCatalog(path)
         Assert.Equal(1, catalog.Count())
 
-        ; Adiciona nova linha e reload
+        ; Adds new line and reloads
         FileAppend("Mud Burrow;G1_2;1;0`n", path, "UTF-8")
         catalog.Reload()
         Assert.Equal(2, catalog.Count())

@@ -1,52 +1,52 @@
 ; ============================================================
-; LayoutWidgetBase — classe base dos LayoutWidgets (Fase A1)
+; LayoutWidgetBase — base class for LayoutWidgets (Phase A1)
 ; ============================================================
 ;
-; Os LayoutWidgets (CompactLayoutWidget, MicroLayoutWidget) reproduzem
-; visualmente os modos do legado com layouts containerizados FIXOS
-; (em vez de 8 widgets soltos arrastaveis).
+; The LayoutWidgets (CompactLayoutWidget, MicroLayoutWidget) visually
+; reproduce the legacy modes with FIXED containerized layouts
+; (instead of 8 draggable loose widgets).
 ;
-; CARACTERISTICAS:
-;   - Tamanho BASE fixo (override _GetFixedSize na subclasse).
-;     Ex: Compact = 500x96, Micro = 200x32.
-;   - Tamanho REAL escalado por _position.scale.
-;     Show() aplica: _w = Round(baseW * scale), _h = Round(baseH * scale).
-;   - Position fixa (sem drag automatico), mas user pode mover via Ctrl+drag
-;     e redimensionar via Ctrl+wheel (OverlayInteractionService).
+; CHARACTERISTICS:
+;   - Fixed BASE size (override _GetFixedSize in the subclass).
+;     E.g.: Compact = 500x96, Micro = 200x32.
+;   - REAL size scaled by _position.scale.
+;     Show() applies: _w = Round(baseW * scale), _h = Round(baseH * scale).
+;   - Fixed position (no automatic drag), but the user can move via
+;     Ctrl+drag and resize via Ctrl+wheel (OverlayInteractionService).
 ;
-; FILOSOFIA:
-;   - Heranca de WidgetBase pra reaproveitar lifecycle (Show/Hide/
-;     SetModeVisible/SetScale) e a position-ref.
-;   - Subclasses overridem _BuildGui pra construir a estrutura visual,
-;     e _GetFixedSize pra retornar Map("w", baseW, "h", baseH) com o
-;     tamanho de referencia em scale=1.0.
-;   - _BuildGui deve ler this._w / this._h (ja escalados pelo Show)
-;     e this._position.scale pra escalar dimensoes internas (margens,
-;     posicoes de linhas, font sizes). Nao deve chamar _GetFixedSize
-;     de novo dentro de _BuildGui.
+; PHILOSOPHY:
+;   - Inherits from WidgetBase to reuse the lifecycle (Show/Hide/
+;     SetModeVisible/SetScale) and the position-ref.
+;   - Subclasses override _BuildGui to build the visual structure,
+;     and _GetFixedSize to return Map("w", baseW, "h", baseH) with
+;     the reference size at scale=1.0.
+;   - _BuildGui should read this._w / this._h (already scaled by Show)
+;     and this._position.scale to scale internal dimensions (margins,
+;     line positions, font sizes). It should not call _GetFixedSize
+;     again inside _BuildGui.
 ;
-; HEADER OPCIONAL:
-;   _BuildKalandraBand(x, y, w, h, surfaceName) cria uma banda Progress
-;   colorida usada como background de seções (estilo legado).
+; OPTIONAL HEADER:
+;   _BuildKalandraBand(x, y, w, h, surfaceName) creates a colored
+;   Progress band used as a section background (legacy style).
 ;
-; CONSTRUCAO:
+; CONSTRUCTION:
 ;   class CompactLayoutWidget extends LayoutWidgetBase
 ;   {
 ;       __New(bus, position, onPersist, ...services)
 ;       {
 ;           super.__New("compactLayout", "Layout Compact", bus, position, onPersist)
-;           ; ... captura services
-;           ; subscribe eventos
+;           ; ... capture services
+;           ; subscribe events
 ;       }
 ;
 ;       _GetFixedSize() => Map("w", 500, "h", 96)
 ;
 ;       _BuildGui()
 ;       {
-;           w := this._w           ; ja escalado pelo Show
+;           w := this._w           ; already scaled by Show
 ;           h := this._h
 ;           s := this._position.scale
-;           ; ... cria controles aplicando scale s em todas dimensoes
+;           ; ... create controls applying scale s in all dimensions
 ;       }
 ;   }
 
@@ -54,9 +54,9 @@
 class LayoutWidgetBase extends WidgetBase
 {
     ; ============================================================
-    ; Override de Show: aplica scale do _position em cima do tamanho
-    ; BASE de _GetFixedSize. Resultado em this._w / this._h fica
-    ; disponivel pra _BuildGui da subclasse.
+    ; Show override: applies _position scale on top of the BASE
+    ; size from _GetFixedSize. Result in this._w / this._h is
+    ; available to the subclass's _BuildGui.
     ; ============================================================
     Show()
     {
@@ -74,10 +74,10 @@ class LayoutWidgetBase extends WidgetBase
         this._gui := wg
         this._ctrls := Map()
 
-        ; Tamanho BASE da subclasse + scale do _position.
+        ; BASE size from subclass + scale from _position.
         sz := this._GetFixedSize()
         if (!IsObject(sz) || !sz.Has("w") || !sz.Has("h"))
-            throw Error("LayoutWidgetBase.Show: '" this.id "'._GetFixedSize() deve retornar Map(w,h)")
+            throw Error("LayoutWidgetBase.Show: '" this.id "'._GetFixedSize() must return Map(w,h)")
 
         scale := this._position.scale
         if (!IsNumber(scale) || scale <= 0)
@@ -85,16 +85,17 @@ class LayoutWidgetBase extends WidgetBase
         this._w := Round(sz["w"] * scale)
         this._h := Round(sz["h"] * scale)
 
-        ; Subclass preenche this._gui com bandas, headers, controles
-        ; usando this._w / this._h (ja escalados) + this._position.scale
-        ; pra dimensionar internamente.
+        ; Subclass fills this._gui with bands, headers, controls
+        ; using this._w / this._h (already scaled) + this._position.scale
+        ; to dimension things internally.
         this._BuildGui()
 
-        ; Item 1: cria borda de destaque (hidden) que aparece quando
-        ; Ctrl esta segurado. Usa o mesmo helper de WidgetBase.
+        ; Item 1: creates the highlight border (hidden) that appears
+        ; when Ctrl is held. Uses the same helper from WidgetBase.
         this._BuildCtrlHighlight()
 
-        ; Calcula posicao na tela (mesma logica do WidgetBase, mas com _w/_h escalados)
+        ; Calculate position on screen (same logic as WidgetBase, but
+        ; with scaled _w/_h)
         monW := A_ScreenWidth
         monH := A_ScreenHeight
         if this._position.centered
@@ -105,15 +106,16 @@ class LayoutWidgetBase extends WidgetBase
 
         wg.Show("NoActivate X" posX " Y" posY " W" this._w " H" this._h)
 
-        ; Item 2 (apos Show): adiciona LAYERED + alpha=255 + TRANSPARENT.
-        ; Detalhes em WidgetBase.Show.
+        ; Item 2 (after Show): adds LAYERED + alpha=255 + TRANSPARENT.
+        ; Details in WidgetBase.Show.
         try WinSetTransparent(255, "ahk_id " wg.Hwnd)
         try WinSetExStyle("+0x20", "ahk_id " wg.Hwnd)
 
-        ; Smoke fix Turno 5 (Bug A): registra Hwnd no OverlayInteractionService
-        ; pra que Ctrl+drag (mover) e Ctrl+wheel (resize) funcionem nos
-        ; LayoutWidgets. Replica do bloco em WidgetBase.Show, ja que esse
-        ; Show() override nao chama super.
+        ; Smoke fix Turn 5 (Bug A): registers Hwnd with
+        ; OverlayInteractionService so that Ctrl+drag (move) and
+        ; Ctrl+wheel (resize) work on LayoutWidgets. Replicates the
+        ; block in WidgetBase.Show, since this Show() override does
+        ; not call super.
         if (OverlayInteractionService.Instance != "")
             OverlayInteractionService.Instance.RegisterHwnd(
                 this._gui.Hwnd,
@@ -123,13 +125,14 @@ class LayoutWidgetBase extends WidgetBase
     }
 
     ; ============================================================
-    ; _OnWheelResize - callback chamado pelo OverlayInteractionService
-    ;   quando user gira a roda do mouse com Ctrl segurado sobre o widget.
+    ; _OnWheelResize - callback called by OverlayInteractionService
+    ;   when the user turns the mouse wheel with Ctrl held over the
+    ;   widget.
     ;
-    ;   steps: +N (roda pra cima = aumenta) ou -N (pra baixo = diminui)
+    ;   steps: +N (wheel up = increase) or -N (down = decrease)
     ;
-    ;   Cada step = +- 0.1 no scale. SetScale herdado de WidgetBase
-    ;   faz clamp [0.5, 3.0] + Persist + ReRender automaticamente.
+    ;   Each step = +/- 0.1 in scale. SetScale inherited from WidgetBase
+    ;   clamps [0.5, 3.0] + Persist + ReRender automatically.
     ; ============================================================
     _OnWheelResize(steps)
     {
@@ -139,7 +142,7 @@ class LayoutWidgetBase extends WidgetBase
         if (!IsNumber(currentScale) || currentScale <= 0)
             currentScale := 1.0
         newScale := currentScale + (steps * 0.1)
-        ; Arredonda pra evitar drift de float (0.1+0.1+0.1 != 0.3 etc)
+        ; Round to avoid float drift (0.1+0.1+0.1 != 0.3 etc.)
         newScale := Round(newScale * 10) / 10
         this.SetScale(newScale)
     }
@@ -148,39 +151,39 @@ class LayoutWidgetBase extends WidgetBase
     ; Subclass overrides
     ; ============================================================
 
-    ; Retorna Map("w", larguraBase, "h", alturaBase) com tamanho BASE
-    ; do widget em scale=1.0. Subclasse DEVE override. O Show() aplica
-    ; scale em cima desses valores.
+    ; Returns Map("w", baseWidth, "h", baseHeight) with the widget's
+    ; BASE size at scale=1.0. Subclass MUST override. Show() applies
+    ; scale on top of these values.
     _GetFixedSize()
     {
-        throw Error("LayoutWidgetBase._GetFixedSize deve ser overridden por subclasse")
+        throw Error("LayoutWidgetBase._GetFixedSize must be overridden by subclass")
     }
 
     ; ============================================================
-    ; Helpers protegidos para construcao de layouts estilo Kalandra
+    ; Protected helpers for building Kalandra-style layouts
     ; ============================================================
 
-    ; Cria uma banda Progress como background colorido. Usa cores
-    ; do tema Kalandra: surface (mais claro), surface2, surface3 (mais
-    ; escuro). Retorna o control criado.
+    ; Creates a Progress band as a colored background. Uses theme
+    ; Kalandra colors: surface (lighter), surface2, surface3 (darker).
+    ; Returns the created control.
     ;
     ; surfaceName: "surface" | "surface2" | "surface3"
     ;
-    ; +Disabled garante que cliques passem direto pros controles em
-    ; cima da banda (importante pro MicroLayoutWidget que tem botoes
-    ; sobre o background).
+    ; +Disabled ensures clicks pass straight through to controls on
+    ; top of the band (important for MicroLayoutWidget which has
+    ; buttons over the background).
     _BuildKalandraBand(x, y, w, h, surfaceName := "surface")
     {
         wg := this._gui
         bgColor := Theme.Color(surfaceName)
-        ; Progress com cor=bg e Background=bg fica como retangulo solido.
+        ; Progress with color=bg and Background=bg renders as a solid rectangle.
         return wg.Add("Progress",
             "x" x " y" y " w" w " h" h " Disabled c" bgColor " Background" bgColor,
             100)
     }
 
-    ; Cria a "accent stripe" laranja (3px de altura) que fica no topo
-    ; das bandas no legado. Cor: accent (D8492F).
+    ; Creates the "accent stripe" orange (3px high) that sits on top
+    ; of the bands in the legacy. Color: accent (D8492F).
     _BuildAccentStripe(x, y, w, h := 3)
     {
         wg := this._gui
@@ -190,8 +193,8 @@ class LayoutWidgetBase extends WidgetBase
             100)
     }
 
-    ; Cria um header de banda (texto pequeno em uppercase, cor subtle, bold).
-    ; Estilo legado: "MAPA", "OBJETIVO", "RECOMPENSAS", etc.
+    ; Creates a band header (small uppercase text, subtle color, bold).
+    ; Legacy style: "MAP", "OBJECTIVE", "REWARDS", etc.
     _BuildBandHeader(x, y, w, text)
     {
         wg := this._gui
@@ -199,7 +202,7 @@ class LayoutWidgetBase extends WidgetBase
         return wg.Add("Text", "x" x " y" y " w" w, text)
     }
 
-    ; Cria um divisor horizontal accent (linha laranja fina).
+    ; Creates a horizontal accent divider (thin orange line).
     _BuildDivider(x, y, w, h := 2)
     {
         wg := this._gui
@@ -209,8 +212,8 @@ class LayoutWidgetBase extends WidgetBase
             100)
     }
 
-    ; Aplica fonte do tema com tamanho/cor/peso. Helper conciso pra
-    ; substituir o boilerplate de wg.SetFont em sequencia de Add()s.
+    ; Applies a theme font with size/color/weight. Concise helper to
+    ; replace the wg.SetFont boilerplate in sequences of Add()s.
     _SetFont(size, colorName, weight := "")
     {
         opts := "s" size " c" Theme.Color(colorName)

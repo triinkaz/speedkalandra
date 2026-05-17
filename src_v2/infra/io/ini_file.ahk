@@ -1,23 +1,23 @@
 ﻿; ============================================================
-; IniFile — wrapper sobre IniRead/IniWrite/IniDelete
+; IniFile — wrapper over IniRead/IniWrite/IniDelete
 ; ============================================================
 ;
-; Por que existe?
-;   - Os legados (settings.ahk, state.ahk) chamam IniRead/IniWrite com
-;     o path INI_FILE como global passado em todo lugar. O wrapper
-;     centraliza encoding, criacao de diretorio, e isolamento de erros.
-;   - Repositorios da Fase 3 recebem uma instancia de IniFile no
-;     construtor. Isso desacopla o repo do filesystem global.
-;   - Testes injetam IniFile apontando para um tempfile.
+; Why does it exist?
+;   - Legacy modules (settings.ahk, state.ahk) call IniRead/IniWrite
+;     with INI_FILE as a global passed around everywhere. The wrapper
+;     centralizes encoding, directory creation, and error isolation.
+;   - Phase 3 repositories receive an IniFile instance in their
+;     constructor. That decouples the repo from the global filesystem.
+;   - Tests inject an IniFile pointing at a tempfile.
 ;
 ; Encoding:
-;   AHK v2 detecta UTF-16-LE / UTF-8 / ANSI automaticamente pelo BOM.
-;   IniWrite usa UTF-16-LE quando o arquivo nao existe. Para arquivos
-;   existentes, mantem o encoding original. Nao precisamos especificar.
+;   AHK v2 auto-detects UTF-16-LE / UTF-8 / ANSI by the BOM.
+;   IniWrite uses UTF-16-LE when the file does not exist. For existing
+;   files, it keeps the original encoding. We don't need to specify.
 ;
-; Uso:
+; Usage:
 ;   ini := IniFile(A_ScriptDir "\poe2_tracker.ini")
-;   ini.Read("General", "ProfileName", "Default")  ; com default
+;   ini.Read("General", "ProfileName", "Default")  ; with default
 ;   ini.Write("Default", "General", "ProfileName")
 ;   ini.Delete("Progress", "a1_01_riverbank_miller")
 ;   ini.SectionExists("Run")
@@ -31,22 +31,22 @@ class IniFile
     __New(path)
     {
         if (path = "")
-            throw ValueError("IniFile: 'path' obrigatorio")
+            throw ValueError("IniFile: 'path' is required")
         this.path := path
         this._EnsureDir()
-        ; Encoding: AHK v2 IniWrite cria UTF-16 LE BOM por default quando
-        ; o arquivo nao existe. NAO TENTAMOS migrar pra UTF-8 — IniRead
-        ; key-lookup do AHK v2 SO funciona em UTF-16 LE BOM (em UTF-8 BOM,
-        ; retorna default silenciosamente). Vide R11.1 doc em
-        ; text_encoding.ahk e o pitfall test em
+        ; Encoding: AHK v2 IniWrite creates UTF-16 LE BOM by default when
+        ; the file does not exist. We DO NOT try to migrate to UTF-8 —
+        ; AHK v2's IniRead key-lookup ONLY works in UTF-16 LE BOM (in
+        ; UTF-8 BOM, it silently returns the default). See R11.1 doc in
+        ; text_encoding.ahk and the pitfall test in
         ; PersonalBestRepositoryTests.iniread_key_lookup_works_in_utf16_le_bom_but_not_utf8_bom.
     }
 
     ; ------------------------------------------------------------
     ; Read(section, key, default := "")
-    ;   Le um valor especifico. Se a chave nao existe e default foi
-    ;   passado, retorna default. Se default for "" e a chave nao
-    ;   existir, retorna "" (NUNCA estoura).
+    ;   Reads a specific value. If the key does not exist and a default
+    ;   was passed, returns the default. If default is "" and the key
+    ;   does not exist, returns "" (NEVER throws).
     ; ------------------------------------------------------------
     Read(section, key, default := "")
     {
@@ -58,8 +58,8 @@ class IniFile
 
     ; ------------------------------------------------------------
     ; ReadSection(section) -> string (multi-line "key=value\n...")
-    ;   Util para listar todas as keys de uma section. Retorna ""
-    ;   se a section nao existir.
+    ;   Useful to list all keys in a section. Returns "" if the
+    ;   section does not exist.
     ; ------------------------------------------------------------
     ReadSection(section)
     {
@@ -71,7 +71,7 @@ class IniFile
 
     ; ------------------------------------------------------------
     ; KeysIn(section) -> Array<string>
-    ;   Parseia ReadSection e retorna so os nomes das keys.
+    ;   Parses ReadSection and returns only the key names.
     ; ------------------------------------------------------------
     KeysIn(section)
     {
@@ -80,7 +80,7 @@ class IniFile
         if (block = "")
             return keys
 
-        ; Normaliza CRLF
+        ; Normalize CRLF
         block := StrReplace(block, "`r`n", "`n")
         for _, line in StrSplit(block, "`n")
         {
@@ -97,7 +97,7 @@ class IniFile
 
     ; ------------------------------------------------------------
     ; ReadSectionAsMap(section) -> Map<key, value>
-    ;   Le todas as keys de uma section como Map.
+    ;   Reads all keys of a section as a Map.
     ; ------------------------------------------------------------
     ReadSectionAsMap(section)
     {
@@ -124,8 +124,8 @@ class IniFile
 
     ; ------------------------------------------------------------
     ; Write(value, section, key)
-    ;   Argumentos na MESMA ordem do IniWrite nativo (value, file,
-    ;   section, key) menos o file. Mantem coerencia com a API AHK.
+    ;   Arguments in the SAME order as native IniWrite (value, file,
+    ;   section, key) minus the file. Keeps consistency with the AHK API.
     ; ------------------------------------------------------------
     Write(value, section, key)
     {
@@ -134,8 +134,8 @@ class IniFile
 
     ; ------------------------------------------------------------
     ; Delete(section, key := "")
-    ;   Se key for vazio, apaga a section inteira. Sem efeito se
-    ;   nao existe (nunca estoura).
+    ;   If key is empty, deletes the entire section. No effect if
+    ;   it does not exist (never throws).
     ; ------------------------------------------------------------
     Delete(section, key := "")
     {
@@ -150,7 +150,7 @@ class IniFile
 
     ; ------------------------------------------------------------
     ; Exists() -> bool
-    ;   True se o arquivo existe no disco.
+    ;   True if the file exists on disk.
     ; ------------------------------------------------------------
     Exists()
     {
@@ -159,7 +159,7 @@ class IniFile
 
     ; ------------------------------------------------------------
     ; SectionExists(section) -> bool
-    ;   True se a section tem pelo menos uma key.
+    ;   True if the section has at least one key.
     ; ------------------------------------------------------------
     SectionExists(section)
     {
@@ -169,7 +169,7 @@ class IniFile
     GetPath() => this.path
 
     ; ------------------------------------------------------------
-    ; Helpers privados
+    ; Private helpers
     ; ------------------------------------------------------------
     _EnsureDir()
     {

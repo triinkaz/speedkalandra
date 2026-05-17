@@ -2,22 +2,22 @@
 ; RunStatsPlotBuilderTests
 ; ============================================================
 ;
-; RunStatsPlotBuilder agrega snapshot de run em Map renderizavel.
+; RunStatsPlotBuilder aggregates a run snapshot into a renderable Map.
 ; Deps:
-;   catalog : ZonesCatalog ou "" (pra categorizar mapa/cidade)
+;   catalog : ZonesCatalog or "" (to categorize map/town)
 ;   cfg     : AppSettings (deathPenaltyEnabled, deathPenaltyMs,
 ;             profileName, gamePatch)
 ;
-; Categorias (SEGMENT_KEYS): mapa / cidade / loading / morte
+; Categories (SEGMENT_KEYS): mapa / cidade / loading / morte
 ;
-; Cobertura:
-;   - Construtor (validacao tipos)
+; Coverage:
+;   - Constructor (type validation)
 ;   - Static methods (Definitions, CategoryLabel, CategoryColor, FormatMs)
-;   - Build: shape do output, fallbacks
-;   - _AddZoneDetails (categoriza via catalog)
+;   - Build: output shape, fallbacks
+;   - _AddZoneDetails (categorizes via catalog)
 ;   - _AddLoadingDetails (label "from -> to", firstTs)
-;   - _AddDeathDetails (respeita penaltyEnabled, count*penalty)
-;   - maxActReached (regex de _DeriveMaxAct)
+;   - _AddDeathDetails (respects penaltyEnabled, count*penalty)
+;   - maxActReached (regex in _DeriveMaxAct)
 ;   - totals + totalMs
 
 
@@ -50,7 +50,7 @@ class RunStatsPlotBuilderTests extends TestCase
     }
 
     static Tests := [
-        ; --- Construtor ---
+        ; --- Constructor ---
         "constructor_throws_when_catalog_is_random_object",
         "constructor_throws_when_cfg_not_app_settings",
         "constructor_accepts_empty_catalog",
@@ -79,7 +79,7 @@ class RunStatsPlotBuilderTests extends TestCase
         "format_ms_one_hour_is_1_00_00",
         "format_ms_negative_clamps_to_zero",
 
-        ; --- Build: shape do output ---
+        ; --- Build: output shape ---
         "build_with_non_object_snapshot_returns_data_with_zeros",
         "build_returns_map_with_all_required_keys",
         "build_uses_run_id_from_snapshot",
@@ -138,7 +138,7 @@ class RunStatsPlotBuilderTests extends TestCase
     }
 
     ; ============================================================
-    ; Construtor
+    ; Constructor
     ; ============================================================
 
     constructor_throws_when_catalog_is_random_object()
@@ -155,7 +155,7 @@ class RunStatsPlotBuilderTests extends TestCase
 
     constructor_accepts_empty_catalog()
     {
-        ; "" eh permitido (caso o catalog nao tenha sido carregado)
+        ; "" is allowed (in case the catalog wasn't loaded)
         b := RunStatsPlotBuilder("", this.cfg)
         Assert.True(IsObject(b))
     }
@@ -268,7 +268,7 @@ class RunStatsPlotBuilderTests extends TestCase
     }
 
     ; ============================================================
-    ; Build: shape do output
+    ; Build: output shape
     ; ============================================================
 
     build_with_non_object_snapshot_returns_data_with_zeros()
@@ -284,7 +284,7 @@ class RunStatsPlotBuilderTests extends TestCase
         for _, k in ["runId", "profile", "patch", "firstTs",
                      "totals", "details", "deathCount", "totalMs", "maxActReached"]
         {
-            Assert.True(data.Has(k), "Falta key: " k)
+            Assert.True(data.Has(k), "Missing key: " k)
         }
     }
 
@@ -320,14 +320,14 @@ class RunStatsPlotBuilderTests extends TestCase
 
     build_falls_back_to_settings_profile_when_snapshot_empty()
     {
-        ; AppSettings.Defaults() tem profileName="Default"
+        ; AppSettings.Defaults() has profileName="Default"
         data := this.builder.Build(Map())
         Assert.Equal("Default", data["profile"])
     }
 
     build_falls_back_to_settings_patch_when_snapshot_empty()
     {
-        ; AppSettings.Defaults() tem gamePatch="Unknown" (capital U)
+        ; AppSettings.Defaults() has gamePatch="Unknown" (capital U)
         data := this.builder.Build(Map())
         Assert.Equal("Unknown", data["patch"])
     }
@@ -354,10 +354,10 @@ class RunStatsPlotBuilderTests extends TestCase
 
     zone_unknown_falls_back_to_mapa_with_no_note()
     {
-        ; Zone que nao existe no catalog
+        ; Zone not in the catalog
         data := this.builder.Build(Map("zoneTotals", Map("Unknown Zone", 50000)))
         Assert.Equal(50000, data["totals"]["mapa"])
-        ; Detail tem note="" (act=0, sem "Act N")
+        ; Detail has note="" (act=0, no "Act N")
         Assert.Equal("", data["details"][1]["note"])
     }
 
@@ -459,15 +459,15 @@ class RunStatsPlotBuilderTests extends TestCase
 
     death_count_with_penalty_enabled_adds_detail()
     {
-        ; Defaults: deathPenaltyEnabled=true, deathPenaltyMs=algum default
+        ; Defaults: deathPenaltyEnabled=true, deathPenaltyMs=some default
         data := this.builder.Build(Map("deathCount", 2))
         Assert.True(data["totals"]["morte"] > 0,
-            "Com penalty enabled e deathCount=2, total morte deve ser > 0")
+            "With penalty enabled and deathCount=2, total morte must be > 0")
     }
 
     death_count_with_penalty_disabled_skips_detail()
     {
-        ; Cria cfg com penalty desabilitada
+        ; Create cfg with penalty disabled
         cfgDisabled := AppSettings.Defaults()
         cfgDisabled.deathPenaltyEnabled := false
         builder2 := RunStatsPlotBuilder(this.catalog, cfgDisabled)
@@ -488,7 +488,7 @@ class RunStatsPlotBuilderTests extends TestCase
     death_detail_label_includes_count()
     {
         data := this.builder.Build(Map("deathCount", 5))
-        ; Encontra o detail de morte
+        ; Find the death detail
         for _, d in data["details"]
         {
             if (d["category"] = "morte")
@@ -497,7 +497,7 @@ class RunStatsPlotBuilderTests extends TestCase
                 return
             }
         }
-        Assert.Fail("Esperava detail com category=morte")
+        Assert.Fail("Expected detail with category=morte")
     }
 
     ; ============================================================
@@ -519,10 +519,11 @@ class RunStatsPlotBuilderTests extends TestCase
 
     max_act_extracts_from_ato_note_for_legacy_runs()
     {
-        ; Regex tambem aceita "Ato N" (PT-BR antigo - runs salvas em v17.13-)
-        ; Simulamos passando snapshot com detail ja contendo "Ato N" no note.
-        ; Nao da pra forcar via zone (que gera "Act N"); precisamos
-        ; testar _DeriveMaxAct direto.
+        ; The regex also accepts "Ato N" (old PT-BR - runs saved in
+        ; v17.13-). We simulate by passing a snapshot whose detail
+        ; already contains "Ato N" in the note. We can't force that
+        ; via zone (which generates "Act N"); we need to test
+        ; _DeriveMaxAct directly.
         details := [
             Map("category", "mapa", "label", "X", "ms", 100, "note", "Ato 5", "timestamp", "")
         ]
@@ -531,7 +532,7 @@ class RunStatsPlotBuilderTests extends TestCase
 
     max_act_picks_highest_among_notes()
     {
-        ; Multiple zones em atos diferentes -> max
+        ; Multiple zones in different acts -> max
         data := this.builder.Build(Map("zoneTotals", Map(
             "Mud Burrow",       100,   ; act 1
             "Vastiri Outskirts", 200,   ; act 2

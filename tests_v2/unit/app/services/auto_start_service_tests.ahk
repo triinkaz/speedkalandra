@@ -2,13 +2,13 @@
 ; AutoStartServiceTests
 ; ============================================================
 ;
-; AutoStartService subscribe a LogLineRead + lifecycle. Quando uma
-; linha bate com cfg.autoStartRegex E nao ha run ativa, publica
-; Cmd.NewRunRequested. Tolerante a regex invalida.
+; AutoStartService subscribes to LogLineRead + lifecycle. When a
+; line matches cfg.autoStartRegex AND there is no active run,
+; publishes Cmd.NewRunRequested. Tolerant to invalid regex.
 ;
-; Construtor opcional: terceiro arg `runService` permite query do
-; estado inicial (Bug #4 v17.15: pos-reload com run em andamento,
-; sem isso AutoStart disparava NewRun ao re-ler linhas do log).
+; Optional constructor: third arg `runService` allows querying
+; initial state (Bug #4 v17.15: post-reload with run in progress,
+; without this AutoStart fired NewRun on re-reading log lines).
 
 
 class AutoStartServiceTests extends TestCase
@@ -21,7 +21,7 @@ class AutoStartServiceTests extends TestCase
     {
         this.bus := Fixtures.MakeBus()
         this.cfg := AppSettings.Defaults()
-        this.cfg.autoStartRegex := "By the First Ones"   ; gatilho canonico
+        this.cfg.autoStartRegex := "By the First Ones"   ; canonical trigger
         this.svc := AutoStartService(this.bus, this.cfg)
     }
 
@@ -33,7 +33,7 @@ class AutoStartServiceTests extends TestCase
     }
 
     static Tests := [
-        ; --- Construtor ---
+        ; --- Constructor ---
         "constructor_throws_when_bus_not_event_bus",
         "constructor_throws_when_cfg_not_app_settings",
         "constructor_subscribes_to_log_line_read",
@@ -42,7 +42,7 @@ class AutoStartServiceTests extends TestCase
         "constructor_queries_run_service_when_provided",
         "constructor_ignores_run_service_without_is_active_method",
 
-        ; --- LogLine handler: precondicoes ---
+        ; --- LogLine handler: preconditions ---
         "log_line_ignored_when_run_active",
         "log_line_ignored_when_data_non_object",
         "log_line_ignored_when_line_key_missing",
@@ -55,7 +55,7 @@ class AutoStartServiceTests extends TestCase
         "log_line_match_event_includes_source_auto",
         "log_line_match_sets_run_active_to_true",
 
-        ; --- Regex invalida (tolerancia) ---
+        ; --- Invalid regex (tolerance) ---
         "log_line_with_invalid_regex_does_not_crash",
         "log_line_with_invalid_regex_does_not_publish",
 
@@ -70,7 +70,7 @@ class AutoStartServiceTests extends TestCase
         "run_cancelled_clears_run_active",
         "run_completed_clears_run_active",
 
-        ; --- Fluxo completo ---
+        ; --- Full flow ---
         "after_run_ended_next_match_publishes_again",
 
         ; --- Dispose ---
@@ -90,7 +90,7 @@ class AutoStartServiceTests extends TestCase
     }
 
     ; ============================================================
-    ; Construtor
+    ; Constructor
     ; ============================================================
 
     constructor_throws_when_bus_not_event_bus()
@@ -125,19 +125,19 @@ class AutoStartServiceTests extends TestCase
 
     constructor_queries_run_service_when_provided()
     {
-        ; Stub runService que retorna IsActive=true.
-        ; AHK passa `this` implicito quando chamado como metodo — a arrow
-        ; precisa aceitar 1 parametro pra nao estourar "Too many parameters".
+        ; Stub runService that returns IsActive=true.
+        ; AHK passes implicit `this` when called as a method — the arrow
+        ; must accept 1 parameter to avoid throwing "Too many parameters".
         stubRunSvc := { IsActive: (self) => true }
         svc2 := AutoStartService(this.bus, this.cfg, stubRunSvc)
         Assert.True(svc2.IsRunActive(),
-            "Bug #4 v17.15: query runService no boot pra evitar dispatching apos hydrate")
+            "Bug #4 v17.15: query runService at boot to prevent dispatch after hydrate")
         svc2.Dispose()
     }
 
     constructor_ignores_run_service_without_is_active_method()
     {
-        ; Defensivo: runService sem IsActive nao quebra
+        ; Defensive: runService without IsActive doesn't break
         emptyObj := { foo: (self) => 0 }
         svc2 := AutoStartService(this.bus, this.cfg, emptyObj)
         Assert.False(svc2.IsRunActive())
@@ -145,15 +145,15 @@ class AutoStartServiceTests extends TestCase
     }
 
     ; ============================================================
-    ; LogLine handler: precondicoes
+    ; LogLine handler: preconditions
     ; ============================================================
 
     log_line_ignored_when_run_active()
     {
-        this.bus.Publish(Events.RunStarted, Map("runId", "x"))   ; ativa run
+        this.bus.Publish(Events.RunStarted, Map("runId", "x"))   ; activates run
         capturedEvents := this._CaptureEvents(Commands.NewRunRequested)
         this.bus.Publish(Events.LogLineRead, Map("line", "By the First Ones! You're alive!"))
-        Assert.Equal(0, capturedEvents.Length, "Run ativa: nao dispara")
+        Assert.Equal(0, capturedEvents.Length, "Active run: doesn't fire")
     }
 
     log_line_ignored_when_data_non_object()
@@ -212,23 +212,23 @@ class AutoStartServiceTests extends TestCase
 
     log_line_match_sets_run_active_to_true()
     {
-        ; Apos match, IsRunActive=true (otimisticamente — RunStarted vai confirmar)
+        ; After match, IsRunActive=true (optimistically — RunStarted will confirm)
         this.bus.Publish(Events.LogLineRead, Map("line", "By the First Ones!"))
         Assert.True(this.svc.IsRunActive(),
-            "Marca otimisticamente apos publish, evita re-dispatch")
+            "Mark optimistically after publish, avoids re-dispatch")
     }
 
     ; ============================================================
-    ; Regex invalida (tolerancia)
+    ; Invalid regex (tolerance)
     ; ============================================================
 
     log_line_with_invalid_regex_does_not_crash()
     {
-        ; Regex com pattern invalido (parentese nao fechado)
+        ; Regex with invalid pattern (unclosed parenthesis)
         this.cfg.autoStartRegex := "(unclosed"
-        ; Nao deve estourar; o test passa se chegou aqui
+        ; Must not throw; the test passes if it reached here
         this.bus.Publish(Events.LogLineRead, Map("line", "(unclosed"))
-        Assert.True(true, "Sobreviveu a regex invalida")
+        Assert.True(true, "Survived invalid regex")
     }
 
     log_line_with_invalid_regex_does_not_publish()
@@ -236,7 +236,7 @@ class AutoStartServiceTests extends TestCase
         this.cfg.autoStartRegex := "(unclosed"
         capturedEvents := this._CaptureEvents(Commands.NewRunRequested)
         this.bus.Publish(Events.LogLineRead, Map("line", "(unclosed"))
-        Assert.Equal(0, capturedEvents.Length, "Regex invalida nao dispara")
+        Assert.Equal(0, capturedEvents.Length, "Invalid regex doesn't fire")
     }
 
     ; ============================================================
@@ -249,7 +249,7 @@ class AutoStartServiceTests extends TestCase
         this.bus.Publish(Events.LogLineRead, Map("line", "By the First Ones!"))
         this.bus.Publish(Events.LogLineRead, Map("line", "By the First Ones! again!"))
         Assert.Equal(1, capturedEvents.Length,
-            "_runActive=true apos primeiro match impede repeticao")
+            "_runActive=true after first match prevents repetition")
     }
 
     ; ============================================================
@@ -284,7 +284,7 @@ class AutoStartServiceTests extends TestCase
     }
 
     ; ============================================================
-    ; Fluxo completo
+    ; Full flow
     ; ============================================================
 
     after_run_ended_next_match_publishes_again()
@@ -293,9 +293,9 @@ class AutoStartServiceTests extends TestCase
         ; Run 1
         this.bus.Publish(Events.LogLineRead, Map("line", "By the First Ones!"))
         Assert.Equal(1, capturedEvents.Length)
-        ; Run 1 acaba
+        ; Run 1 ends
         this.bus.Publish(Events.RunCompleted, Map())
-        ; Run 2 — match dispara de novo
+        ; Run 2 — match fires again
         this.bus.Publish(Events.LogLineRead, Map("line", "By the First Ones!"))
         Assert.Equal(2, capturedEvents.Length)
     }

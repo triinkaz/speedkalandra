@@ -4,15 +4,15 @@
 ;
 ; DetectBom(path) -> "UTF-16-LE" | "UTF-16-BE" | "UTF-8-BOM" | "NONE"
 ;
-; HISTORICO:
-;   R11.1 (Bug #2 fix): ConvertUtf16ToUtf8 e MigrateIniToUtf8 foram
-;   REMOVIDOS porque quebravam IniRead key-lookup do AHK v2 (so
-;   funciona em UTF-16 LE BOM). Tests dos metodos removidos foram
-;   apagados deste arquivo.
+; HISTORY:
+;   R11.1 (Bug #2 fix): ConvertUtf16ToUtf8 and MigrateIniToUtf8 were
+;   REMOVED because they broke AHK v2's IniRead key-lookup (only
+;   works on UTF-16 LE BOM). Tests of the removed methods were
+;   deleted from this file.
 ;
-;   Os 4 regression tests `regression_bug2_*` que demonstravam a
-;   incompatibilidade foram substituidos por 2 tests positivos
-;   confirmando a remocao da API.
+;   The 4 `regression_bug2_*` regression tests that demonstrated the
+;   incompatibility were replaced with 2 positive tests confirming
+;   the API removal.
 
 class TextEncodingTests extends TestCase
 {
@@ -31,7 +31,7 @@ class TextEncodingTests extends TestCase
         "detect_bom_returns_utf8_bom_for_ef_bb_bf",
         "detect_bom_returns_none_for_ascii_without_bom",
 
-        ; --- Regression Bug #2: metodos de conversao removidos da API ---
+        ; --- Regression Bug #2: conversion methods removed from the API ---
         "bug2_convert_utf16_to_utf8_was_removed",
         "bug2_migrate_ini_to_utf8_was_removed",
     ]
@@ -42,7 +42,7 @@ class TextEncodingTests extends TestCase
 
     _WriteRawBytes(path, byteArray)
     {
-        ; Escreve bytes especificos sem BOM nenhum (truncate write).
+        ; Writes specific bytes without any BOM (truncate write).
         buf := Buffer(byteArray.Length)
         for i, b in byteArray
             NumPut("UChar", b, buf, i - 1)
@@ -63,14 +63,14 @@ class TextEncodingTests extends TestCase
     detect_bom_returns_none_for_empty_file()
     {
         path := Fixtures.TempPath("ini")
-        FileAppend("", path)   ; cria arquivo vazio (sem encoding -> sem BOM)
+        FileAppend("", path)   ; creates empty file (no encoding -> no BOM)
         Assert.Equal("NONE", TextEncoding.DetectBom(path))
     }
 
     detect_bom_returns_none_for_single_byte_file()
     {
         path := Fixtures.TempPath("ini")
-        this._WriteRawBytes(path, [0x41])   ; "A" sozinho
+        this._WriteRawBytes(path, [0x41])   ; lone "A"
         Assert.Equal("NONE", TextEncoding.DetectBom(path))
     }
 
@@ -103,30 +103,31 @@ class TextEncodingTests extends TestCase
     }
 
     ; ============================================================
-    ; Regression: Bug #2 (R11.1 - migration api removida)
+    ; Regression: Bug #2 (R11.1 - migration api removed)
     ; ============================================================
     ;
-    ; CONTEXTO: ConvertUtf16ToUtf8 e MigrateIniToUtf8 foram removidos
-    ; em R11.1 porque corrompiam IniRead key-lookup (so funciona em
-    ; UTF-16 LE BOM no AHK v2). Estes testes garantem que se alguem
-    ; tentar reintroduzir um desses metodos via copy-paste de codigo
-    ; antigo, o test suite vai pegar.
+    ; CONTEXT: ConvertUtf16ToUtf8 and MigrateIniToUtf8 were removed
+    ; in R11.1 because they corrupted IniRead key-lookup (only works
+    ; on UTF-16 LE BOM in AHK v2). These tests guarantee that if
+    ; anyone tries to reintroduce one of these methods via copy-paste
+    ; of old code, the test suite catches it.
 
     bug2_convert_utf16_to_utf8_was_removed()
     {
-        ; HasMethod retorna false pra metodos static que nao existem
-        ; na classe. Se alguem reintroduzir o metodo (sem revisao do
-        ; pitfall), este teste passa a falhar e bloqueia o merge.
+        ; HasMethod returns false for static methods that don't exist
+        ; on the class. If anyone reintroduces the method (without
+        ; reviewing the pitfall), this test starts failing and blocks
+        ; the merge.
         Assert.False(TextEncoding.HasMethod("ConvertUtf16ToUtf8"),
-            "Bug #2: ConvertUtf16ToUtf8 deve permanecer removido "
-            . "(quebrava IniRead em UTF-8 BOM).")
+            "Bug #2: ConvertUtf16ToUtf8 must stay removed "
+            . "(it broke IniRead on UTF-8 BOM).")
     }
 
     bug2_migrate_ini_to_utf8_was_removed()
     {
         Assert.False(TextEncoding.HasMethod("MigrateIniToUtf8"),
-            "Bug #2: MigrateIniToUtf8 deve permanecer removido "
-            . "(quebrava IniRead em UTF-8 BOM).")
+            "Bug #2: MigrateIniToUtf8 must stay removed "
+            . "(it broke IniRead on UTF-8 BOM).")
     }
 }
 

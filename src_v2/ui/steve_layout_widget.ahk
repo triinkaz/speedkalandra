@@ -1,38 +1,38 @@
 ; ============================================================
-; SteveLayoutWidget - layout com timer DESTACADO (v17.14)
+; SteveLayoutWidget - layout with HIGHLIGHTED timer (v17.14)
 ; ============================================================
 ;
-; Modo "SteveTheHappyWhale" \u2014 nomeado pelo user que sugeriu via
-; Discord feedback. Layout intermediario entre Compact (380x96, info
-; rica) e Micro (200x32, info minima):
+; "SteveTheHappyWhale" mode — named by the user who suggested it via
+; Discord feedback. Layout between Compact (380x96, rich info) and
+; Micro (200x32, minimal info):
 ;
 ;   +-------------------------------------------------------+
-;   | Act 1 \u00b7 The Riverbank              02:31.234        |  <- linha 1 (32px)
+;   | Act 1 · The Riverbank              02:31.234         |  <- line 1 (32px)
 ;   +-------------------------------------------------------+
-;   | \u2717 0    XP    [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588]                |  <- linha 2 (16px)
+;   | ✗ 0    XP    [████████████████████]                  |  <- line 2 (16px)
 ;   +-------------------------------------------------------+
 ;
-; FILOSOFIA:
-;   Timer da run em destaque visual (font grande + ms visiveis pra
-;   percepcao de movimento continuo), info de contexto comprimida.
-;   Ideal pra streamers/runners que querem o cronometro mais legivel
-;   sem perder dados de zona/deaths/distribuicao.
+; PHILOSOPHY:
+;   Run timer in visual focus (large font + visible ms for continuous
+;   motion perception), context info compressed. Ideal for streamers/
+;   runners who want the most readable clock without losing data on
+;   zone/deaths/distribution.
 ;
-; MILISSEGUNDOS:
-;   Timer mostra "MM:SS.mmm" (3 digitos). Refresh em 50ms (20fps) via
-;   SetTimer interno \u2014 o Evt.Tick padrao (300ms) seria lento demais
-;   pra perceber ms correndo. Apenas o text do timer atualiza em alta
-;   frequencia; outros campos (zona, deaths, XP, bar) atualizam no
-;   tick normal.
+; MILLISECONDS:
+;   Timer shows "MM:SS.mmm" (3 digits). Refresh every 50ms (20fps) via
+;   internal SetTimer — the standard Evt.Tick (300ms) would be too
+;   slow to perceive ms running. Only the timer text updates at high
+;   frequency; other fields (zone, deaths, XP, bar) update on the
+;   normal tick.
 ;
-; CORES DINAMICAS (igual Compact):
-;   - Timer abaixo do PB do ato atual: goodStrong (#4ADE80 verde vivo)
-;   - Timer acima do PB:                danger (#F87171 vermelho)
-;   - Sem PB ou timer em 0:             text (branco-creme)
-;   - Deaths: muted quando 0, warn (amber) quando >=1
+; DYNAMIC COLORS (same as Compact):
+;   - Timer below the current act's PB: goodStrong (#4ADE80 vivid green)
+;   - Timer above PB:                   danger (#F87171 red)
+;   - No PB or timer at 0:              text (off-white)
+;   - Deaths: muted when 0, warn (amber) when >=1
 ;   - XP: status color via XpRules
 ;
-; CONSTRUCAO:
+; CONSTRUCTION:
 ;   widget := SteveLayoutWidget(bus, position, onPersist, timer,
 ;                               zoneTracker, xp, zonesCatalog,
 ;                               loadingTotals, pbService)
@@ -43,55 +43,55 @@ class SteveLayoutWidget extends LayoutWidgetBase
     static WIDGET_ID := "steveLayout"
     static DISPLAY_NAME := "Layout Steve"
 
-    ; Tamanho BASE (scale=1.0)
+    ; BASE size (scale=1.0)
     static FIXED_W := 380
     static FIXED_H := 64
 
-    ; Layout BASE (scale=1.0)
+    ; BASE layout (scale=1.0)
     static STRIPE_H  := 2
 
-    ; Linha 1: act/zona + timer destacado
+    ; Line 1: act/zone + highlighted timer
     static LINE1_Y       := 6
     static LINE1_H       := 32
     static MARGIN_X      := 10
-    static TIMER_W       := 210   ; v17.15.3: 170->210 evita corte em runs >= 1h
-    static ACT_ZONE_GAP  := 8     ; margem entre act-zone e timer
-    static BAR_TIMER_GAP := 12    ; espaco horizontal entre fim da bar e timer
+    static TIMER_W       := 210   ; v17.15.3: 170->210 prevents cropping in runs >= 1h
+    static ACT_ZONE_GAP  := 8     ; margin between act-zone and timer
+    static BAR_TIMER_GAP := 12    ; horizontal space between bar end and timer
 
-    ; Linha 2: deaths + XP + bar (bar cheia altura pra ficar visivel)
+    ; Line 2: deaths + XP + bar (full-height bar so it stays visible)
     static LINE2_Y       := 42
     static LINE2_H       := 18
     static DEATHS_W      := 36
     static XP_W          := 22
-    static GAP_LINE2     := 6     ; espaco entre elementos linha 2
+    static GAP_LINE2     := 6     ; space between line 2 elements
 
-    ; Fonts BASE (scale=1.0)
+    ; BASE fonts (scale=1.0)
     static FONT_ACT_ZONE := 10
-    static FONT_TIMER    := 28   ; destaque visual — alma do modo Steve
+    static FONT_TIMER    := 28   ; visual highlight — soul of Steve mode
     static FONT_LINE2    := 8
 
-    ; Refresh do timer em alta frequencia (pra mostrar ms correndo).
-    ; 50ms = 20fps. Suficiente pra movimento visualmente suave sem
-    ; stress de CPU. Apenas o text do timer atualiza nesse rate.
+    ; High-frequency timer refresh (to show running ms).
+    ; 50ms = 20fps. Enough for visually smooth motion without CPU
+    ; stress. Only the timer text updates at this rate.
     static TIMER_REFRESH_MS := 50
 
-    ; Bar (linha 2) — mesma paleta do Compact pra consistencia
+    ; Bar (line 2) — same palette as Compact for consistency
     static COLOR_MAPA    := "38BDF8"
     static COLOR_LOADING := "FACC15"
     static COLOR_CIDADE  := "A78BFA"
 
-    ; Baleia decorativa (mascote do modo) — v17.14b.
-    ; Imagem opcional no canto esquerdo do widget. Se nao existir,
-    ; layout volta ao normal sem ela.
+    ; Decorative whale (mode mascot) — v17.14b.
+    ; Optional image in the left corner of the widget. If missing,
+    ; layout returns to normal without it.
     static WHALE_IMG_PATH := A_ScriptDir "\assets\whale_steve.png"
     static WHALE_X := 4
     static WHALE_Y := 8
     static WHALE_W := 48
     static WHALE_H := 48
-    static WHALE_GAP := 4   ; espaco entre baleia e conteudo a direita
+    static WHALE_GAP := 4   ; space between whale and content to the right
 
-    ; Flag de runtime: true se a imagem carregou com sucesso no _BuildGui.
-    ; Usada pra decidir se desloca o conteudo pra direita ou nao.
+    ; Runtime flag: true if the image loaded successfully in _BuildGui.
+    ; Used to decide whether to shift content right or not.
     _whaleLoaded := false
 
     ; Services
@@ -102,12 +102,12 @@ class SteveLayoutWidget extends LayoutWidgetBase
     _loadingTotals := ""
     _pbService     := ""
 
-    ; State (replicado do Compact pra resolucao robusta de PB)
+    ; State (replicated from Compact for robust PB resolution)
     _currentZone   := ""
     _currentAct    := 0
     _deathCount    := 0
 
-    ; Cache pra evitar repaint
+    ; Cache to avoid repaint
     _lastTimerText  := ""
     _lastTimerColor := ""
     _lastActZoneText := ""
@@ -124,7 +124,7 @@ class SteveLayoutWidget extends LayoutWidgetBase
     _handlerRunReset       := ""
     _handlerRunCancelled   := ""
 
-    ; SetTimer interno pro refresh de alta frequencia do timer.
+    ; Internal SetTimer for high-frequency timer refresh.
     _highFreqTimerFn := ""
 
     __New(bus, position, onPersist, timer, zoneTracker, xp,
@@ -174,7 +174,7 @@ class SteveLayoutWidget extends LayoutWidgetBase
         h := this._h
         s := this._GetScale()
 
-        ; Dimensoes escaladas
+        ; Scaled dimensions
         stripeH := Max(1, Round(SteveLayoutWidget.STRIPE_H * s))
         marginX := Max(4, Round(SteveLayoutWidget.MARGIN_X * s))
         timerW  := Max(80, Round(SteveLayoutWidget.TIMER_W * s))
@@ -196,15 +196,15 @@ class SteveLayoutWidget extends LayoutWidgetBase
         this._BuildKalandraBand(0, 0, w, h, "surface")
         this._BuildAccentStripe(0, 0, w, stripeH)
 
-        ; v17.15.3: baleia decorativa removida (feedback minimalist).
-        ; contentX agora sempre na margem padrao.
+        ; v17.15.3: decorative whale removed (minimalist feedback).
+        ; contentX now always at standard margin.
         this._whaleLoaded := false
         contentX := marginX
 
-        ; ============ LINHA 1: act+zona | timer destacado ============
+        ; ============ LINE 1: act+zone | highlighted timer ============
         actZoneW := w - contentX - marginX - timerW - SteveLayoutWidget.ACT_ZONE_GAP
 
-        ; act+zona (esquerda)
+        ; act+zone (left)
         this._SetFont(fontActZone, "text", "")
         this._ctrls["line1_act_zone"] := wg.Add("Text",
             "x" contentX " y" line1Y
@@ -213,11 +213,11 @@ class SteveLayoutWidget extends LayoutWidgetBase
             " Background" Theme.Color("surface"),
             "")
 
-        ; Timer destacado (direita) — BOLD, font grande, cor dinamica.
-        ; Ocupa ALTURA COMPLETA (linha 1 + linha 2): a bar da linha 2 para
-        ; antes do timer (BAR_TIMER_GAP), deixando esse "L" de espaco pro
-        ; timer crescer verticalmente. Style 0x200 (SS_CENTERIMAGE)
-        ; centraliza o texto verticalmente dentro do control.
+        ; Highlighted timer (right) — BOLD, large font, dynamic color.
+        ; Occupies FULL HEIGHT (line 1 + line 2): the line 2 bar stops
+        ; before the timer (BAR_TIMER_GAP), leaving that "L" of space
+        ; for the timer to grow vertically. Style 0x200 (SS_CENTERIMAGE)
+        ; centers the text vertically within the control.
         timerH := line2Y + line2H - line1Y
         this._SetFont(fontTimer, "text", "bold")
         this._ctrls["line1_timer"] := wg.Add("Text",
@@ -227,12 +227,12 @@ class SteveLayoutWidget extends LayoutWidgetBase
             " Background" Theme.Color("surface"),
             "")
 
-        ; ============ LINHA 2: deaths + xp ============
-        ; v17.15.3 (feedback minimalist): bar Mapa/Loading/Cidade
-        ; removida do layout Steve. Linha 2 fica so com deaths + XP.
+        ; ============ LINE 2: deaths + xp ============
+        ; v17.15.3 (minimalist feedback): the Map/Loading/Town bar was
+        ; removed from the Steve layout. Line 2 only has deaths + XP.
         x := contentX
 
-        ; deaths (esquerda)
+        ; deaths (left)
         this._SetFont(fontLine2, "muted", "bold")
         this._ctrls["line2_deaths"] := wg.Add("Text",
             "x" x " y" line2Y
@@ -242,7 +242,7 @@ class SteveLayoutWidget extends LayoutWidgetBase
             "")
         x += deathsW + gapL2
 
-        ; XP indicator (texto fixo, cor dinamica)
+        ; XP indicator (fixed text, dynamic color)
         this._SetFont(fontLine2, "muted", "bold")
         this._ctrls["line2_xp"] := wg.Add("Text",
             "x" x " y" line2Y
@@ -251,10 +251,10 @@ class SteveLayoutWidget extends LayoutWidgetBase
             " Background" Theme.Color("surface"),
             "XP")
 
-        ; Resync state inicial via zonesCatalog/zoneTracker
+        ; Initial state resync via zonesCatalog/zoneTracker
         this._ResolveInitialActZone()
 
-        ; Render inicial
+        ; Initial render
         this._lastTimerText  := ""
         this._lastTimerColor := ""
         this._lastActZoneText := ""
@@ -263,8 +263,8 @@ class SteveLayoutWidget extends LayoutWidgetBase
         this._lastXpColor     := ""
         this._Refresh()
 
-        ; Inicia SetTimer interno pra refresh do timer em alta frequencia.
-        ; Sem isso, ms nao atualizam (Evt.Tick padrao eh 300ms).
+        ; Starts internal SetTimer for high-frequency timer refresh.
+        ; Without this, ms do not update (default Evt.Tick is 300ms).
         this._highFreqTimerFn := this._OnHighFreqTimer.Bind(this)
         try SetTimer(this._highFreqTimerFn, SteveLayoutWidget.TIMER_REFRESH_MS)
     }
@@ -282,8 +282,8 @@ class SteveLayoutWidget extends LayoutWidgetBase
         this._Refresh()
     }
 
-    ; Refresh em alta frequencia (50ms) \u2014 SO atualiza o timer.
-    ; Skip silencioso quando widget nao esta visivel pra economizar CPU.
+    ; High-frequency refresh (50ms) — ONLY updates the timer.
+    ; Silent skip when widget is not visible, to save CPU.
     _OnHighFreqTimer()
     {
         if !this._gui
@@ -301,8 +301,8 @@ class SteveLayoutWidget extends LayoutWidgetBase
         this._RefreshTimerOnly()
         this._RefreshDeaths()
         this._RefreshXp()
-        ; v17.15.3: _RefreshBar removido (bar Mapa/Loading/Cidade fora
-        ; do layout Steve agora).
+        ; v17.15.3: _RefreshBar removed (Map/Loading/Town bar is out
+        ; of the Steve layout now).
     }
 
     _RefreshActZone()
@@ -329,7 +329,7 @@ class SteveLayoutWidget extends LayoutWidgetBase
         runMs := IsObject(this._timer) ? this._timer.GetRunMs() : 0
         text := this._FormatMsWithMillis(runMs)
 
-        ; Cor: comparada com PB do ato atual
+        ; Color: compared with the current act's PB
         pbMs := this._GetRunPbMs()
         color := SteveLayoutWidget._ResolveTimerColor(runMs, pbMs)
 
@@ -388,13 +388,13 @@ class SteveLayoutWidget extends LayoutWidgetBase
         }
     }
 
-    ; v17.15.3: _RefreshBar removido. A bar empilhada Mapa/Loading/Cidade
-    ; estava na linha 2 mas nao se encaixava no espirito minimalista do
-    ; modo Steve (feedback Steve/Trinka via Discord). Compact layout
-    ; ainda tem essa bar pra quem quer distribuicao visivel.
+    ; v17.15.3: _RefreshBar removed. The Map/Loading/Town stacked bar
+    ; was on line 2 but did not fit the minimalist spirit of Steve
+    ; mode (Steve/Trinka feedback via Discord). Compact layout still
+    ; has that bar for those who want the distribution visible.
 
     ; ============================================================
-    ; Event handlers de state
+    ; State event handlers
     ; ============================================================
 
     _OnZoneEntered(data)
@@ -409,7 +409,7 @@ class SteveLayoutWidget extends LayoutWidgetBase
             if (IsNumber(ai) && ai > 0)
                 this._currentAct := ai
         }
-        ; Fallback: deriva ato via catalog
+        ; Fallback: derive act via catalog
         if (this._currentAct = 0 && IsObject(this._zonesCatalog) && this._currentZone != "")
         {
             a := this._zonesCatalog.GetActOfName(this._currentZone)
@@ -431,8 +431,8 @@ class SteveLayoutWidget extends LayoutWidgetBase
         this._Refresh()
     }
 
-    ; Resync inicial \u2014 quando widget eh mostrado, ja pega zona/ato ativos
-    ; do zoneTracker se houver run em andamento.
+    ; Initial resync — when widget is shown, picks up active zone/act
+    ; from the zoneTracker if there's a run in progress.
     _ResolveInitialActZone()
     {
         if !IsObject(this._zoneTracker)
@@ -457,7 +457,7 @@ class SteveLayoutWidget extends LayoutWidgetBase
     ; Helpers
     ; ============================================================
 
-    ; Queries seguras pro PB service (mesmo padrao do Compact).
+    ; Safe queries to the PB service (same pattern as Compact).
     _GetRunPbMs()
     {
         if !IsObject(this._pbService)
@@ -481,11 +481,11 @@ class SteveLayoutWidget extends LayoutWidgetBase
         return Theme.Color("danger")
     }
 
-    ; Formata ms em "MM:SS.cc" ou "H:MM:SS".
-    ; v17.15.3 (feedback Trinka/Steve): em runs >= 1h, esconde os
-    ; centesimos. Motivo: "H:MM:SS.cc" cortava pela esquerda no
-    ; layout Steve. Em runs sub-1h, centesimos visiveis pra dar
-    ; sensacao de movimento continuo a 50ms de refresh.
+    ; Formats ms as "MM:SS.cc" or "H:MM:SS".
+    ; v17.15.3 (Trinka/Steve feedback): in runs >= 1h, hides the
+    ; hundredths. Reason: "H:MM:SS.cc" cropped on the left in the
+    ; Steve layout. In sub-1h runs, hundredths are visible to give
+    ; a sense of continuous motion at 50ms refresh.
     _FormatMsWithMillis(ms)
     {
         if (ms < 0)
@@ -502,7 +502,7 @@ class SteveLayoutWidget extends LayoutWidgetBase
 
     Dispose()
     {
-        ; Para o SetTimer interno
+        ; Stops the internal SetTimer
         if (this._highFreqTimerFn != "")
         {
             try SetTimer(this._highFreqTimerFn, 0)

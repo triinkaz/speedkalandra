@@ -2,17 +2,17 @@
 ; HotkeyFormatterTests
 ; ============================================================
 ;
-; Static-only. Converte bidirecionalmente entre:
+; Static-only. Converts bidirectionally between:
 ;   AHK syntax: "^!f"       (^ Ctrl, ! Alt, + Shift, # Win)
 ;   Human:      "Ctrl+Alt+F"
 ;
-; Usado por SettingsDialog (ToHuman pra display; ToAhk pra persistir).
+; Used by SettingsDialog (ToHuman for display; ToAhk to persist).
 ;
-; Tolerancias importantes:
-;   - case-insensitive em ToAhk ("ctrl+alt+f")
-;   - espacos em ToAhk ("Ctrl + Alt + F")
-;   - passthrough quando ja eh AHK syntax ("^!f" -> "^!f")
-;   - empty input retorna empty
+; Important tolerances:
+;   - case-insensitive in ToAhk ("ctrl+alt+f")
+;   - spaces in ToAhk ("Ctrl + Alt + F")
+;   - passthrough when already AHK syntax ("^!f" -> "^!f")
+;   - empty input returns empty
 
 
 class HotkeyFormatterTests extends TestCase
@@ -118,7 +118,7 @@ class HotkeyFormatterTests extends TestCase
     to_human_letter_uppercased()
     {
         Assert.Equal("Ctrl+A", HotkeyFormatter.ToHuman("^a"),
-            "Letra unica vira uppercase no display")
+            "Single letter becomes uppercase in display")
     }
 
     to_human_digit_passthrough()
@@ -151,7 +151,7 @@ class HotkeyFormatterTests extends TestCase
     to_ahk_letter_lowercased()
     {
         Assert.Equal("^f", HotkeyFormatter.ToAhk("Ctrl+F"),
-            "Letra unica vira lowercase na sintaxe AHK")
+            "Single letter becomes lowercase in AHK syntax")
     }
 
     to_ahk_f_key_preserved()
@@ -167,7 +167,7 @@ class HotkeyFormatterTests extends TestCase
 
     to_ahk_passthrough_when_already_ahk_syntax()
     {
-        ; Power user typa direto — passthrough
+        ; Power user types directly — passthrough
         Assert.Equal("^!f", HotkeyFormatter.ToAhk("^!f"))
         Assert.Equal("+a",  HotkeyFormatter.ToAhk("+a"))
         Assert.Equal("#x",  HotkeyFormatter.ToAhk("#x"))
@@ -175,7 +175,7 @@ class HotkeyFormatterTests extends TestCase
 
     to_ahk_control_alternate_name()
     {
-        ; "Control" tambem aceito (alias de "Ctrl")
+        ; "Control" also accepted (alias for "Ctrl")
         Assert.Equal("^a", HotkeyFormatter.ToAhk("Control+A"))
     }
 
@@ -193,13 +193,13 @@ class HotkeyFormatterTests extends TestCase
 
     to_ahk_special_key_passthrough()
     {
-        ; Special keys passam como-vieram (case-insensitive no AHK)
+        ; Special keys pass through as-is (case-insensitive in AHK)
         Assert.Equal("^Esc", HotkeyFormatter.ToAhk("Ctrl+Esc"))
     }
 
     to_ahk_only_modifiers_returns_empty()
     {
-        ; Sem key real -> empty
+        ; No real key -> empty
         Assert.Equal("", HotkeyFormatter.ToAhk("Ctrl+Alt+"))
         Assert.Equal("", HotkeyFormatter.ToAhk("Ctrl+"))
     }
@@ -221,7 +221,7 @@ class HotkeyFormatterTests extends TestCase
             ahk    := HotkeyFormatter.ToAhk(original)
             backToHuman := HotkeyFormatter.ToHuman(ahk)
             Assert.Equal(original, backToHuman,
-                "Roundtrip falhou: " original " -> " ahk " -> " backToHuman)
+                "Roundtrip failed: " original " -> " ahk " -> " backToHuman)
         }
     }
 
@@ -233,7 +233,7 @@ class HotkeyFormatterTests extends TestCase
             human := HotkeyFormatter.ToHuman(original)
             backToAhk := HotkeyFormatter.ToAhk(human)
             Assert.Equal(original, backToAhk,
-                "Roundtrip falhou: " original " -> " human " -> " backToAhk)
+                "Roundtrip failed: " original " -> " human " -> " backToAhk)
         }
     }
 }

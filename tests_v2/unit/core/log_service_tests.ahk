@@ -2,20 +2,20 @@
 ; LogService tests
 ; ============================================================
 ;
-; Cobre as propriedades documentadas no header do log_service.ahk:
+; Covers the properties documented in the log_service.ahk header:
 ;
-;   - Niveis: DEBUG < INFO < WARN < ERROR, filtragem via minLevel
-;   - SetMinLevel dinamico
+;   - Levels: DEBUG < INFO < WARN < ERROR, filtered via minLevel
+;   - Dynamic SetMinLevel
 ;   - Format: [yyyy-MM-dd HH:mm:ss] LEVEL [Ctx] msg`n
-;             (context vazio omite os colchetes)
-;   - Buffer: bufferSize=1 (default) flush imediato, N>1 acumula
-;   - WARN/ERROR: flush imediato, sempre apos drain do buffer pendente
-;                 (preserva ordem cronologica)
-;   - Counters de WARN/ERROR: contam INDEPENDENTE de minLevel
-;   - Rotacao (Bug #32): se log existente > 5MB no construtor,
-;     renomeia pra .log.old (sobrescreve .old anterior)
+;             (empty context omits the brackets)
+;   - Buffer: bufferSize=1 (default) flushes immediately, N>1 accumulates
+;   - WARN/ERROR: immediate flush, always after draining the pending
+;                 buffer (preserves chronological order)
+;   - WARN/ERROR counters: count INDEPENDENT of minLevel
+;   - Rotation (Bug #32): if existing log > 5MB at construction,
+;     rename to .log.old (overwrites previous .old)
 ;
-; Convencao: `srvLog` em vez de `log` pra nao colidir com global.
+; Convention: `srvLog` instead of `log` to avoid colliding with a global.
 
 class LogServiceTests extends TestCase
 {
@@ -25,22 +25,22 @@ class LogServiceTests extends TestCase
     }
 
     static Tests := [
-        ; --- Construtor: validacao ---
+        ; --- Constructor: validation ---
         "constructor_rejects_buffer_size_zero",
         "constructor_rejects_buffer_size_negative",
         "constructor_rejects_buffer_size_non_number",
 
-        ; --- Construtor: filesystem ---
+        ; --- Constructor: filesystem ---
         "constructor_creates_parent_directory_if_missing",
         "constructor_does_not_create_log_file_until_first_write",
 
-        ; --- Construtor: rotacao (Bug #32) ---
+        ; --- Constructor: rotation (Bug #32) ---
         "constructor_rotates_existing_log_over_5mb",
         "constructor_rotation_overwrites_existing_old_file",
         "constructor_does_not_rotate_when_log_under_threshold",
         "constructor_does_not_rotate_when_log_does_not_exist",
 
-        ; --- Niveis e filtro ---
+        ; --- Levels and filter ---
         "info_writes_to_file_with_default_buffer",
         "warn_writes_to_file_with_default_buffer",
         "error_writes_to_file_with_default_buffer",
@@ -48,7 +48,7 @@ class LogServiceTests extends TestCase
         "debug_written_when_min_level_is_debug",
         "set_min_level_changes_filter_dynamically",
 
-        ; --- Formato ---
+        ; --- Format ---
         "log_line_format_contains_timestamp_level_context_msg",
         "empty_context_omits_context_brackets",
 
@@ -70,7 +70,7 @@ class LogServiceTests extends TestCase
     ]
 
     ; ============================================================
-    ; Construtor: validacao
+    ; Constructor: validation
     ; ============================================================
 
     constructor_rejects_buffer_size_zero()
@@ -92,7 +92,7 @@ class LogServiceTests extends TestCase
     }
 
     ; ============================================================
-    ; Construtor: filesystem
+    ; Constructor: filesystem
     ; ============================================================
 
     constructor_creates_parent_directory_if_missing()
@@ -105,7 +105,7 @@ class LogServiceTests extends TestCase
         srvLog.Flush()
 
         Assert.True(FileExist(nestedPath),
-            "LogService deveria ter criado o caminho intermediario")
+            "LogService should have created the intermediate path")
     }
 
     constructor_does_not_create_log_file_until_first_write()
@@ -113,11 +113,11 @@ class LogServiceTests extends TestCase
         path := Fixtures.TempPath("log")
         srvLog := LogService(path, "INFO")
         Assert.False(FileExist(path),
-            "Arquivo so deveria existir depois do primeiro append")
+            "File should only exist after the first append")
     }
 
     ; ============================================================
-    ; Construtor: rotacao (Bug #32)
+    ; Constructor: rotation (Bug #32)
     ; ============================================================
 
     constructor_rotates_existing_log_over_5mb()
@@ -126,23 +126,23 @@ class LogServiceTests extends TestCase
         oldPath := path ".old"
         Fixtures.RegisterTempPath(oldPath)
 
-        ; Cria conteudo > 5MB (5MB + 100 bytes, preenchido com 'A')
+        ; Creates content > 5MB (5MB + 100 bytes, filled with 'A')
         buf := Buffer(LogService.MAX_LOG_SIZE + 100, 65)
         f := FileOpen(path, "w")
         f.RawWrite(buf)
         f.Close()
         Assert.True(FileGetSize(path) > LogService.MAX_LOG_SIZE,
-            "Pre-condicao: arquivo deve estar acima do threshold")
+            "Pre-condition: file must be over the threshold")
 
-        ; Rotacao acontece no construtor
+        ; Rotation happens in the constructor
         srvLog := LogService(path, "INFO")
 
         Assert.True(FileExist(oldPath),
-            ".log.old deveria existir apos rotacao")
+            ".log.old should exist after rotation")
         Assert.False(FileExist(path),
-            "Log principal deveria ter sido renomeado (sem appends ainda)")
+            "Main log should have been renamed (no appends yet)")
         Assert.True(FileGetSize(oldPath) > LogService.MAX_LOG_SIZE,
-            ".log.old eh o arquivo original (5MB+)")
+            ".log.old is the original file (5MB+)")
     }
 
     constructor_rotation_overwrites_existing_old_file()
@@ -151,22 +151,22 @@ class LogServiceTests extends TestCase
         oldPath := path ".old"
         Fixtures.RegisterTempPath(oldPath)
 
-        ; .log.old PRE-existente com conteudo pequeno
+        ; Pre-existing .log.old with small content
         FileAppend("old content from before", oldPath, "UTF-8")
         Assert.True(FileGetSize(oldPath) < 100)
 
-        ; Arquivo principal > 5MB
+        ; Main file > 5MB
         buf := Buffer(LogService.MAX_LOG_SIZE + 100, 65)
         f := FileOpen(path, "w")
         f.RawWrite(buf)
         f.Close()
 
-        ; Rotacao deve apagar .old velho e renomear o novo grande
+        ; Rotation must delete the old .old and rename the new big one
         srvLog := LogService(path, "INFO")
 
         Assert.True(FileExist(oldPath))
         Assert.True(FileGetSize(oldPath) > LogService.MAX_LOG_SIZE,
-            ".log.old agora e' o arquivo grande (substituiu o pequeno)")
+            ".log.old is now the big file (replaced the small one)")
     }
 
     constructor_does_not_rotate_when_log_under_threshold()
@@ -180,11 +180,11 @@ class LogServiceTests extends TestCase
 
         srvLog := LogService(path, "INFO")
 
-        Assert.True(FileExist(path), "Log principal deve continuar intacto")
+        Assert.True(FileExist(path), "Main log must remain intact")
         Assert.Equal(sizeBefore, FileGetSize(path),
-            "Conteudo nao deve ter mudado (sem rotacao)")
+            "Content must not have changed (no rotation)")
         Assert.False(FileExist(oldPath),
-            ".log.old nao deveria existir (rotacao nao rolou)")
+            ".log.old should not exist (rotation did not happen)")
     }
 
     constructor_does_not_rotate_when_log_does_not_exist()
@@ -193,7 +193,7 @@ class LogServiceTests extends TestCase
         oldPath := path ".old"
         Fixtures.RegisterTempPath(oldPath)
 
-        ; Nao cria arquivo - construtor deve ser fine
+        ; Does not create the file - constructor should be fine
         srvLog := LogService(path, "INFO")
 
         Assert.False(FileExist(path))
@@ -201,7 +201,7 @@ class LogServiceTests extends TestCase
     }
 
     ; ============================================================
-    ; Niveis e filtro
+    ; Levels and filter
     ; ============================================================
 
     info_writes_to_file_with_default_buffer()
@@ -235,7 +235,7 @@ class LogServiceTests extends TestCase
         srvLog.Debug("hidden")
         srvLog.Flush()
         Assert.Equal(0, Fixtures.FileLineCount(path),
-            "DEBUG nao deve aparecer com minLevel INFO")
+            "DEBUG must not appear with minLevel INFO")
     }
 
     debug_written_when_min_level_is_debug()
@@ -261,13 +261,13 @@ class LogServiceTests extends TestCase
         srvLog.SetMinLevel("ERROR")
         srvLog.Info("hidden2")
         srvLog.Warn("hidden3")
-        ; Apenas as 2 anteriores + ainda apenas a primeira INFO que passou
-        ; Espera: 1 linha (debug visible1) - INFO/WARN agora filtrados
+        ; Only the previous 2 + still just the first INFO that went through
+        ; Expected: 1 line (debug visible1) - INFO/WARN now filtered
         Assert.Equal(1, Fixtures.FileLineCount(path))
     }
 
     ; ============================================================
-    ; Formato
+    ; Format
     ; ============================================================
 
     log_line_format_contains_timestamp_level_context_msg()
@@ -277,11 +277,11 @@ class LogServiceTests extends TestCase
         srvLog.Info("hello world", "TestCtx")
 
         content := Fixtures.FileReadAll(path)
-        ; Formato esperado: [yyyy-MM-dd HH:mm:ss] INFO [TestCtx] hello world
+        ; Expected format: [yyyy-MM-dd HH:mm:ss] INFO [TestCtx] hello world
         matched := RegExMatch(content,
             "^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\] INFO \[TestCtx\] hello world")
         Assert.True(matched > 0,
-            "Formato nao bate, veio: " content)
+            "Format does not match, got: " content)
     }
 
     empty_context_omits_context_brackets()
@@ -291,11 +291,11 @@ class LogServiceTests extends TestCase
         srvLog.Info("no context here")
 
         content := Fixtures.FileReadAll(path)
-        ; Com context vazio: [...ts...] INFO msg (sem [] entre level e msg)
+        ; With empty context: [...ts...] INFO msg (no [] between level and msg)
         Assert.True(InStr(content, "] INFO no context here") > 0,
-            "Sem context deveria nao ter colchetes vazios, veio: " content)
+            "Without context there should be no empty brackets, got: " content)
         Assert.False(InStr(content, "[] ") > 0,
-            "Nao deveria existir '[] ' (colchetes vazios)")
+            "There should not exist '[] ' (empty brackets)")
     }
 
     ; ============================================================
@@ -309,10 +309,10 @@ class LogServiceTests extends TestCase
 
         srvLog.Info("line1")
         Assert.Equal(0, Fixtures.FileLineCount(path),
-            "1/3 - ainda em buffer")
+            "1/3 - still in buffer")
         srvLog.Info("line2")
         Assert.Equal(0, Fixtures.FileLineCount(path),
-            "2/3 - ainda em buffer")
+            "2/3 - still in buffer")
     }
 
     buffer_flushes_when_size_reached()
@@ -338,16 +338,16 @@ class LogServiceTests extends TestCase
         srvLog.Warn("the_warning")
 
         Assert.Equal(3, Fixtures.FileLineCount(path),
-            "2 INFO bufferadas + 1 WARN imediato")
+            "2 buffered INFO + 1 immediate WARN")
 
         content  := Fixtures.FileReadAll(path)
         posFirst := InStr(content, "first_info")
         posSec   := InStr(content, "second_info")
         posWarn  := InStr(content, "the_warning")
 
-        Assert.True(posFirst > 0,                "first_info presente")
-        Assert.True(posSec   > posFirst,         "second_info depois de first")
-        Assert.True(posWarn  > posSec,           "WARN depois das INFO (ordem cronologica)")
+        Assert.True(posFirst > 0,                "first_info present")
+        Assert.True(posSec   > posFirst,         "second_info after first")
+        Assert.True(posWarn  > posSec,           "WARN after INFOs (chronological order)")
     }
 
     error_flushes_pending_buffer_before_writing_preserving_order()
@@ -365,7 +365,7 @@ class LogServiceTests extends TestCase
         posErr := InStr(content, "the_error")
         Assert.True(posDbg > 0)
         Assert.True(posInf > posDbg)
-        Assert.True(posErr > posInf, "ERROR depois das pendentes")
+        Assert.True(posErr > posInf, "ERROR after the pending ones")
     }
 
     ; ============================================================
@@ -391,7 +391,7 @@ class LogServiceTests extends TestCase
         srvLog := LogService(path, "DEBUG", 5)
         srvLog.Flush()
         Assert.False(FileExist(path),
-            "Flush em buffer vazio nao deveria criar arquivo")
+            "Flush on an empty buffer should not create the file")
     }
 
     ; ============================================================
@@ -401,15 +401,15 @@ class LogServiceTests extends TestCase
     warn_counter_increments_regardless_of_min_level()
     {
         path := Fixtures.TempPath("log")
-        srvLog := LogService(path, "ERROR")   ; filtra ate WARN
+        srvLog := LogService(path, "ERROR")   ; filters out WARN
 
         srvLog.Warn("filtered out of file")
         srvLog.Warn("also filtered")
 
         Assert.Equal(2, srvLog.GetWarnCount(),
-            "Counter deve contar mesmo com WARN filtrado")
+            "Counter must count even with WARN filtered out")
         Assert.Equal(0, Fixtures.FileLineCount(path),
-            "Mas nada deve ter ido pro arquivo")
+            "But nothing should have gone to the file")
     }
 
     error_counter_increments_regardless_of_min_level()

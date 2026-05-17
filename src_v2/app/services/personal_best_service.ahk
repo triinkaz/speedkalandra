@@ -1,50 +1,52 @@
 ; ============================================================
-; PersonalBestService - mantem PBs em memoria, atualiza em runs
+; PersonalBestService - keeps PBs in memory, updates on runs
 ; ============================================================
 ;
-; ESCOPO:
-;   Service que carrega PBs do disco no startup e expoe queries
-;   pra UI ler tempos correntes. Atualizado externamente via
-;   UpdateFromRun() quando uma run eh finalizada (chamado pelo
-;   composition root dentro de _SaveRunSnapshot, com state intacto).
+; SCOPE:
+;   Service that loads PBs from disk on startup and exposes queries
+;   for the UI to read current times. Externally updated via
+;   UpdateFromRun() when a run is finalized (called by the composition
+;   root inside _SaveRunSnapshot, with state intact).
 ;
-; POR QUE NAO SUBSCRIBE A EVENTOS DIRETAMENTE:
-;   Em RunCompleted, o ZoneTrackingService e RunStatsRecorder PODEM
-;   zerar seu state interno (ordem FIFO do EventBus). Pra evitar
-;   timing-dependent subscribes (que precisaria do pattern do v17.10
-;   de inscrever no __New ANTES desses services), o service eh
-;   pull-based: o app passa os dados ja agregados via UpdateFromRun.
+; WHY IT DOES NOT SUBSCRIBE TO EVENTS DIRECTLY:
+;   On RunCompleted, ZoneTrackingService and RunStatsRecorder MAY
+;   clear their internal state (EventBus FIFO order). To avoid
+;   timing-dependent subscribes (which would require the v17.10
+;   pattern of subscribing in __New BEFORE those services), the
+;   service is pull-based: the app passes already-aggregated data
+;   via UpdateFromRun.
 ;
-;   Isso tambem mantem o service simples e testavel sem mock de bus.
+;   That also keeps the service simple and testable without mocking
+;   the bus.
 ;
-; CRITERIO DE PB:
-;   - Run PB (legado): menor runDurationMs entre todas as runs COMPLETED.
-;     Run cancelada (Cmd.CancelRunRequested -> NewRun ou Ctrl+Alt+R)
-;     NAO conta — atualiza so quando a run eh finalizada explicitamente
-;     com Ctrl+Alt+F.
-;     **PRESERVADO PRA RETROCOMPAT** mas overlay nao consulta mais.
+; PB CRITERIA:
+;   - Run PB (legacy): lowest runDurationMs among all COMPLETED runs.
+;     Cancelled run (Cmd.CancelRunRequested -> NewRun or Ctrl+Alt+R)
+;     DOES NOT count — only updates when the run is explicitly
+;     finalized with Ctrl+Alt+F.
+;     **KEPT FOR BACK-COMPAT** but the overlay no longer consults it.
 ;
-;   - Run PB por ato (v17.13): tempo TOTAL DA RUN no momento que cada
-;     ato terminou. Multiplos PBs (um por ato). Permite comparar runs
-;     de tamanhos diferentes (Ato 1 only vs campanha completa) de forma
-;     justa — cada ato tem seu proprio checkpoint independente.
+;   - Per-act run PB (v17.13): TOTAL RUN time at the moment each
+;     act ended. Multiple PBs (one per act). Allows fair comparison
+;     between runs of different sizes (Act 1 only vs full campaign)
+;     — each act has its own independent checkpoint.
 ;
-;   - Zone PB: pra cada zona, menor zoneTotalMs em uma run completed.
-;     Total = soma de todas visitas a zona naquela run (GetTotalsForSnapshot
-;     ja entrega isso).
+;   - Zone PB: for each zone, lowest zoneTotalMs in a completed run.
+;     Total = sum of all visits to the zone in that run
+;     (GetTotalsForSnapshot already delivers this).
 ;
 ; QUERIES:
-;   GetRunPbMs()                  -> int (0 se sem PB)  [LEGADO]
-;   GetRunPbRunId()               -> string             [LEGADO]
-;   GetRunPbForAct(actNum)        -> int (0 se sem PB pra esse ato) [v17.13]
-;   HasRunPbForAct(actNum)        -> bool                            [v17.13]
-;   GetAllRunPbsByAct()           -> Map<actNum, ms> (clone)         [v17.13]
-;   GetZonePbMs(zoneName)         -> int (0 se sem PB)
+;   GetRunPbMs()                  -> int (0 if no PB)        [LEGACY]
+;   GetRunPbRunId()               -> string                  [LEGACY]
+;   GetRunPbForAct(actNum)        -> int (0 if no PB for that act) [v17.13]
+;   HasRunPbForAct(actNum)        -> bool                          [v17.13]
+;   GetAllRunPbsByAct()           -> Map<actNum, ms> (clone)       [v17.13]
+;   GetZonePbMs(zoneName)         -> int (0 if no PB)
 ;   HasRunPb()                    -> bool
 ;   HasZonePb(zoneName)           -> bool
 ;   GetAllZonePbs()               -> Map<zoneName, ms> (clone)
 ;
-; CONSTRUCAO:
+; CONSTRUCTION:
 ;   svc := PersonalBestService(repo)
 ;   svc.UpdateFromRun(runMs, runId, zoneTotalsMap, actCheckpointsMap)
 
@@ -61,7 +63,7 @@ class PersonalBestService
     __New(repo)
     {
         if !(repo is PersonalBestRepository)
-            throw TypeError("PersonalBestService: 'repo' deve ser PersonalBestRepository")
+            throw TypeError("PersonalBestService: 'repo' must be PersonalBestRepository")
         this._repo       := repo
         this._runPbByAct := Map()
         this._zonePbs    := Map()
@@ -93,7 +95,7 @@ class PersonalBestService
     }
 
     ; ============================================================
-    ; PB por ato (v17.13)
+    ; Per-act PB (v17.13)
     ; ============================================================
 
     GetRunPbForAct(actNum)
@@ -113,7 +115,7 @@ class PersonalBestService
         return out
     }
 
-    ; Conta quantos atos tem PB salvo. Util pra UI de reset.
+    ; Counts how many acts have a saved PB. Useful for the reset UI.
     CountActPbs()
     {
         n := 0
@@ -126,24 +128,25 @@ class PersonalBestService
     }
 
     ; ============================================================
-    ; Update - chamado pelo composition root apos run completed
+    ; Update - called by the composition root after a completed run
     ;
-    ; runMs:              runDurationMs final (TimerService.GetRunMs())
-    ; runId:              id da run completada
+    ; runMs:              final runDurationMs (TimerService.GetRunMs())
+    ; runId:              id of the completed run
     ; zoneTotalsMap:      ZoneTrackingService.GetTotalsForSnapshot() — Map<zone, ms>
     ; actCheckpointsMap:  ActCheckpointTracker.GetCheckpoints() — Map<actNum, runMs>
-    ;                     (v17.13) tempos TOTAIS DA RUN no momento que cada ato terminou
+    ;                     (v17.13) TOTAL RUN times at the moment each act ended
     ;
-    ; Retorna true se algum PB foi atualizado (run global, run-por-ato, e/ou zone).
+    ; Returns true if any PB was updated (global run, run-per-act,
+    ; and/or zone).
     ;
-    ; Persiste no INI imediatamente se houve mudanca. Falha silenciosa
-    ; em I/O (try) pra nao quebrar o fluxo de finalizacao.
+    ; Persists to the INI immediately if something changed. Silent
+    ; I/O failure (try) so we don't break the finalization flow.
     ; ============================================================
     UpdateFromRun(runMs, runId := "", zoneTotalsMap := "", actCheckpointsMap := "")
     {
         changed := false
 
-        ; --- Run PB global (legado, preservado) ---
+        ; --- Global run PB (legacy, preserved) ---
         if (IsNumber(runMs) && runMs > 0)
         {
             if (this._runPbMs = 0 || runMs < this._runPbMs)
@@ -154,7 +157,7 @@ class PersonalBestService
             }
         }
 
-        ; --- Run PB por ato (v17.13) ---
+        ; --- Per-act run PB (v17.13) ---
         if IsObject(actCheckpointsMap)
         {
             for actNum, actMs in actCheckpointsMap
@@ -200,11 +203,12 @@ class PersonalBestService
     }
 
     ; ============================================================
-    ; Reset - apaga todos os PBs (memoria + INI)
+    ; Reset - deletes all PBs (memory + INI)
     ;
-    ; Chamado externamente quando user pede reset via tray menu.
-    ; Ao terminar, GetRunPbMs() e GetZonePbMs() retornam 0 pra tudo.
-    ; Persiste no INI — ate uma run completed nao re-cria PBs antigos.
+    ; Called externally when the user requests reset via the tray menu.
+    ; After finishing, GetRunPbMs() and GetZonePbMs() return 0 for
+    ; everything. Persists to the INI — until a completed run, old PBs
+    ; are not recreated.
     ; ============================================================
     Reset()
     {
@@ -216,27 +220,27 @@ class PersonalBestService
     }
 
     ; ============================================================
-    ; LoadFromExternal(pbData) - substitui PBs com dados externos (v0.1.0)
+    ; LoadFromExternal(pbData) - replaces PBs with external data (v0.1.0)
     ;
-    ; Usado pelo RunImportService quando o user escolhe pbStrategy="replace".
-    ; Substitui TOTALMENTE os PBs locais pelos dados vindos do arquivo
-    ; de import (acao destrutiva, user precisa ter escolhido conscientemente).
+    ; Used by RunImportService when the user chooses pbStrategy="replace".
+    ; FULLY replaces local PBs with the data from the import file
+    ; (destructive action, the user must have chosen consciously).
     ;
-    ; pbData: Map com 4 campos opcionais:
+    ; pbData: Map with 4 optional fields:
     ;   runPbMs    : int >= 0
     ;   runPbRunId : string
     ;   runPbByAct : Map<int, int>
     ;   zonePbs    : Map<str, int>
     ;
-    ; Campos faltando viram defaults (0/""/Map vazio).
-    ; Persiste no INI ao final.
+    ; Missing fields become defaults (0/""/empty Map).
+    ; Persists to the INI at the end.
     ; ============================================================
     LoadFromExternal(pbData)
     {
         if !IsObject(pbData)
-            throw TypeError("PersonalBestService.LoadFromExternal: pbData deve ser Map")
+            throw TypeError("PersonalBestService.LoadFromExternal: pbData must be Map")
 
-        ; Reset state primeiro
+        ; Reset state first
         this._runPbMs    := 0
         this._runPbRunId := ""
         this._runPbByAct := Map()
@@ -275,33 +279,34 @@ class PersonalBestService
     }
 
     ; ============================================================
-    ; SetAsRunPb(runMs, runId, actCheckpoints := "") - pina uma run
-    ; como PB (v17.15.1)
+    ; SetAsRunPb(runMs, runId, actCheckpoints := "") - pins a run
+    ; as PB (v17.15.1)
     ;
-    ; Caso de uso: user fez uma run acidentalmente rapida (bug, glitch,
-    ; teste indevido) que virou PB automaticamente. Ou contrario: tem
-    ; uma run preferida (legitima) que nao eh o tempo mais baixo mas
-    ; representa melhor sua marca pessoal.
+    ; Use case: the user accidentally had a fast run (bug, glitch,
+    ; bad test) that became PB automatically. Or the opposite: there
+    ; is a preferred (legitimate) run that is not the lowest time but
+    ; better represents their personal mark.
     ;
-    ; ESCOPO (v17.15.1 fix):
-    ;   - runPbMs + runPbRunId: SEMPRE atualizados (legado mas mantido).
-    ;   - runPbByAct: SUBSTITUIDO pelos actCheckpoints da run, SE foram
-    ;     fornecidos e tem pelo menos 1 entry valido. Caso contrario
-    ;     deixa intacto (runs antigas sem checkpoints persistidos nao
-    ;     destroem PBs por ato existentes de runs mais recentes).
-    ;   - zonePbs: NAO eh tocado. PBs por zona sao naturalmente "melhor
-    ;     tempo por zona entre TODAS as runs" — metrica agregada e
-    ;     independente da run "oficial". Pra resetar zonas, usar Reset().
+    ; SCOPE (v17.15.1 fix):
+    ;   - runPbMs + runPbRunId: ALWAYS updated (legacy but kept).
+    ;   - runPbByAct: REPLACED by the run's actCheckpoints, IF provided
+    ;     and with at least 1 valid entry. Otherwise left intact (old
+    ;     runs without persisted checkpoints do not destroy existing
+    ;     per-act PBs from more recent runs).
+    ;   - zonePbs: NOT touched. Per-zone PBs are naturally "best time
+    ;     per zone across ALL runs" — aggregated metric, independent
+    ;     of the "official" run. To reset zones, use Reset().
     ;
-    ; Por que substituir runPbByAct e nao zonePbs?
-    ;   O overlay Compact mostra PB por ato ("Lv X | Area Y | XP | PB...")
-    ;   como referencia visivel ao jogador. Esse numero precisa refletir
-    ;   a run "oficial" escolhida pelo user. Ja PB por zona eh consultado
-    ;   pontualmente (highlights de zona individual), faz mais sentido
-    ;   ser "o melhor tempo nessa zona, de qualquer run".
+    ; Why replace runPbByAct and not zonePbs?
+    ;   The Compact overlay shows per-act PB ("Lv X | Area Y | XP | PB...")
+    ;   as a reference visible to the player. That number must reflect
+    ;   the "official" run chosen by the user. Per-zone PBs, by contrast,
+    ;   are queried occasionally (highlights of an individual zone), so
+    ;   it makes more sense for them to be "the best time in that zone,
+    ;   from any run".
     ;
-    ; Retorna true se algo mudou, false se nada mudou (ex: ja era esse
-    ; runId+ms+checkpoints).
+    ; Returns true if something changed, false if nothing changed
+    ; (e.g. was already that runId+ms+checkpoints).
     ; ============================================================
     SetAsRunPb(runMs, runId, actCheckpoints := "")
     {
@@ -319,7 +324,7 @@ class PersonalBestService
             changed := true
         }
 
-        ; --- runPbByAct (se checkpoints disponiveis) ---
+        ; --- runPbByAct (if checkpoints available) ---
         if IsObject(actCheckpoints)
         {
             newByAct := Map()
@@ -333,7 +338,7 @@ class PersonalBestService
             }
             if (newByAct.Count > 0)
             {
-                ; Compara serializado pra detectar mudanca real
+                ; Compare serialized to detect a real change
                 if (PersonalBestService._MapToDebugStr(this._runPbByAct)
                     != PersonalBestService._MapToDebugStr(newByAct))
                 {
@@ -349,42 +354,42 @@ class PersonalBestService
     }
 
     ; ============================================================
-    ; RebuildFromHistory(runs) - reconstroi PBs a partir do historico (v17.15.1)
+    ; RebuildFromHistory(runs) - rebuilds PBs from history (v17.15.1)
     ;
-    ; Usado quando uma run eh apagada do historico: precisamos
-    ; descartar contribuicoes da run deletada sem perder PBs de
-    ; runs que sobreviveram.
+    ; Used when a run is deleted from history: we need to discard
+    ; contributions from the deleted run without losing PBs of runs
+    ; that survived.
     ;
-    ; Cada elemento de `runs` deve ser um buildResult (mesmo formato
-    ; que RunHistoryRepository.Load retorna):
+    ; Each element of `runs` must be a buildResult (same format as
+    ; RunHistoryRepository.Load returns):
     ;   Map{ runId, totalMs, totals, details, deathCount,
-    ;        actCheckpoints (Map<actNum, ms>, pode ser Map vazio em
-    ;        runs antigas sem essa secao), ... }
+    ;        actCheckpoints (Map<actNum, ms>, may be empty Map in
+    ;        old runs without that section), ... }
     ;
-    ; Algoritmo:
-    ;   1. Zera todos os PBs em memoria.
-    ;   2. Pra cada run, replica a logica do UpdateFromRun:
+    ; Algorithm:
+    ;   1. Zero all PBs in memory.
+    ;   2. For each run, replicate the UpdateFromRun logic:
     ;      - totalMs -> runPbMs (legacy)
     ;      - actCheckpoints -> runPbByAct (v17.13)
-    ;      - details com category=mapa|cidade -> zonePbs
-    ;   3. Persiste no INI ao final (1 write so, atomico).
+    ;      - details with category=mapa|cidade -> zonePbs
+    ;   3. Persist to the INI at the end (a single atomic write).
     ;
-    ; Runs antigas sem actCheckpoints contribuem so pra runPbMs +
-    ; zonePbs. runPbByAct pode ficar vazio se nenhuma run tiver
-    ; checkpoints persistidos.
+    ; Old runs without actCheckpoints contribute only to runPbMs +
+    ; zonePbs. runPbByAct may end up empty if no run has persisted
+    ; checkpoints.
     ;
-    ; Retorna true se algum PB mudou (memoria ou INI), false se tudo
-    ; ficou identico.
+    ; Returns true if any PB changed (memory or INI), false if
+    ; everything stayed identical.
     ; ============================================================
     RebuildFromHistory(runs)
     {
-        ; Snapshot do estado anterior pra detectar mudanca
+        ; Snapshot of the previous state to detect change
         prevRunMs    := this._runPbMs
         prevRunId    := this._runPbRunId
         prevByActStr := PersonalBestService._MapToDebugStr(this._runPbByAct)
         prevZoneStr  := PersonalBestService._MapToDebugStr(this._zonePbs)
 
-        ; Reset em memoria (NAO persiste ainda)
+        ; Reset in memory (does NOT persist yet)
         this._runPbMs    := 0
         this._runPbRunId := ""
         this._runPbByAct := Map()
@@ -404,7 +409,7 @@ class PersonalBestService
             runMs := runItem.Has("totalMs") ? runItem["totalMs"] : 0
             currentRunId := runItem.Has("runId") ? String(runItem["runId"]) : ""
 
-            ; --- Run PB global ---
+            ; --- Global run PB ---
             if (IsNumber(runMs) && runMs > 0)
             {
                 if (this._runPbMs = 0 || runMs < this._runPbMs)
@@ -414,7 +419,7 @@ class PersonalBestService
                 }
             }
 
-            ; --- Run PB por ato ---
+            ; --- Per-act run PB ---
             if runItem.Has("actCheckpoints") && IsObject(runItem["actCheckpoints"])
             {
                 for actNum, actMs in runItem["actCheckpoints"]
@@ -431,7 +436,7 @@ class PersonalBestService
                 }
             }
 
-            ; --- Zone PBs (extraidos de details onde category=mapa|cidade) ---
+            ; --- Zone PBs (extracted from details where category=mapa|cidade) ---
             if runItem.Has("details") && IsObject(runItem["details"])
             {
                 for _, d in runItem["details"]
@@ -455,11 +460,11 @@ class PersonalBestService
             }
         }
 
-        ; Persiste sempre (mesmo se nada mudou — simplifica fluxo).
-        ; O custo extra de I/O eh negligenciavel.
+        ; Always persist (even if nothing changed — simplifies the flow).
+        ; The extra I/O cost is negligible.
         try this._PersistToRepo()
 
-        ; Detecta mudanca pra retornar pro caller (debug/UI feedback)
+        ; Detect change to return to the caller (debug/UI feedback)
         newByActStr := PersonalBestService._MapToDebugStr(this._runPbByAct)
         newZoneStr  := PersonalBestService._MapToDebugStr(this._zonePbs)
         return (this._runPbMs != prevRunMs)
@@ -468,14 +473,15 @@ class PersonalBestService
             || (newZoneStr != prevZoneStr)
     }
 
-    ; Serializa Map<int|string, int> em string canonica pra comparacao.
-    ; Nao depende de ordem de iteracao (sort por key).
+    ; Serializes Map<int|string, int> into a canonical comparison string.
+    ; Does not depend on iteration order (sort by key).
     ;
-    ; FIX v0.1.0: anteriormente guardava apenas a key como string e depois
-    ; refazia `m[k]` no final, mas em AHK v2 `m[1]` (int) e `m["1"]` (string)
-    ; sao keys distintos em Maps. Pra runPbByAct (keys int), o lookup com
-    ; string-coerced key disparava UnsetItemError. Agora guardamos o value
-    ; junto da key string durante a primeira iteracao.
+    ; FIX v0.1.0: previously stored only the key as string and then
+    ; re-did `m[k]` at the end, but in AHK v2 `m[1]` (int) and `m["1"]`
+    ; (string) are distinct keys in Maps. For runPbByAct (int keys),
+    ; the lookup with a string-coerced key triggered UnsetItemError.
+    ; Now we store the value alongside the string key during the first
+    ; iteration.
     static _MapToDebugStr(m)
     {
         if !IsObject(m)
@@ -483,7 +489,7 @@ class PersonalBestService
         pairs := []
         for k, v in m
             pairs.Push(Map("k", String(k), "v", v))
-        ; Bubble sort por key string (lista pequena)
+        ; Bubble sort by string key (small list)
         n := pairs.Length
         i := 2
         while (i <= n)
@@ -505,7 +511,7 @@ class PersonalBestService
     }
 
     ; ============================================================
-    ; Internos
+    ; Internals
     ; ============================================================
 
     _LoadFromRepo()
@@ -537,10 +543,10 @@ class PersonalBestService
         }
         catch as ex
         {
-            ; v17.15 (Bug #8): falha em carregar PBs ficava silenciosa,
-            ; mascarando INI corrompido ou problemas de I/O. Service
-            ; nao tem logger injetado entao usa OutputDebug.
-            OutputDebug("PersonalBestService._LoadFromRepo falhou: " ex.Message)
+            ; v17.15 (Bug #8): failure to load PBs used to be silent,
+            ; masking a corrupt INI or I/O problems. The service has
+            ; no injected logger so it uses OutputDebug.
+            OutputDebug("PersonalBestService._LoadFromRepo failed: " ex.Message)
         }
     }
 

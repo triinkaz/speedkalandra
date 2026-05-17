@@ -2,19 +2,19 @@
 ; Duration tests
 ; ============================================================
 ;
-; Cobre o value object Duration:
-;   - Construtor com validacao (TypeError, ValueError)
-;   - Coerce float -> integer
+; Covers the Duration value object:
+;   - Constructor with validation (TypeError, ValueError)
+;   - Float -> integer coercion
 ;   - Static factories (Zero, FromSeconds, FromMinutes)
-;   - Formatted() com padding MM:SS
-;   - Plus/Minus (Minus nao vai abaixo de 0)
+;   - Formatted() with MM:SS padding
+;   - Plus/Minus (Minus does not go below 0)
 ;   - Equals/GreaterThan/LessThan/IsZero
-;   - Imutabilidade (Plus/Minus retornam nova instancia)
+;   - Immutability (Plus/Minus return new instances)
 
 class DurationTests extends TestCase
 {
     static Tests := [
-        ; --- Construtor ---
+        ; --- Constructor ---
         "constructor_stores_ms",
         "constructor_coerces_float_to_integer",
         "constructor_accepts_zero",
@@ -34,7 +34,7 @@ class DurationTests extends TestCase
         "formatted_pads_with_zeros",
         "formatted_above_one_hour_uses_long_minutes",
 
-        ; --- FormatMs static (v0.1.2 - auditoria #19 consolidation) ---
+        ; --- FormatMs static (v0.1.2 - audit #19 consolidation) ---
         "format_ms_zero_is_00_00",
         "format_ms_below_one_second_is_00_00",
         "format_ms_one_second_is_00_01",
@@ -45,14 +45,14 @@ class DurationTests extends TestCase
         "format_ms_non_number_clamps_to_zero",
         "format_ms_coerces_float_to_int",
 
-        ; --- Aritmetica ---
+        ; --- Arithmetic ---
         "plus_returns_sum_in_new_instance",
         "minus_returns_difference_in_new_instance",
         "minus_clamps_at_zero",
         "plus_is_immutable",
         "minus_is_immutable",
 
-        ; --- Comparacoes ---
+        ; --- Comparisons ---
         "equals_compares_ms",
         "greater_than_compares_ms",
         "less_than_compares_ms",
@@ -60,7 +60,7 @@ class DurationTests extends TestCase
     ]
 
     ; ============================================================
-    ; Construtor
+    ; Constructor
     ; ============================================================
 
     constructor_stores_ms()
@@ -72,7 +72,7 @@ class DurationTests extends TestCase
     constructor_coerces_float_to_integer()
     {
         d := Duration(1500.7)
-        Assert.Equal(1500, d.ms)   ; Integer() trunca
+        Assert.Equal(1500, d.ms)   ; Integer() truncates
     }
 
     constructor_accepts_zero()
@@ -145,19 +145,19 @@ class DurationTests extends TestCase
 
     formatted_above_one_hour_uses_long_minutes()
     {
-        ; 1h = 60min, formatado como "60:00"
+        ; 1h = 60min, formatted as "60:00"
         Assert.Equal("60:00", Duration(3600000).Formatted())
         ; 1h45min30s = 105min 30s
         Assert.Equal("105:30", Duration(6330000).Formatted())
     }
 
     ; ============================================================
-    ; FormatMs static (v0.1.2 - auditoria #19)
+    ; FormatMs static (v0.1.2 - audit #19)
     ; ============================================================
     ;
-    ; Diferente de Formatted() (sempre MM:SS), FormatMs alterna entre
-    ; MM:SS e H:MM:SS quando o tempo cruza 1 hora. Usado em TrayTip,
-    ; dialogs e widgets de overlay.
+    ; Unlike Formatted() (always MM:SS), FormatMs alternates between
+    ; MM:SS and H:MM:SS when the time crosses 1 hour. Used in TrayTip,
+    ; dialogs and overlay widgets.
 
     format_ms_zero_is_00_00()
     {
@@ -194,26 +194,26 @@ class DurationTests extends TestCase
 
     format_ms_negative_clamps_to_zero()
     {
-        ; FormatMs eh defensivo (diferente do construtor que estoura).
+        ; FormatMs is defensive (unlike the constructor that throws).
         Assert.Equal("00:00", Duration.FormatMs(-1))
         Assert.Equal("00:00", Duration.FormatMs(-1000))
     }
 
     format_ms_non_number_clamps_to_zero()
     {
-        ; Strings/objetos viram 0 silenciosamente (defensivo pra integrar
-        ; com snapshots de INI que podem ter valores corrompidos).
+        ; Strings/objects silently become 0 (defensive for integrating
+        ; with INI snapshots that may have corrupted values).
         Assert.Equal("00:00", Duration.FormatMs("abc"))
         Assert.Equal("00:00", Duration.FormatMs(""))
     }
 
     format_ms_coerces_float_to_int()
     {
-        Assert.Equal("00:01", Duration.FormatMs(1500.7))   ; truncado pra 1500
+        Assert.Equal("00:01", Duration.FormatMs(1500.7))   ; truncated to 1500
     }
 
     ; ============================================================
-    ; Aritmetica
+    ; Arithmetic
     ; ============================================================
 
     plus_returns_sum_in_new_instance()
@@ -237,7 +237,7 @@ class DurationTests extends TestCase
         a := Duration(500)
         b := Duration(1000)
         c := a.Minus(b)
-        Assert.Equal(0, c.ms, "Minus nao deve produzir Duration negativa")
+        Assert.Equal(0, c.ms, "Minus must not produce a negative Duration")
     }
 
     plus_is_immutable()
@@ -245,7 +245,7 @@ class DurationTests extends TestCase
         a := Duration(1000)
         b := Duration(500)
         a.Plus(b)
-        Assert.Equal(1000, a.ms, "Plus nao deve mutar o original")
+        Assert.Equal(1000, a.ms, "Plus must not mutate the original")
         Assert.Equal(500,  b.ms)
     }
 
@@ -259,7 +259,7 @@ class DurationTests extends TestCase
     }
 
     ; ============================================================
-    ; Comparacoes
+    ; Comparisons
     ; ============================================================
 
     equals_compares_ms()

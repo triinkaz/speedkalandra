@@ -1,38 +1,39 @@
 ; ============================================================
-; TimerService - mecanica de timer single-scope (Onda 6)
+; TimerService - single-scope timer mechanics (Wave 6)
 ; ============================================================
 ;
-; VERSAO POS-DEMOLICAO: single-scope (runMs apenas). Sem act, sem
-; segment, sem carry. Mecanica pura: start/pause/resume/stop/reset.
+; POST-DEMOLITION VERSION: single-scope (runMs only). No act, no
+; segment, no carry. Pure mechanics: start/pause/resume/stop/reset.
 ;
-; ESTADOS:
-;   PARADO    !_active                (boot, apos Stop, apos Reset)
-;   RODANDO    _active && !_paused
-;   PAUSADO    _active && _paused
+; STATES:
+;   STOPPED   !_active                (boot, after Stop, after Reset)
+;   RUNNING    _active && !_paused
+;   PAUSED     _active && _paused
 ;
-; CALCULO:
-;   Em RODANDO: runMs = _baseMs + (clock.NowMs() - _startTick)
-;   Em PAUSADO: runMs = _baseMs    (trecho atual ja foi commitado)
+; CALCULATION:
+;   In RUNNING: runMs = _baseMs + (clock.NowMs() - _startTick)
+;   In PAUSED: runMs = _baseMs    (current segment already committed)
 ;
-; EVENTOS PUBLICADOS (via bus):
-;   Evt.TimerStarted  -> {runMs}     (Start em PARADO)
-;   Evt.TimerPaused   -> {runMs}     (Pause em RODANDO)
-;   Evt.TimerResumed  -> {runMs}     (Resume de PAUSADO)
-;   Evt.TimerStopped  -> {runMs}     (Stop em qualquer estado != PARADO)
+; PUBLISHED EVENTS (via bus):
+;   Evt.TimerStarted  -> {runMs}     (Start from STOPPED)
+;   Evt.TimerPaused   -> {runMs}     (Pause from RUNNING)
+;   Evt.TimerResumed  -> {runMs}     (Resume from PAUSED)
+;   Evt.TimerStopped  -> {runMs}     (Stop from any state != STOPPED)
 ;   Evt.TimerReset    -> {scope: "all"}  (Reset)
 ;
-; CONSTRUCAO:
+; CONSTRUCTION:
 ;   timer := TimerService(clock, bus)
 ;
-; HYDRATE (boot com state persistido):
-;   timer.Hydrate(runBaseMs)                  ; PARADO (default)
-;   timer.Hydrate(runBaseMs, "running")       ; RODANDO (auto-resume mid-run)
-;   timer.Hydrate(runBaseMs, "paused")        ; PAUSADO (usuario despausa)
+; HYDRATE (boot with persisted state):
+;   timer.Hydrate(runBaseMs)                  ; STOPPED (default)
+;   timer.Hydrate(runBaseMs, "running")       ; RUNNING (mid-run auto-resume)
+;   timer.Hydrate(runBaseMs, "paused")        ; PAUSED (user resumes manually)
 ;
-;   Em "running": _active=true, _paused=false, _startTick=NowMs. Como
-;   _baseMs ja tem o tempo acumulado, GetRunMs continua de onde parou
-;   + delta novo. NAO publica TimerStarted (eh restauracao, nao novo
-;   inicio — subscribers nao devem reagir como se fosse uma run nova).
+;   In "running": _active=true, _paused=false, _startTick=NowMs. Since
+;   _baseMs already has the accumulated time, GetRunMs continues from
+;   where it left off + new delta. Does NOT publish TimerStarted (this
+;   is restoration, not a new start — subscribers should not react as
+;   if it were a new run).
 
 
 class TimerService
@@ -48,9 +49,9 @@ class TimerService
     __New(clock, bus)
     {
         if !IsObject(clock) || !clock.HasMethod("NowMs")
-            throw TypeError("TimerService: 'clock' deve implementar NowMs()")
+            throw TypeError("TimerService: 'clock' must implement NowMs()")
         if !(bus is EventBus)
-            throw TypeError("TimerService: 'bus' deve ser EventBus")
+            throw TypeError("TimerService: 'bus' must be EventBus")
         this._clock := clock
         this._bus   := bus
     }
@@ -72,19 +73,19 @@ class TimerService
     }
 
     ; ============================================================
-    ; Hydrate - restaura state vindo do disco
+    ; Hydrate - restores state from disk
     ;
-    ; statusHint controla em que estado o timer fica apos hydrate:
-    ;   "stopped" (default): timer PARADO. _baseMs preserved mas GetRunMs
-    ;     retorna constante. Usuario precisa Start/Toggle pra retomar.
-    ;   "running": timer RODANDO. GetRunMs continua de _baseMs + delta.
-    ;     Usado em crash recovery quando state.IsRunning() no disco.
-    ;   "paused":  timer PAUSADO. GetRunMs retorna _baseMs. Usuario
-    ;     dá Toggle pra Resume.
+    ; statusHint controls which state the timer is in after hydrate:
+    ;   "stopped" (default): timer STOPPED. _baseMs preserved but
+    ;     GetRunMs returns constant. User must Start/Toggle to resume.
+    ;   "running": timer RUNNING. GetRunMs continues from _baseMs + delta.
+    ;     Used in crash recovery when state.IsRunning() on disk.
+    ;   "paused":  timer PAUSED. GetRunMs returns _baseMs. User does
+    ;     a Toggle to Resume.
     ;
-    ; Hidratacao eh SILENCIOSA (nao publica TimerStarted/Resumed/Paused).
-    ; Eh restauracao, nao transicao real — outros services devem consultar
-    ; IsRunning/IsPaused diretamente pra saber estado pos-boot.
+    ; Hydration is SILENT (does not publish TimerStarted/Resumed/Paused).
+    ; It's restoration, not a real transition — other services must
+    ; query IsRunning/IsPaused directly to know post-boot state.
     ; ============================================================
     Hydrate(runBaseMs, statusHint := "stopped")
     {
@@ -117,9 +118,9 @@ class TimerService
     }
 
     ; ============================================================
-    ; Start - inicia a partir de PARADO
+    ; Start - starts from STOPPED
     ;
-    ; Em RODANDO/PAUSADO: no-op (use Resume pra retomar pause).
+    ; In RUNNING/PAUSED: no-op (use Resume to resume from pause).
     ; ============================================================
     Start()
     {
@@ -133,7 +134,7 @@ class TimerService
     }
 
     ; ============================================================
-    ; Pause - commita trecho atual em _baseMs
+    ; Pause - commits the current segment to _baseMs
     ; ============================================================
     Pause()
     {
@@ -148,7 +149,7 @@ class TimerService
     }
 
     ; ============================================================
-    ; Resume - sai de PAUSADO
+    ; Resume - exits PAUSED
     ; ============================================================
     Resume()
     {
@@ -163,7 +164,7 @@ class TimerService
     }
 
     ; ============================================================
-    ; Stop - encerra rodada (preserva _baseMs)
+    ; Stop - ends the round (preserves _baseMs)
     ; ============================================================
     Stop()
     {
@@ -178,7 +179,7 @@ class TimerService
     }
 
     ; ============================================================
-    ; Reset - zera estado completo
+    ; Reset - clears full state
     ; ============================================================
     Reset()
     {
@@ -191,27 +192,27 @@ class TimerService
     }
 
     ; ============================================================
-    ; AddPenaltyMs - adiciona tempo extra ao timer (v0.1.3)
+    ; AddPenaltyMs - adds extra time to the timer (v0.1.3)
     ;
-    ; Usado pelo composition root quando Evt.DeathDetected dispara e
-    ; cfg.deathPenaltyEnabled = true: a penalidade entra direto no
-    ; runMs, ficando visivel no widget em tempo real (antes so aparecia
-    ; no plot post-finalize).
+    ; Used by the composition root when Evt.DeathDetected fires and
+    ; cfg.deathPenaltyEnabled = true: the penalty goes straight into
+    ; the runMs, visible in the widget in real time (previously it
+    ; only appeared in the post-finalize plot).
     ;
-    ; Comportamento:
-    ;   - Se PARADO ou run inativa: chamador deve verificar antes (este
-    ;     metodo nao filtra — adiciona ao _baseMs incondicional).
-    ;   - Se RODANDO: commita o delta atual primeiro (pra que a penalty
-    ;     fique "costurada" no ponto exato do tempo) e depois adiciona
-    ;     a penalty ao _baseMs. _startTick eh resetado pra NowMs pra que
-    ;     GetRunMs continue contando a partir do novo baseline.
-    ;   - Se PAUSADO: adiciona direto ao _baseMs. _startTick continua 0.
+    ; Behavior:
+    ;   - If STOPPED or run inactive: caller must check first (this
+    ;     method does not filter — it adds to _baseMs unconditionally).
+    ;   - If RUNNING: commits the current delta first (so the penalty
+    ;     is "stitched" at the exact time point) and then adds the
+    ;     penalty to _baseMs. _startTick is reset to NowMs so GetRunMs
+    ;     keeps counting from the new baseline.
+    ;   - If PAUSED: adds directly to _baseMs. _startTick stays at 0.
     ;
-    ; Negativos / non-number: coerce pra 0 (no-op).
+    ; Negatives / non-number: coerce to 0 (no-op).
     ;
-    ; NAO publica evento. A penalty eh refletida automaticamente em
-    ; GetRunMs() na proxima leitura — widgets dao refresh no proximo
-    ; Tick e mostram o novo valor sem precisar de evento dedicado.
+    ; Does NOT publish an event. The penalty is reflected automatically
+    ; in GetRunMs() on the next read — widgets refresh on the next
+    ; Tick and show the new value without needing a dedicated event.
     ; ============================================================
     AddPenaltyMs(ms)
     {
@@ -225,10 +226,10 @@ class TimerService
     }
 
     ; ============================================================
-    ; Toggle - StartPause hotkey-friendly
-    ;   PARADO -> Start
-    ;   RODANDO -> Pause
-    ;   PAUSADO -> Resume
+    ; Toggle - hotkey-friendly StartPause
+    ;   STOPPED -> Start
+    ;   RUNNING -> Pause
+    ;   PAUSED -> Resume
     ; ============================================================
     Toggle()
     {
@@ -240,7 +241,7 @@ class TimerService
     }
 
     ; ============================================================
-    ; _CommitDelta - converte (NowMs - startTick) em baseMs
+    ; _CommitDelta - converts (NowMs - startTick) into baseMs
     ; ============================================================
     _CommitDelta()
     {

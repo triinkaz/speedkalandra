@@ -1,35 +1,36 @@
 ; ============================================================
-; LoadingTotalsService — acumula tempo total de loading da run (Fase B4.4)
+; LoadingTotalsService — accumulates total run loading time (Phase B4.4)
 ; ============================================================
 ;
-; Service simples e reativo: subscribe Evt.LoadingMeasured pra acumular
-; durationMs em _totalMs. Zera em transicoes de run (RunStarted/RunReset/
-; RunCancelled/RunCompleted).
+; Simple, reactive service: subscribes to Evt.LoadingMeasured to
+; accumulate durationMs into _totalMs. Clears on run transitions
+; (RunStarted/RunReset/RunCancelled/RunCompleted).
 ;
-; Razao de existir: a UI precisa saber quanto tempo de loading o jogador
-; passou na run atual pra calcular gameplay% / loading%. O LoadingDetection
-; ja mede e publica cada loading individual; este service so agrega.
+; Reason to exist: the UI needs to know how much loading time the
+; player spent in the current run to compute gameplay% / loading%.
+; LoadingDetection already measures and publishes each individual
+; loading; this service just aggregates.
 ;
-; FILOSOFIA:
-;   - State minimal (1 numero).
-;   - Reativo via bus, sem lifecycle (sem Start/Stop).
-;   - Idempotente: subscribers podem reagir multiplas vezes sem efeito.
+; PHILOSOPHY:
+;   - Minimal state (1 number).
+;   - Bus-reactive, no lifecycle (no Start/Stop).
+;   - Idempotent: subscribers can react multiple times with no effect.
 ;
-; PERSISTENCIA:
-;   _totalMs eh persistido pelo composition root no campo
-;   [RunState].LoadingTotalMs do INI, lado a lado com runBaseMs.
-;   Hydrate() restaura no boot. Sem isso, apos um reload o tempo de
-;   loading da run atual seria perdido.
+; PERSISTENCE:
+;   _totalMs is persisted by the composition root in the
+;   [RunState].LoadingTotalMs INI field, side by side with runBaseMs.
+;   Hydrate() restores on boot. Without this, after a reload the
+;   current run's loading time would be lost.
 ;
-; Construcao:
+; Construction:
 ;   svc := LoadingTotalsService(bus)
-;   svc.GetTotalMs()    ; 0 inicialmente
+;   svc.GetTotalMs()    ; 0 initially
 ;
-; Uso tipico (composition root):
+; Typical use (composition root):
 ;   bus.Publish(Events.LoadingMeasured, Map("durationMs", 4500, ...))
 ;   svc.GetTotalMs()    ; 4500
 ;   bus.Publish(Events.RunStarted, Map("runId", "..."))
-;   svc.GetTotalMs()    ; 0 (zerado)
+;   svc.GetTotalMs()    ; 0 (cleared)
 
 
 class LoadingTotalsService
@@ -37,7 +38,7 @@ class LoadingTotalsService
     _bus     := ""
     _totalMs := 0
 
-    ; Handler refs (Section 17.32 — fields pra Unsubscribe em Dispose)
+    ; Handler refs (Section 17.32 — fields for Unsubscribe in Dispose)
     _handlerLoadingMeasured := ""
     _handlerRunStarted      := ""
     _handlerRunReset        := ""
@@ -47,7 +48,7 @@ class LoadingTotalsService
     __New(bus)
     {
         if !(bus is EventBus)
-            throw TypeError("LoadingTotalsService: 'bus' deve ser EventBus")
+            throw TypeError("LoadingTotalsService: 'bus' must be EventBus")
         this._bus     := bus
         this._totalMs := 0
 
@@ -65,7 +66,7 @@ class LoadingTotalsService
     }
 
     ; ============================================================
-    ; Dispose — desfaz subscriptions. Idempotente.
+    ; Dispose — tears down subscriptions. Idempotent.
     ; ============================================================
     Dispose()
     {
@@ -108,10 +109,11 @@ class LoadingTotalsService
     }
 
     ; ============================================================
-    ; Hydrate - restaura tempo acumulado do disco (crash recovery)
+    ; Hydrate - restores accumulated time from disk (crash recovery)
     ;
-    ; Chamado pelo composition root no boot apos LoadLoadingTotal()
-    ; do RunStateRepository. Defensivo contra valores invalidos.
+    ; Called by the composition root on boot after
+    ; RunStateRepository.LoadLoadingTotal(). Defensive against invalid
+    ; values.
     ; ============================================================
     Hydrate(totalMs)
     {
@@ -125,7 +127,8 @@ class LoadingTotalsService
     ; Event handlers
     ; ============================================================
 
-    ; Acumula durationMs no total. Defensivo contra dados malformados.
+    ; Accumulates durationMs into the total. Defensive against
+    ; malformed data.
     _OnLoadingMeasured(data)
     {
         if !IsObject(data)

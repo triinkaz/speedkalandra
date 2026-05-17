@@ -2,25 +2,26 @@
 ; RunStatsRecorderTests
 ; ============================================================
 ;
-; RunStatsRecorder eh reativo, com 2 deps (bus + clock):
+; RunStatsRecorder is reactive, with 2 deps (bus + clock):
 ;
 ;   bus    : EventBus
-;   clock  : objeto com NowMs() (validado mas NAO usado em _NowTimestamp,
-;            que delega a FormatTime(A_Now, ...) — timestamps reais).
+;   clock  : object with NowMs() (validated but NOT used in
+;            _NowTimestamp, which delegates to FormatTime(A_Now, ...)
+;            — real timestamps).
 ;
 ; Subscribers:
-;   LoadingMeasured -> push em _loadingEvents
+;   LoadingMeasured -> push into _loadingEvents
 ;   DeathDetected   -> _deathCount += 1
-;   RunStarted      -> Reset + captura runId/startedAt + _firstTs
+;   RunStarted      -> Reset + capture runId/startedAt + _firstTs
 ;   RunReset        -> Reset
 ;   RunCancelled    -> Reset
-;   RunCompleted    -> NO-OP (preserva state pro plot final)
+;   RunCompleted    -> NO-OP (preserves state for the final plot)
 ;
-; GetSnapshot(zoneTotalsMap, runDurationMs) -> Map com todos os
-; campos pro RunStatsPlotBuilder consumir.
+; GetSnapshot(zoneTotalsMap, runDurationMs) -> Map with all the
+; fields for RunStatsPlotBuilder to consume.
 ;
-; NOTA: _NowTimestamp eh nao-deterministico (usa A_Now). Tests so
-; verificam formato/length, nao valor exato.
+; NOTE: _NowTimestamp is non-deterministic (uses A_Now). Tests only
+; verify format/length, not the exact value.
 
 
 class RunStatsRecorderTests extends TestCase
@@ -44,7 +45,7 @@ class RunStatsRecorderTests extends TestCase
     }
 
     static Tests := [
-        ; --- Construtor ---
+        ; --- Constructor ---
         "constructor_throws_when_bus_not_event_bus",
         "constructor_throws_when_clock_missing_now_ms",
         "constructor_throws_when_clock_is_string",
@@ -94,11 +95,11 @@ class RunStatsRecorderTests extends TestCase
         "snapshot_defaults_run_duration_to_zero",
         "snapshot_loading_events_is_defensive_copy",
 
-        ; --- GetLoadingEvents retorna copia ---
+        ; --- GetLoadingEvents returns a copy ---
         "get_loading_events_returns_defensive_copy",
         "mutating_returned_loading_events_does_not_affect_internal",
 
-        ; --- Reset manual ---
+        ; --- Manual Reset ---
         "reset_clears_run_id_and_first_ts",
         "reset_clears_loading_events",
         "reset_zeroes_death_count",
@@ -111,7 +112,7 @@ class RunStatsRecorderTests extends TestCase
     ]
 
     ; ============================================================
-    ; Construtor
+    ; Constructor
     ; ============================================================
 
     constructor_throws_when_bus_not_event_bus()
@@ -174,9 +175,9 @@ class RunStatsRecorderTests extends TestCase
     {
         this.bus.Publish(Events.RunStarted, Map("runId", "20260512_142345"))
         ts := this.svc.GetFirstTs()
-        ; Formato yyyy-MM-dd HH:mm:ss = 19 chars
-        Assert.Equal(19, StrLen(ts), "Esperava timestamp yyyy-MM-dd HH:mm:ss (19 chars)")
-        ; Posicoes fixas dos separadores
+        ; Format yyyy-MM-dd HH:mm:ss = 19 chars
+        Assert.Equal(19, StrLen(ts), "Expected timestamp yyyy-MM-dd HH:mm:ss (19 chars)")
+        ; Fixed separator positions
         Assert.Equal("-", SubStr(ts, 5, 1))
         Assert.Equal("-", SubStr(ts, 8, 1))
         Assert.Equal(" ", SubStr(ts, 11, 1))
@@ -186,11 +187,11 @@ class RunStatsRecorderTests extends TestCase
 
     run_started_resets_state_before_capture()
     {
-        ; Acumula dados de uma run anterior
+        ; Accumulate data from a previous run
         this.bus.Publish(Events.LoadingMeasured, Map("durationMs", 1000, "toZone", "X"))
         this.bus.Publish(Events.DeathDetected, Map())
 
-        ; Nova run: Reset interno + captura
+        ; New run: internal Reset + capture
         this.bus.Publish(Events.RunStarted, Map("runId", "new_run"))
 
         Assert.Equal(0, this.svc.GetLoadingEvents().Length)
@@ -201,10 +202,10 @@ class RunStatsRecorderTests extends TestCase
     run_started_with_non_object_data_still_resets()
     {
         this.bus.Publish(Events.DeathDetected, Map())
-        ; data nao-objeto: handler ainda chama Reset, mas nao captura runId
+        ; non-object data: handler still calls Reset, but doesn't capture runId
         this.bus.Publish(Events.RunStarted, "not a map")
-        Assert.Equal(0, this.svc.GetDeathCount(), "Reset rolou")
-        Assert.Equal("", this.svc.GetRunId(), "runId nao capturado")
+        Assert.Equal(0, this.svc.GetDeathCount(), "Reset happened")
+        Assert.Equal("", this.svc.GetRunId(), "runId not captured")
     }
 
     run_started_with_missing_run_id_leaves_it_empty()
@@ -310,7 +311,7 @@ class RunStatsRecorderTests extends TestCase
     }
 
     ; ============================================================
-    ; Lifecycle handlers (RunReset/Cancelled limpam, RunCompleted preserva)
+    ; Lifecycle handlers (RunReset/Cancelled clear, RunCompleted preserves)
     ; ============================================================
 
     run_reset_clears_state()
@@ -341,17 +342,17 @@ class RunStatsRecorderTests extends TestCase
 
     run_completed_preserves_state_for_plot()
     {
-        ; RunCompleted nao reseta: composition root precisa de tudo
-        ; pra montar o snapshot final do plot.
+        ; RunCompleted does not reset: composition root needs
+        ; everything to build the final plot snapshot.
         this.bus.Publish(Events.RunStarted, Map("runId", "run_x"))
         this.bus.Publish(Events.LoadingMeasured, Map("durationMs", 1000, "toZone", "X"))
         this.bus.Publish(Events.DeathDetected, Map())
 
         this.bus.Publish(Events.RunCompleted, Map("runId", "run_x"))
 
-        Assert.Equal("run_x", this.svc.GetRunId(),     "runId preservado")
-        Assert.Equal(1,       this.svc.GetLoadingEvents().Length, "events preservados")
-        Assert.Equal(1,       this.svc.GetDeathCount(), "deaths preservados")
+        Assert.Equal("run_x", this.svc.GetRunId(),     "runId preserved")
+        Assert.Equal(1,       this.svc.GetLoadingEvents().Length, "events preserved")
+        Assert.Equal(1,       this.svc.GetDeathCount(), "deaths preserved")
     }
 
     ; ============================================================
@@ -402,10 +403,10 @@ class RunStatsRecorderTests extends TestCase
         snap := this.svc.GetSnapshot()
 
         snapEvents := snap["loadingEvents"]
-        snapEvents.Push(Map("durationMs", 9999))   ; mutar copia
+        snapEvents.Push(Map("durationMs", 9999))   ; mutate copy
 
         Assert.Equal(1, this.svc.GetLoadingEvents().Length,
-            "Estado interno intacto apos mutacao na copia")
+            "Internal state intact after mutating the copy")
     }
 
     ; ============================================================
@@ -417,7 +418,7 @@ class RunStatsRecorderTests extends TestCase
         this.bus.Publish(Events.LoadingMeasured, Map("durationMs", 1000, "toZone", "X"))
         copy1 := this.svc.GetLoadingEvents()
         copy2 := this.svc.GetLoadingEvents()
-        Assert.False(copy1 == copy2, "Cada call retorna instancia diferente")
+        Assert.False(copy1 == copy2, "Each call returns a different instance")
     }
 
     mutating_returned_loading_events_does_not_affect_internal()
@@ -426,18 +427,18 @@ class RunStatsRecorderTests extends TestCase
         this.bus.Publish(Events.LoadingMeasured, Map("durationMs", 2000, "toZone", "Y"))
 
         copy := this.svc.GetLoadingEvents()
-        copy.Push(Map("durationMs", 9999))   ; mutar copia
+        copy.Push(Map("durationMs", 9999))   ; mutate copy
 
-        Assert.Equal(2, this.svc.GetLoadingEvents().Length, "Original intacto")
+        Assert.Equal(2, this.svc.GetLoadingEvents().Length, "Original intact")
 
-        ; Mutar item interno da copia (cada Map eh tambem copiado)
+        ; Mutate an internal item of the copy (each Map is also copied)
         copy[1]["durationMs"] := 0
         Assert.Equal(1000, this.svc.GetLoadingEvents()[1]["durationMs"],
-            "_CopyArrayOfMaps faz deep copy dos Maps tambem")
+            "_CopyArrayOfMaps deep-copies the Maps too")
     }
 
     ; ============================================================
-    ; Reset manual
+    ; Manual Reset
     ; ============================================================
 
     reset_clears_run_id_and_first_ts()
@@ -491,7 +492,7 @@ class RunStatsRecorderTests extends TestCase
     dispose_is_idempotent()
     {
         this.svc.Dispose()
-        this.svc.Dispose()   ; segundo Dispose: no-op
+        this.svc.Dispose()   ; second Dispose: no-op
         Assert.Equal(0, this.bus.Subscribers(Events.LoadingMeasured))
     }
 }

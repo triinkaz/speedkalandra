@@ -1,13 +1,14 @@
 ; ============================================================
-; speedkalandra.ahk - entry point (Onda 6)
+; speedkalandra.ahk - entry point (Wave 6)
 ; ============================================================
 
 #Requires AutoHotkey v2.0
 #SingleInstance Force
-; v17.15 (Bug #17): habilita warning de VarUnset (variavel usada sem
-; valor atribuido) com output silencioso em OutputDebug. Outros warnings
-; (LocalSameAsGlobal, Unreachable, ClassOverwrite) ficam off por serem
-; ruidosos demais no codigo atual. VarUnset eh o que pega bug real.
+; v17.15 (Bug #17): enables the VarUnset warning (variable used
+; without an assigned value) with silent output to OutputDebug.
+; Other warnings (LocalSameAsGlobal, Unreachable, ClassOverwrite)
+; stay off as they're too noisy in the current code. VarUnset is
+; the one that catches real bugs.
 #Warn VarUnset, OutputDebug
 
 A_TrayMenu.Delete()
@@ -23,17 +24,17 @@ A_TrayMenu.Default := "Settings"
 A_IconTip := "SpeedKalandra " Version.STRING
 
 ; ============================================================
-; Tray helpers: "Undo last save" item dinamico (v17.14)
+; Tray helpers: dynamic "Undo last save" item (v17.14)
 ;
-; Adicionado pelo app.ahk apos save com sucesso. Removido apos 60s
-; via SetTimer interno do app, ou apos o user clicar nele.
+; Added by app.ahk after a successful save. Removed after 60s via
+; an internal SetTimer in the app, or after the user clicks it.
 ;
-; Usa Insert pra inserir ANTES de "Settings" — vira o primeiro item
-; do menu, garantindo destaque visual.
+; Uses Insert to insert BEFORE "Settings" — becomes the first item
+; in the menu, ensuring visual prominence.
 ; ============================================================
 SpeedKalandraTrayAddUndoItem()
 {
-    ; Idempotente: remove primeiro se ja existia
+    ; Idempotent: removes first if it already existed
     try A_TrayMenu.Delete("Undo last save")
     try A_TrayMenu.Insert("Settings", "Undo last save",
         (*) => app.UndoLastSave())
@@ -45,26 +46,26 @@ SpeedKalandraTrayRemoveUndoItem()
 }
 
 ; ============================================================
-; SpeedKalandraMsgBox (v0.1.0 Fase 5) - wrapper de MsgBox com TopMost
+; SpeedKalandraMsgBox (v0.1.0 Phase 5) - MsgBox wrapper with TopMost
 ;
-; PROBLEMA QUE RESOLVE:
-;   MsgBox padrao do AHK NAO herda AlwaysOnTop do dialog que o
-;   invoca. Resultado: confirmacoes (Delete run, Reset PBs, Replace
-;   PBs, etc) abrem ATRAS do dialog que as chamou — user pensa que
-;   o programa travou.
+; PROBLEM IT SOLVES:
+;   AHK's default MsgBox does NOT inherit AlwaysOnTop from the dialog
+;   that invokes it. Result: confirmations (Delete run, Reset PBs,
+;   Replace PBs, etc.) open BEHIND the dialog that called them —
+;   the user thinks the program froze.
 ;
 ; FIX:
-;   Adiciona o flag MB_TOPMOST (0x40000 = 262144 decimal) que poe
-;   a MsgBox sempre acima, incluindo dos overlays AlwaysOnTop.
+;   Adds the MB_TOPMOST flag (0x40000 = 262144 decimal) which puts
+;   the MsgBox always on top, including over AlwaysOnTop overlays.
 ;
-; USO:
-;   Substitua MsgBox(text, title, options) por
-;            SpeedKalandraMsgBox(text, title, options).
-;   Assinatura identica — mesmo retorno ("Yes", "No", "OK", etc).
+; USAGE:
+;   Replace MsgBox(text, title, options) with
+;           SpeedKalandraMsgBox(text, title, options).
+;   Identical signature — same return ("Yes", "No", "OK", etc.).
 ;
-; NOTA: aplicar em chamadas dentro de qualquer dialog/widget que
-; possa ter overlay/dialog AlwaysOnTop coexistindo. TrayTips NAO
-; precisam (sao notificacoes, nao modais).
+; NOTE: apply this to calls inside any dialog/widget that may have
+; coexisting AlwaysOnTop overlays/dialogs. TrayTips do NOT need it
+; (they are notifications, not modals).
 ; ============================================================
 SpeedKalandraMsgBox(text, title := "", options := "")
 {
@@ -77,12 +78,11 @@ SpeedKalandraMsgBox(text, title := "", options := "")
 }
 
 ; ============================================================
-; v0.1.0: helper de debug. Pode ser chamado de qualquer lugar
-; (console AHK, hotkey temporaria) pra validar que o roundtrip
-; do RunExportFormat ainda funciona apos mudancas no schema.
-; Foi item de tray menu durante Fase 1 da feature export/import,
-; depois removido pra nao poluir UI — funcao continua viva pro
-; caso de regressao.
+; v0.1.0: debug helper. Can be called from anywhere (AHK console,
+; temporary hotkey) to validate that the RunExportFormat roundtrip
+; still works after schema changes. Was a tray menu item during
+; Phase 1 of the export/import feature, then removed to not clutter
+; the UI — the function remains alive for the regression case.
 ; ============================================================
 SpeedKalandraRunExportSelfTest()
 {
@@ -98,10 +98,10 @@ SpeedKalandraRunExportSelfTest()
 }
 
 ; ============================================================
-; v0.1.0: helper de debug. Foi item de tray menu durante Fase 3
-; da feature export/import; depois removido pra nao poluir UI.
-; Funcao continua viva pra debug de regressao no fluxo do import
-; service (chame via console AHK ou hotkey temporaria).
+; v0.1.0: debug helper. Was a tray menu item during Phase 3 of the
+; export/import feature; then removed to not clutter the UI. The
+; function remains alive for regression debugging of the import
+; service flow (call via AHK console or a temporary hotkey).
 ; ============================================================
 SpeedKalandraRunImportDebug()
 {
@@ -251,18 +251,18 @@ OnExit(SpeedKalandraOnExitHandler)
 ; ============================================================
 ; OnExit handler
 ;
-; Antes de chamar app.Stop, envia keyup defensivo dos modifiers.
-; Previne o famoso bug do AHK "stuck modifier": se o script sai
-; (Reload, ExitApp, crash) enquanto o user ainda esta fisicamente
-; segurando Ctrl/Alt/Shift por uma hotkey, ou se algum hook do AHK
-; deixou modifier em estado inconsistente, o jogo pode interpretar
-; aquele modifier como permanentemente pressionado.
+; Before calling app.Stop, sends a defensive keyup of the modifiers.
+; Prevents the famous AHK "stuck modifier" bug: if the script exits
+; (Reload, ExitApp, crash) while the user is still physically
+; holding Ctrl/Alt/Shift for a hotkey, or if some AHK hook left a
+; modifier in an inconsistent state, the game can interpret that
+; modifier as permanently pressed.
 ;
-; {Blind} faz com que o keyup nao seja revertido mesmo se o user
-; ainda esta fisicamente apertando o modifier — e como o script
-; esta saindo, nao ha re-aplicacao do down depois.
+; {Blind} ensures the keyup is not reverted even if the user is
+; still physically pressing the modifier — and since the script is
+; exiting, there's no re-application of the down afterwards.
 ;
-; Documentacao oficial recomenda esse padrao:
+; Official documentation recommends this pattern:
 ;   https://www.autohotkey.com/docs/v2/lib/Send.htm#Blind
 ; ============================================================
 SpeedKalandraOnExitHandler(reason, code)
@@ -273,8 +273,8 @@ SpeedKalandraOnExitHandler(reason, code)
 
 ^!q::ExitApp()
 
-; v17.15 (Bug #16): hotkey ^!g e classe GamePauseHotkeyHelpers
-; removidas. Eram pra debug do GamePauseDetectionService, que foi
-; desconectado em v17.5 e o arquivo do service agora vive em
-; _LIXEIRA/. Sem o service ativo, a hotkey so mostrava MsgBox
-; de erro — 150 linhas de codigo morto removidas.
+; v17.15 (Bug #16): hotkey ^!g and the GamePauseHotkeyHelpers class
+; removed. They were for debugging the GamePauseDetectionService,
+; which was disconnected in v17.5 and the service file now lives in
+; _LIXEIRA/. Without the service active, the hotkey only showed an
+; error MsgBox — 150 lines of dead code removed.

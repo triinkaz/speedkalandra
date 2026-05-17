@@ -2,24 +2,24 @@
 ; RunServiceTests
 ; ============================================================
 ;
-; RunService orquestra ciclo de vida da run:
-;   NewRun       -> status=running, timer.Start, publica RunStarted
-;   FinalizeRun  -> status=completed, timer.Stop, publica RunCompleted
-;   CancelRun    -> status=cancelled, timer.Stop, publica RunCancelled
-;   ResetRun     -> RunState.Empty, timer.Reset, publica RunReset
-;   Hydrate      -> restaura state + timer; publica RunStarted{hydrated:true}
-;                   se state.IsActive
+; RunService orchestrates the run lifecycle:
+;   NewRun       -> status=running, timer.Start, publishes RunStarted
+;   FinalizeRun  -> status=completed, timer.Stop, publishes RunCompleted
+;   CancelRun    -> status=cancelled, timer.Stop, publishes RunCancelled
+;   ResetRun     -> RunState.Empty, timer.Reset, publishes RunReset
+;   Hydrate      -> restores state + timer; publishes RunStarted{hydrated:true}
+;                   if state.IsActive
 ;
-; Subscribers a 4 Commands:
+; Subscribes to 4 Commands:
 ;   Cmd.NewRunRequested      -> NewRun()
 ;   Cmd.FinalizeRunRequested -> FinalizeRun()
 ;   Cmd.CancelRunRequested   -> CancelRun()
 ;   Cmd.ResetRunRequested    -> ResetRun()
 ;
-; Persistencia: state salvo em RunStateRepository (UTF-16 INI).
-; PersistTimer salva so runBaseMs (otimizacao pra tick periodico).
+; Persistence: state saved in RunStateRepository (UTF-16 INI).
+; PersistTimer saves only runBaseMs (optimization for periodic tick).
 ;
-; Deps reais usados: TimerService + RunStateRepository (typecheck via `is`).
+; Real deps used: TimerService + RunStateRepository (typecheck via `is`).
 
 
 class RunServiceTests extends TestCase
@@ -51,7 +51,7 @@ class RunServiceTests extends TestCase
     }
 
     static Tests := [
-        ; --- Construtor ---
+        ; --- Constructor ---
         "constructor_throws_when_clock_missing_now_ms",
         "constructor_throws_when_bus_not_event_bus",
         "constructor_throws_when_timer_svc_not_timer_service",
@@ -141,7 +141,7 @@ class RunServiceTests extends TestCase
     }
 
     ; ============================================================
-    ; Construtor
+    ; Constructor
     ; ============================================================
 
     constructor_throws_when_clock_missing_now_ms()
@@ -206,9 +206,9 @@ class RunServiceTests extends TestCase
     {
         this.svc.NewRun()
         producedId := this.svc.GetRunId()
-        ; Formato: "20260515_103045_873" = 19 chars (8 + _ + 6 + _ + 3)
+        ; Format: "20260515_103045_873" = 19 chars (8 + _ + 6 + _ + 3)
         Assert.Equal(19, StrLen(producedId))
-        ; Underscores nas posicoes 9 e 16
+        ; Underscores at positions 9 and 16
         Assert.Equal("_", SubStr(producedId, 9,  1))
         Assert.Equal("_", SubStr(producedId, 16, 1))
     }
@@ -270,23 +270,24 @@ class RunServiceTests extends TestCase
 
     new_run_with_active_run_resets_first()
     {
-        ; v17.14: NewRun com run ativa chama ResetRun (descarta sem
-        ; salvar). Antes era CancelRun que salvava se runMs >= 3min.
+        ; v17.14: NewRun with an active run calls ResetRun (discards
+        ; without saving). Before that, CancelRun was called and saved
+        ; if runMs >= 3min.
         this.svc.NewRun()
         firstId := this.svc.GetRunId()
 
-        ; Publica RunReset?
+        ; Does it publish RunReset?
         resetEvents := this._CaptureEvents(Events.RunReset)
         this.svc.NewRun()
-        Assert.True(resetEvents.Length >= 1, "ResetRun foi chamado antes do NewRun")
+        Assert.True(resetEvents.Length >= 1, "ResetRun was called before NewRun")
         Assert.Equal(firstId, resetEvents[1]["runId"],
-            "Reset publicado com runId da run anterior")
+            "Reset published with the previous run's runId")
     }
 
     new_run_persists_to_state_repo()
     {
         this.svc.NewRun()
-        ; Verifica via leitura fresca do repo
+        ; Verifies via fresh read from the repo
         freshRepo := RunStateRepository(IniFile(this.repoPath))
         loaded := freshRepo.Load()
         Assert.Equal(this.svc.GetRunId(), loaded.runId)
@@ -439,10 +440,10 @@ class RunServiceTests extends TestCase
     {
         this.svc.NewRun()
         this.svc.ResetRun()
-        ; Apos Reset, o repo deve estar limpo (Load retorna RunState.Empty equivalente)
+        ; After Reset, the repo must be empty (Load returns RunState.Empty equivalent)
         freshRepo := RunStateRepository(IniFile(this.repoPath))
         loaded := freshRepo.Load()
-        Assert.Equal("", loaded.runId, "Repo limpo apos Reset")
+        Assert.Equal("", loaded.runId, "Repo cleared after Reset")
     }
 
     reset_publishes_run_reset_event()
@@ -466,7 +467,7 @@ class RunServiceTests extends TestCase
     {
         capturedEvents := this._CaptureEvents(Events.RunReset)
         result := this.svc.ResetRun()
-        Assert.True(result, "ResetRun sempre retorna true (idempotent)")
+        Assert.True(result, "ResetRun always returns true (idempotent)")
         Assert.Equal(1, capturedEvents.Length)
     }
 
@@ -504,10 +505,10 @@ class RunServiceTests extends TestCase
         this.svc.Hydrate(state)
         Assert.True(this.timerSvc.IsActive())
         Assert.True(this.timerSvc.IsRunning())
-        ; runBaseMs preservado; novo delta soma quando clock avanca
+        ; runBaseMs preserved; new delta adds when clock advances
         this.stubClock.AdvanceMs(5000)
         Assert.Equal(65000, this.timerSvc.GetRunMs(),
-            "60000 baseMs + 5000 novo delta")
+            "60000 baseMs + 5000 new delta")
     }
 
     hydrate_with_paused_status_keeps_timer_paused()
@@ -520,9 +521,9 @@ class RunServiceTests extends TestCase
         this.svc.Hydrate(state)
         Assert.True(this.timerSvc.IsActive())
         Assert.True(this.timerSvc.IsPaused())
-        ; Paused: tempo nao avanca
+        ; Paused: time doesn't advance
         this.stubClock.AdvanceMs(10000)
-        Assert.Equal(60000, this.timerSvc.GetRunMs(), "Paused: base preservado")
+        Assert.Equal(60000, this.timerSvc.GetRunMs(), "Paused: base preserved")
     }
 
     hydrate_with_stopped_status_keeps_timer_stopped()
@@ -556,7 +557,7 @@ class RunServiceTests extends TestCase
         capturedEvents := this._CaptureEvents(Events.RunStarted)
         this.svc.Hydrate(state)
         Assert.True(capturedEvents[1]["hydrated"],
-            "Hydrate publica RunStarted com hydrated=true pra distinguir de NewRun")
+            "Hydrate publishes RunStarted with hydrated=true to distinguish from NewRun")
     }
 
     hydrate_inactive_state_does_not_publish_run_started()
@@ -568,7 +569,7 @@ class RunServiceTests extends TestCase
         capturedEvents := this._CaptureEvents(Events.RunStarted)
         this.svc.Hydrate(state)
         Assert.Equal(0, capturedEvents.Length,
-            "Status inativo: nao publica RunStarted")
+            "Inactive status: doesn't publish RunStarted")
     }
 
     ; ============================================================
@@ -577,9 +578,9 @@ class RunServiceTests extends TestCase
 
     persist_timer_no_op_when_not_active()
     {
-        ; Idle: nada acontece, e nada quebra
+        ; Idle: nothing happens, nothing breaks
         this.svc.PersistTimer()
-        ; Sem erros, sem mudancas de state
+        ; No errors, no state changes
         Assert.Equal("", this.svc.GetRunId())
     }
 
@@ -588,7 +589,7 @@ class RunServiceTests extends TestCase
         this.svc.NewRun()
         this.stubClock.AdvanceMs(7500)
         this.svc.PersistTimer()
-        ; Verifica via leitura do disco
+        ; Verifies via disk read
         freshRepo := RunStateRepository(IniFile(this.repoPath))
         loaded := freshRepo.Load()
         Assert.Equal(7500, loaded.runBaseMs)
@@ -596,7 +597,7 @@ class RunServiceTests extends TestCase
 
     persist_tick_alias_calls_persist_timer()
     {
-        ; PersistTick eh alias de PersistTimer
+        ; PersistTick is an alias for PersistTimer
         this.svc.NewRun()
         this.stubClock.AdvanceMs(3000)
         this.svc.PersistTick()

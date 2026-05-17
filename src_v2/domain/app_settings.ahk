@@ -1,35 +1,35 @@
 ; ============================================================
-; AppSettings - configuracoes gerais do tracker (Onda 6)
+; AppSettings - general tracker settings (Wave 6)
 ; ============================================================
 ;
-; VERSAO POS-DEMOLICAO:
-;   - Removidos campos step-based: summariesAutoExportOnFinalize,
+; POST-DEMOLITION VERSION:
+;   - Removed step-based fields: summariesAutoExportOnFinalize,
 ;     summariesScope, stepSummaryFile, runSummaryFile, plotMetrics.
-;   - Removidas hotkeys de features extintas: ToggleCompact (sem Normal),
+;   - Removed hotkeys for extinct features: ToggleCompact (no Normal),
 ;     CompleteStep, PrevAct, NextAct, Targets, CampaignEditor,
 ;     ForceSyncZone, ReplayDialog, WidgetManager, Undo.
-;   - Adicionado: autoFinalizeRegex, autoStartRegex (Ondas 6/7).
+;   - Added: autoFinalizeRegex, autoStartRegex (Waves 6/7).
 ;
-;   v17.15 (Bug #15): removidos campos de features desconectadas:
-;     - panelOverlayKeys: PanelKeyService desconectado em v17.2
-;     - gamePauseDetectionEnabled: GamePauseDetectionService desconectado em v17.5
+;   v17.15 (Bug #15): removed fields for disconnected features:
+;     - panelOverlayKeys: PanelKeyService disconnected in v17.2
+;     - gamePauseDetectionEnabled: GamePauseDetectionService disconnected in v17.5
 ;
-;   v17.15.1: re-adicionados deathPenaltyEnabled/Ms apos descoberta
-;   de que RunStatsPlotBuilder JA os consumia. Auditoria inicial
-;   errou ao classificar como dead settings.
+;   v17.15.1: re-added deathPenaltyEnabled/Ms after discovering that
+;   RunStatsPlotBuilder ALREADY consumed them. The initial audit
+;   misclassified them as dead settings.
 ;
-; SECOES DO INI:
+; INI SECTIONS:
 ;   [General]      ProfileName, GamePatch, LogFile
 ;   [Character]    Name, Class, Level
 ;   [CurrentArea]  Level, Code
 ;   [Rules]        AutoPauseOnFocus, DeathPenaltyEnabled, DeathPenaltyMs
 ;   [LoadingVisual] Enabled, PollMs, MinMs, MaxMs
-;   [AutoFinalize] Regex (string PCRE — vazio = desligado)
-;   [AutoStart]    Regex (string PCRE — vazio = desligado)
-;   [VendorRegexes] Slot1, Slot2, Slot3 (max 50 chars cada)
+;   [AutoFinalize] Regex (PCRE string — empty = disabled)
+;   [AutoStart]    Regex (PCRE string — empty = disabled)
+;   [VendorRegexes] Slot1, Slot2, Slot3 (max 50 chars each)
 ;   [Hotkeys]      <action> -> keyBind
-;   [Window]       -> WindowState (composto)
-;   [Overlay]      -> OverlayLayout (composto)
+;   [Window]       -> WindowState (composite)
+;   [Overlay]      -> OverlayLayout (composite)
 
 
 class AppSettings
@@ -54,59 +54,59 @@ class AppSettings
     loadingVisualMinMs   := 250
     loadingVisualMaxMs   := 90000
 
-    ; --- Auto-pause (foco) ---
+    ; --- Auto-pause (focus) ---
     autoPauseOnFocus := true
 
     ; --- Death Penalty (plot) ---
-    ; v17.15.1: re-adicionado apos #15 over-removal. Esses campos sao
-    ; consumidos por RunStatsPlotBuilder._AddDeathDetails que renderiza
-    ; a barra "Deaths" no run plot como (deathCount * deathPenaltyMs).
-    ; Auditoria inicial errou ao classificar como dead settings.
+    ; v17.15.1: re-added after #15 over-removal. These fields are
+    ; consumed by RunStatsPlotBuilder._AddDeathDetails which renders
+    ; the "Deaths" bar in the run plot as (deathCount * deathPenaltyMs).
+    ; The initial audit misclassified them as dead settings.
     ;
-    ; deathPenaltyMs = 150000 = 2 minutos e 30 segundos (default PoE2:
-    ; tempo medio pra retornar ao ponto de morte considerando waypoint
-    ; + travessia). Ajustavel no Settings dialog.
+    ; deathPenaltyMs = 150000 = 2 minutes and 30 seconds (PoE2 default:
+    ; average time to return to death point considering waypoint +
+    ; traversal). Adjustable in the Settings dialog.
     deathPenaltyEnabled := true
     deathPenaltyMs      := 150000
 
     ; --- Disclaimer (v17.15.2) ---
-    ; Flag "user ja viu o disclaimer e marcou nao-mostrar-mais".
-    ; Default false = mostra a cada boot ate user marcar checkbox.
-    ; Persistido em [Disclaimer].Acknowledged do speedkalandra.ini.
+    ; Flag "user has seen the disclaimer and ticked do-not-show-again".
+    ; Default false = shown on every boot until the user ticks the checkbox.
+    ; Persisted in [Disclaimer].Acknowledged of speedkalandra.ini.
     disclaimerAcknowledged := false
 
-    ; --- Auto-finalize (Onda 6) ---
+    ; --- Auto-finalize (Wave 6) ---
     autoFinalizeRegex := ""
 
-    ; --- Auto-start (Onda 6) ---
-    ; Frase do Wounded Man no comecinho da campanha PoE2. O log do jogo
-    ; sai com formato "Wounded Man: By the First Ones! ..." (prefixo do
-    ; NPC + dialogo). Match case-insensitive via flag PCRE `i)` no
-    ; comeco do padrao — resiliente a pequenas variacoes de caps no log.
-    ; AutoStartService matcheia contra Evt.LogLineRead e publica
-    ; Cmd.NewRunRequested.
+    ; --- Auto-start (Wave 6) ---
+    ; Wounded Man phrase right at the start of the PoE2 campaign. The
+    ; game log emits in the format "Wounded Man: By the First Ones! ..."
+    ; (NPC prefix + dialogue). Case-insensitive match via the PCRE `i)`
+    ; flag at the start of the pattern — resilient to small caps
+    ; variations in the log. AutoStartService matches against
+    ; Evt.LogLineRead and publishes Cmd.NewRunRequested.
     ;
-    ; CAVEAT (Bug #11): PoE2 eh localizado. Jogadores PT-BR / ES / DE /
-    ; FR / etc tem essa fala traduzida no log e o default em ingles nao
-    ; bate. Esses jogadores podem editar via Settings dialog (Auto-start
-    ; regex) com o equivalente do seu idioma, ou deixar vazio pra usar
-    ; hotkey manual (^!n por default).
+    ; CAVEAT (Bug #11): PoE2 is localized. PT-BR / ES / DE / FR / etc.
+    ; players have that line translated in the log and the English
+    ; default will not match. Those players can edit it via the Settings
+    ; dialog (Auto-start regex) with the equivalent in their language,
+    ; or leave it empty to use the manual hotkey (^!n by default).
     autoStartRegex := "i)Wounded Man: By the First Ones!"
 
-    ; --- Vendor Regex Slots (Onda 8) ---
-    ; 3 strings curtas (max 50 chars cada) que o user pode copiar pra
-    ; clipboard via botoes V1/V2/V3 no compact overlay durante a run.
-    ; Tipico: regex de filtro de items em vendor NPCs (resistencias,
-    ; jewels com mods especificos, sockets/links etc).
+    ; --- Vendor Regex Slots (Wave 8) ---
+    ; 3 short strings (max 50 chars each) that the user can copy to
+    ; the clipboard via V1/V2/V3 buttons in the compact overlay during
+    ; the run. Typical use: regex filter for items at vendor NPCs
+    ; (resistances, jewels with specific mods, sockets/links etc.).
     ;
-    ; Truncamento de 50 chars eh aplicado em Load e em Save pra
-    ; garantir invariante mesmo se o INI for editado a mao.
+    ; 50-char truncation is applied on Load and Save to guarantee
+    ; the invariant even if the INI is edited by hand.
     vendorRegexes := ["", "", ""]
 
     ; --- Hotkeys --- Map<actionName, keyBind>
     hotkeys := Map()
 
-    ; --- Compostos ---
+    ; --- Composites ---
     window  := ""    ; WindowState
     overlay := ""    ; OverlayLayout
 
@@ -122,7 +122,7 @@ class AppSettings
     static FromMap(data)
     {
         if !IsObject(data)
-            throw TypeError("AppSettings.FromMap: 'data' deve ser Map")
+            throw TypeError("AppSettings.FromMap: 'data' must be a Map")
 
         cfg := AppSettings.Defaults()
 
@@ -149,7 +149,7 @@ class AppSettings
         ; --- Auto-pause ---
         cfg.autoPauseOnFocus := AppSettings._GetBool(data, "autoPauseOnFocus", cfg.autoPauseOnFocus)
 
-        ; --- Death Penalty (v17.15.1: re-adicionado apos #15 over-removal) ---
+        ; --- Death Penalty (v17.15.1: re-added after #15 over-removal) ---
         cfg.deathPenaltyEnabled := AppSettings._GetBool(data, "deathPenaltyEnabled", cfg.deathPenaltyEnabled)
         if data.Has("deathPenaltyMs")
         {
@@ -166,14 +166,14 @@ class AppSettings
         ; --- Auto-start ---
         cfg.autoStartRegex := AppSettings._GetStrAllowEmpty(data, "autoStartRegex", cfg.autoStartRegex)
 
-        ; --- Hotkeys (merge defensivo) ---
+        ; --- Hotkeys (defensive merge) ---
         if data.Has("hotkeys") && IsObject(data["hotkeys"])
         {
             for k, v in data["hotkeys"]
                 cfg.hotkeys[k] := String(v)
         }
 
-        ; --- Window (composto) ---
+        ; --- Window (composite) ---
         if data.Has("window") && IsObject(data["window"])
         {
             if (data["window"] is WindowState)
@@ -182,7 +182,7 @@ class AppSettings
                 cfg.window := WindowState.FromMap(data["window"])
         }
 
-        ; --- Overlay (composto) ---
+        ; --- Overlay (composite) ---
         if data.Has("overlay") && IsObject(data["overlay"])
         {
             if (data["overlay"] is OverlayLayout)

@@ -1,14 +1,14 @@
 ; ============================================================
-; Clock tests - cobertura completa de RealClock + FakeClock
+; Clock tests - full coverage of RealClock + FakeClock
 ; ============================================================
 ;
-; RealClock e' uma fachada fina sobre A_Now / A_TickCount - testamos
-; apenas que os retornos sao compativeis com os tipos esperados e que
-; NowMs eh monotonico no curto prazo (ja que A_TickCount eh).
+; RealClock is a thin facade over A_Now / A_TickCount - we only test
+; that the returns are compatible with the expected types and that
+; NowMs is monotonic in the short term (since A_TickCount is).
 ;
-; FakeClock eh onde mora a complexidade: avancos manuais, independencia
-; entre Now() (string YYYYMMDDHH24MISS) e NowMs() (inteiro arbitrario)
-; e a sincronizacao opcional via SyncNowFromMs.
+; FakeClock is where complexity lives: manual advances, independence
+; between Now() (YYYYMMDDHH24MISS string) and NowMs() (arbitrary
+; integer) and the optional sync via SyncNowFromMs.
 
 class RealClockTests extends TestCase
 {
@@ -22,19 +22,19 @@ class RealClockTests extends TestCase
     {
         clock := RealClock()
         result := clock.Now()
-        ; A_Now eh sempre 14 chars: YYYYMMDDHH24MISS
+        ; A_Now is always 14 chars: YYYYMMDDHH24MISS
         Assert.Equal(14, StrLen(result))
-        ; Todos digitos
+        ; All digits
         Assert.True(RegExMatch(result, "^\d{14}$") > 0,
-            "Now() deveria ser 14 digitos, veio: " result)
+            "Now() should be 14 digits, got: " result)
     }
 
     now_ms_returns_integer()
     {
         clock := RealClock()
         result := clock.NowMs()
-        Assert.True(IsNumber(result), "NowMs() deveria ser numero")
-        Assert.True(result > 0, "NowMs() deveria ser > 0 num sistema rodando")
+        Assert.True(IsNumber(result), "NowMs() should be a number")
+        Assert.True(result > 0, "NowMs() should be > 0 on a running system")
     }
 
     now_ms_is_monotonic_in_short_term()
@@ -43,8 +43,8 @@ class RealClockTests extends TestCase
         t1 := clock.NowMs()
         Sleep 10
         t2 := clock.NowMs()
-        Assert.True(t2 >= t1, "NowMs() deve ser monotonico: t1=" t1 " t2=" t2)
-        Assert.True(t2 - t1 >= 1, "Sleep 10 deveria ter avancado pelo menos 1ms")
+        Assert.True(t2 >= t1, "NowMs() must be monotonic: t1=" t1 " t2=" t2)
+        Assert.True(t2 - t1 >= 1, "Sleep 10 should have advanced at least 1ms")
     }
 }
 
@@ -115,7 +115,7 @@ class FakeClockTests extends TestCase
     {
         clock := FakeClock("20260101000000", 0)
         clock.AdvanceMs(60000)
-        ; Now deve permanecer no inicial - independencia explicita no design
+        ; Now should remain at the initial value - explicit independence by design
         Assert.Equal("20260101000000", clock.Now())
         Assert.Equal(60000, clock.NowMs())
     }
@@ -132,7 +132,7 @@ class FakeClockTests extends TestCase
         clock := FakeClock("20260101000000", 0)
         clock.AdvanceMs(125000)   ; 125s
         clock.SyncNowFromMs()
-        ; 125s apos 2026-01-01 00:00:00 = 00:02:05
+        ; 125s after 2026-01-01 00:00:00 = 00:02:05
         Assert.Equal("20260101000205", clock.Now())
     }
 

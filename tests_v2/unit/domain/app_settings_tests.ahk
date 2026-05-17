@@ -2,24 +2,24 @@
 ; AppSettings tests
 ; ============================================================
 ;
-; AppSettings agrega TODAS as configuracoes do tracker:
+; AppSettings aggregates ALL the tracker configurations:
 ;   - General (profileName, gamePatch, logFile)
 ;   - Character (name, class, level)
 ;   - CurrentArea (level, code)
 ;   - LoadingVisual (enabled, pollMs, minMs, maxMs)
 ;   - autoPauseOnFocus
-;   - deathPenaltyEnabled, deathPenaltyMs (v17.15.1 re-adicionado)
+;   - deathPenaltyEnabled, deathPenaltyMs (v17.15.1 re-added)
 ;   - disclaimerAcknowledged (v17.15.2)
-;   - autoFinalizeRegex (strict: "" volta pra default)
-;   - autoStartRegex (allow empty: "" aceito explicitamente)
-;   - vendorRegexes (NAO lido por FromMap; repository lida)
-;   - hotkeys (merge defensivo com defaults)
-;   - window (WindowState ou Map)
-;   - overlay (OverlayLayout ou Map)
+;   - autoFinalizeRegex (strict: "" reverts to default)
+;   - autoStartRegex (allow empty: "" accepted explicitly)
+;   - vendorRegexes (NOT read by FromMap; repository handles it)
+;   - hotkeys (defensive merge with defaults)
+;   - window (WindowState or Map)
+;   - overlay (OverlayLayout or Map)
 ;
-; Testes pull a maior parte do peso aqui porque AppSettings eh a coleta
-; de validacoes coerentes de cada seccao. Tipo-check do composite eh
-; importante porque Bug #4 historico veio dai.
+; Tests pull most of the weight here because AppSettings is the
+; aggregate of coherent validations of each section. Type-checking
+; the composite is important because historical Bug #4 came from there.
 
 class AppSettingsTests extends TestCase
 {
@@ -57,13 +57,13 @@ class AppSettingsTests extends TestCase
         "from_map_strict_string_treats_empty_as_missing",
         "from_map_merges_hotkeys_with_defaults",
 
-        ; --- FromMap compostos (WindowState, OverlayLayout) ---
+        ; --- FromMap composites (WindowState, OverlayLayout) ---
         "from_map_accepts_window_state_instance",
         "from_map_accepts_window_state_as_map",
         "from_map_accepts_overlay_layout_instance",
         "from_map_accepts_overlay_layout_as_map",
 
-        ; --- FromMap coercoes ---
+        ; --- FromMap coercions ---
         "from_map_coerces_boolean_string_one_to_true",
         "from_map_coerces_boolean_string_zero_to_false",
         "from_map_clamps_negative_integers_to_zero",
@@ -104,9 +104,9 @@ class AppSettingsTests extends TestCase
     defaults_hotkeys_includes_nine_actions()
     {
         cfg := AppSettings.Defaults()
-        Assert.Equal(9, cfg.hotkeys.Count, "9 acoes registradas por default")
+        Assert.Equal(9, cfg.hotkeys.Count, "9 actions registered by default")
 
-        ; Sanity check em algumas mais conhecidas
+        ; Sanity check on some better-known ones
         Assert.True(cfg.hotkeys.Has("ToggleOverlay"))
         Assert.True(cfg.hotkeys.Has("NewRun"))
         Assert.True(cfg.hotkeys.Has("Settings"))
@@ -154,10 +154,11 @@ class AppSettingsTests extends TestCase
 
     defaults_auto_start_regex_is_wounded_man_line()
     {
-        ; Default = fala do Wounded Man no comeco da campanha PoE2,
-        ; com flag PCRE `i)` pra case-insensitive matching.
-        ; Ver comentario em app_settings.ahk pro raciocinio + caveat
-        ; do Bug #11 (jogadores non-EN editam via Settings dialog).
+        ; Default = the Wounded Man's line at the start of the PoE2
+        ; campaign, with the `i)` PCRE flag for case-insensitive
+        ; matching. See the comment in app_settings.ahk for the
+        ; rationale + Bug #11 caveat (non-EN players edit via the
+        ; Settings dialog).
         Assert.Equal("i)Wounded Man: By the First Ones!", AppSettings.Defaults().autoStartRegex)
     }
 
@@ -174,7 +175,7 @@ class AppSettingsTests extends TestCase
     from_map_uses_defaults_for_empty_input()
     {
         cfg := AppSettings.FromMap(Map())
-        ; Deveria estar identico a Defaults()
+        ; Should be identical to Defaults()
         Assert.Equal("Default", cfg.profileName)
         Assert.Equal(9,         cfg.hotkeys.Count)
         Assert.IsType(WindowState,   cfg.window)
@@ -273,7 +274,7 @@ class AppSettingsTests extends TestCase
 
     from_map_reads_auto_start_regex_allowing_empty()
     {
-        ; autoStartRegex usa _GetStrAllowEmpty: aceita "" explicito
+        ; autoStartRegex uses _GetStrAllowEmpty: explicit "" accepted
         cfg := AppSettings.FromMap(Map("autoStartRegex", ""))
         Assert.Equal("", cfg.autoStartRegex)
 
@@ -283,10 +284,10 @@ class AppSettingsTests extends TestCase
 
     from_map_strict_string_treats_empty_as_missing()
     {
-        ; profileName usa _GetStr (strict): "" cai pra default
+        ; profileName uses _GetStr (strict): "" falls back to default
         cfg := AppSettings.FromMap(Map("profileName", ""))
         Assert.Equal("Default", cfg.profileName,
-            "_GetStr trata empty como missing - mantem default")
+            "_GetStr treats empty as missing - keeps default")
     }
 
     from_map_merges_hotkeys_with_defaults()
@@ -294,16 +295,16 @@ class AppSettingsTests extends TestCase
         cfg := AppSettings.FromMap(Map(
             "hotkeys", Map("NewRun", "F4", "MyCustom", "^F12")
         ))
-        ; Sobrescreve NewRun
+        ; Overrides NewRun
         Assert.Equal("F4", cfg.hotkeys["NewRun"])
-        ; Adiciona MyCustom
+        ; Adds MyCustom
         Assert.Equal("^F12", cfg.hotkeys["MyCustom"])
-        ; Preserva defaults nao mencionados
+        ; Preserves unmentioned defaults
         Assert.Equal("^!s", cfg.hotkeys["Settings"])
     }
 
     ; ============================================================
-    ; FromMap compostos
+    ; FromMap composites
     ; ============================================================
 
     from_map_accepts_window_state_instance()
@@ -344,7 +345,7 @@ class AppSettingsTests extends TestCase
     }
 
     ; ============================================================
-    ; FromMap coercoes e clamps
+    ; FromMap coercions and clamps
     ; ============================================================
 
     from_map_coerces_boolean_string_one_to_true()
@@ -375,7 +376,7 @@ class AppSettingsTests extends TestCase
             "window",  "not an object",
             "overlay", 42
         ))
-        ; Mantem defaults
+        ; Keeps defaults
         Assert.IsType(WindowState,   cfg.window)
         Assert.IsType(OverlayLayout, cfg.overlay)
     }

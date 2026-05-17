@@ -1,10 +1,10 @@
 ; ============================================================
-; RunStatsRecorder - buffer em memoria de eventos da run atual
+; RunStatsRecorder - in-memory buffer of current-run events
 ; ============================================================
 ;
-; Service reativo que escuta os eventos relevantes pra plot final e
-; acumula em arrays/contadores. Composition root usa GetSnapshot()
-; pra montar o input do RunStatsPlotBuilder.Build(snapshot).
+; Reactive service that listens to the events relevant to the final
+; plot and accumulates them in arrays/counters. The composition root
+; uses GetSnapshot() to build the input for RunStatsPlotBuilder.Build(snapshot).
 ;
 ; SUBSCRIPTIONS:
 ;   Evt.LoadingMeasured  -> push loadingEvents
@@ -12,16 +12,17 @@
 ;   Evt.RunStarted       -> Reset() + snapshot _runId/_startedAt
 ;   Evt.RunReset         -> Reset()
 ;   Evt.RunCancelled     -> Reset()
-;   Evt.RunCompleted     -> snapshot final duration (Reset acontece no proximo RunStarted)
+;   Evt.RunCompleted     -> snapshot final duration (Reset happens on the next RunStarted)
 ;
 ; ZONE TOTALS:
-;   NAO sao acumulados aqui. ZoneTrackingService.GetTotals() ja faz isso.
-;   Composition root combina os dois services no momento de construir
-;   o snapshot.
+;   NOT accumulated here. ZoneTrackingService.GetTotals() already
+;   does that. The composition root combines the two services when
+;   building the snapshot.
 ;
-; BOSS EVENTS (REMOVIDO em v17.13):
-;   Feature de boss tracking foi removida da app (voice lines de classe
-;   nao iam pra Client.txt do PoE2). Snapshot ja nao inclui bossEvents.
+; BOSS EVENTS (REMOVED in v17.13):
+;   Boss tracking feature was removed from the app (class voice lines
+;   were not going into PoE2's Client.txt). Snapshot no longer
+;   includes bossEvents.
 ;
 ; GetSnapshot(zoneTotalsMap, runDurationMs) -> Map:
 ;   Map(
@@ -33,7 +34,7 @@
 ;     "deathCount":    int
 ;   )
 ;
-; CONSTRUCAO:
+; CONSTRUCTION:
 ;   recorder := RunStatsRecorder(bus, clock)
 
 
@@ -58,9 +59,9 @@ class RunStatsRecorder
     __New(bus, clock)
     {
         if !(bus is EventBus)
-            throw TypeError("RunStatsRecorder: 'bus' deve ser EventBus")
+            throw TypeError("RunStatsRecorder: 'bus' must be EventBus")
         if !IsObject(clock) || !clock.HasMethod("NowMs")
-            throw TypeError("RunStatsRecorder: 'clock' deve implementar NowMs()")
+            throw TypeError("RunStatsRecorder: 'clock' must implement NowMs()")
 
         this._bus           := bus
         this._clock         := clock
@@ -71,7 +72,7 @@ class RunStatsRecorder
         this._handlerRunStarted      := (data) => this._OnRunStarted(data)
         this._handlerRunReset        := (data) => this.Reset()
         this._handlerRunCancelled    := (data) => this.Reset()
-        this._handlerRunCompleted    := (data) => 0    ; mantem dados pro plot final
+        this._handlerRunCompleted    := (data) => 0    ; keeps data for the final plot
 
         bus.Subscribe(Events.LoadingMeasured, this._handlerLoadingMeasured)
         bus.Subscribe(Events.DeathDetected,   this._handlerDeathDetected)
@@ -123,8 +124,8 @@ class RunStatsRecorder
     GetLoadingEvents() => this._CopyArrayOfMaps(this._loadingEvents)
     GetDeathCount()    => this._deathCount
 
-    ; GetSnapshot - monta Map snapshot consumido pelo plot builder.
-    ; zoneTotalsMap eh fornecido pelo caller (ZoneTrackingService.GetTotals()).
+    ; GetSnapshot - builds the Map snapshot consumed by the plot builder.
+    ; zoneTotalsMap is provided by the caller (ZoneTrackingService.GetTotals()).
     ; runDurationMs idem (TimerService.GetRunMs()).
     GetSnapshot(zoneTotalsMap := "", runDurationMs := 0)
     {
@@ -208,7 +209,7 @@ class RunStatsRecorder
 
     _NowTimestamp()
     {
-        ; YYYY-MM-DD HH:MM:SS no fuso local
+        ; YYYY-MM-DD HH:MM:SS in local time
         return FormatTime(A_Now, "yyyy-MM-dd HH:mm:ss")
     }
 }

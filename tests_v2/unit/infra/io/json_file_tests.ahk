@@ -3,17 +3,17 @@
 ; ============================================================
 ;
 ; JsonFile + JsonNull + JsonBool:
-;   - Stringify(value, indent := 2) -> string JSON
+;   - Stringify(value, indent := 2) -> JSON string
 ;   - Parse(jsonStr) -> AHK structure (Map/Array/Integer/Float/String/0/1/"")
-;   - Write(value, indent) -> AtomicWriter no path do construtor
-;   - EscapeString(s) -> escapes sem aspas envolventes
+;   - Write(value, indent) -> AtomicWriter at the constructor's path
+;   - EscapeString(s) -> escapes without enclosing quotes
 ;
-; Nomenclatura: `jsonInst` em vez de `jsonFile` pra evitar colisao
-; com a classe.
+; Naming: `jsonInst` instead of `jsonFile` to avoid colliding with
+; the class.
 
 ; ------------------------------------------------------------
-; Helper class usada em stringify_uses_to_map_for_objects.
-; Definida em escopo top-level pra ser visivel pelo teste.
+; Helper class used in stringify_uses_to_map_for_objects.
+; Defined at top-level scope to be visible to the test.
 ; ------------------------------------------------------------
 class _JsonTestToMapObj
 {
@@ -25,7 +25,7 @@ class _JsonTestToMapObj
 
 class _JsonTestPlainObj
 {
-    ; Sem ToMap nem __New() especial
+    ; No ToMap and no special __New()
 }
 
 
@@ -37,11 +37,11 @@ class JsonFileTests extends TestCase
     }
 
     static Tests := [
-        ; --- Construtor ---
+        ; --- Constructor ---
         "constructor_throws_on_empty_path",
         "constructor_throws_on_whitespace_path",
 
-        ; --- Stringify: primitivos ---
+        ; --- Stringify: primitives ---
         "stringify_integer",
         "stringify_negative_integer",
         "stringify_float",
@@ -70,7 +70,7 @@ class JsonFileTests extends TestCase
         "stringify_uses_to_map_for_custom_objects",
         "stringify_throws_for_objects_without_to_map",
 
-        ; --- Parse: primitivos ---
+        ; --- Parse: primitives ---
         "parse_integer_returns_integer_type",
         "parse_float_returns_float_type",
         "parse_negative_number",
@@ -88,7 +88,7 @@ class JsonFileTests extends TestCase
         "parse_array_with_values",
         "parse_nested_structure",
 
-        ; --- Parse: erros ---
+        ; --- Parse: errors ---
         "parse_throws_on_empty_input",
         "parse_throws_on_extra_content_after_json",
         "parse_throws_on_unclosed_string",
@@ -109,7 +109,7 @@ class JsonFileTests extends TestCase
     ]
 
     ; ============================================================
-    ; Construtor
+    ; Constructor
     ; ============================================================
 
     constructor_throws_on_empty_path()
@@ -123,7 +123,7 @@ class JsonFileTests extends TestCase
     }
 
     ; ============================================================
-    ; Stringify: primitivos
+    ; Stringify: primitives
     ; ============================================================
 
     stringify_integer()
@@ -138,7 +138,7 @@ class JsonFileTests extends TestCase
 
     stringify_float()
     {
-        ; AHK Float -> string. Aceita "3.14" ou "3.140000".
+        ; AHK Float -> string. Accepts "3.14" or "3.140000".
         result := JsonFile.Stringify(3.14)
         Assert.Contains("3.14", result)
     }
@@ -204,7 +204,7 @@ class JsonFileTests extends TestCase
     stringify_map_with_keys()
     {
         result := JsonFile.Stringify(Map("name", "alice", "age", 30), 0)
-        ; Minified com indent=0 -> '{"name":"alice","age":30}'
+        ; Minified with indent=0 -> '{"name":"alice","age":30}'
         Assert.Contains('"name":"alice"', result)
         Assert.Contains('"age":30',       result)
     }
@@ -229,15 +229,15 @@ class JsonFileTests extends TestCase
     stringify_indent_zero_is_minified()
     {
         result := JsonFile.Stringify(Map("a", 1), 0)
-        ; Minified: sem newlines, sem espacos depois de :
-        Assert.False(InStr(result, "`n") > 0, "Minified nao deve ter newlines")
+        ; Minified: no newlines, no spaces after :
+        Assert.False(InStr(result, "`n") > 0, "Minified must not have newlines")
     }
 
     stringify_indent_two_adds_newlines_and_spaces()
     {
         result := JsonFile.Stringify(Map("a", 1), 2)
-        Assert.True(InStr(result, "`n") > 0, "Pretty deve ter newlines")
-        Assert.True(InStr(result, "  ") > 0, "Pretty deve ter indent de 2 espacos")
+        Assert.True(InStr(result, "`n") > 0, "Pretty must have newlines")
+        Assert.True(InStr(result, "  ") > 0, "Pretty must have 2-space indent")
     }
 
     ; ============================================================
@@ -259,7 +259,7 @@ class JsonFileTests extends TestCase
     }
 
     ; ============================================================
-    ; Parse: primitivos
+    ; Parse: primitives
     ; ============================================================
 
     parse_integer_returns_integer_type()
@@ -354,7 +354,7 @@ class JsonFileTests extends TestCase
     }
 
     ; ============================================================
-    ; Parse: erros
+    ; Parse: errors
     ; ============================================================
 
     parse_throws_on_empty_input()
@@ -411,7 +411,7 @@ class JsonFileTests extends TestCase
         recovered := JsonFile.Parse(json)
         Assert.Equal("abc", recovered["id"])
         Assert.Equal(["one", "two"], recovered["tags"])
-        Assert.Equal(1, recovered["meta"]["active"], "JsonBool(true) parseia como 1")
+        Assert.Equal(1, recovered["meta"]["active"], "JsonBool(true) parses as 1")
         Assert.Equal(1, recovered["meta"]["version"])
     }
 
@@ -422,7 +422,7 @@ class JsonFileTests extends TestCase
     escape_string_returns_escapes_without_surrounding_quotes()
     {
         result := JsonFile.EscapeString('a"b`nc')
-        ; Sem aspas envolventes, mas com escapes internos
+        ; No surrounding quotes, but internal escapes applied
         Assert.Equal('a\"b\nc', result)
     }
 

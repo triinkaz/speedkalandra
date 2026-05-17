@@ -1,14 +1,14 @@
 ; ============================================================
-; WindowState - state minimo da janela (Onda 6)
+; WindowState - minimal window state (Wave 6)
 ; ============================================================
 ;
-; VERSAO POS-DEMOLICAO: o overlay agora tem 2 widgets com tamanhos
-; FIXOS (compactLayout 720x80, microLayout 200x32) e posicoes
-; persistidas em OverlayLayout. Janela "principal" do tracker nao
-; existe mais — sao 2 widgets independentes.
+; POST-DEMOLITION VERSION: the overlay now has 2 widgets with FIXED
+; sizes (compactLayout 720x80, microLayout 200x32) and positions
+; persisted in OverlayLayout. The tracker's "main" window no longer
+; exists — there are 2 independent widgets.
 ;
-; O unico state remanescente eh microLocked, que indica se o usuario
-; travou manualmente o modo MICRO (vs auto-MICRO por panel keys).
+; The only remaining state is microLocked, which indicates whether
+; the user manually locked MICRO mode (vs auto-MICRO via panel keys).
 ;
 ; INI MAPPING:
 ;   [Window]
@@ -17,14 +17,14 @@
 class WindowState
 {
     microLocked := false
-    steveLocked := false    ; v17.14 — lock pro modo SteveTheHappyWhale
+    steveLocked := false    ; v17.14 — lock for SteveTheHappyWhale mode
 
     static Defaults() => WindowState()
 
     static FromMap(data)
     {
         if !IsObject(data)
-            throw TypeError("WindowState.FromMap: 'data' deve ser Map")
+            throw TypeError("WindowState.FromMap: 'data' must be a Map")
         w := WindowState()
         w.microLocked := WindowState._GetBool(data, "microLocked", w.microLocked)
         w.steveLocked := WindowState._GetBool(data, "steveLocked", w.steveLocked)

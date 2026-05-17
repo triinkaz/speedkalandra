@@ -1,24 +1,24 @@
 ﻿; ============================================================
-; EventBus — pub/sub in-process, sincrono
+; EventBus — in-process pub/sub, synchronous
 ; ============================================================
 ;
-; Coracao da arquitetura. UI publica Commands, Services consomem
-; e publicam Events, outros assinantes reagem.
+; Heart of the architecture. UI publishes Commands, Services consume
+; them and publish Events, other subscribers react.
 ;
-; Uso:
+; Usage:
 ;   bus := EventBus(logger)
 ;   bus.Subscribe(Events.RunPaused, MyHandler)
 ;   bus.Publish(Commands.PauseRequested)
 ;
-; Caracteristicas:
-;   - Sincrono: handlers rodam imediatamente em ordem de subscribe
-;   - Tolerante a falhas: handler que estoura nao impede outros
-;   - Erros sao logados via logger (nunca silenciados)
-;   - Unsubscribe seguro durante Publish (clona array antes de iterar)
+; Characteristics:
+;   - Synchronous: handlers run immediately in subscribe order
+;   - Fault-tolerant: a handler that throws does not prevent others
+;   - Errors are logged via logger (never silenced)
+;   - Safe Unsubscribe during Publish (clones array before iterating)
 ;
-; NAO faz:
-;   - Threading (AHK nao tem). Para "async" use SetTimer + Publish
-;   - Filas persistentes. Eventos perdidos sao perdidos (sem replay)
+; Does NOT do:
+;   - Threading (AHK has none). For "async" use SetTimer + Publish
+;   - Persistent queues. Lost events are lost (no replay)
 
 class EventBus
 {
@@ -32,16 +32,16 @@ class EventBus
 
     ; ------------------------------------------------------------
     ; Subscribe(eventName, callback)
-    ;   callback recebe (data) onde data eh o que foi passado em Publish
-    ;   (string vazia se Publish nao passar data)
-    ; Retorna um token que pode ser usado em Unsubscribe (a propria callback)
+    ;   callback receives (data) where data is what was passed to Publish
+    ;   (empty string if Publish does not pass data)
+    ; Returns a token that can be used in Unsubscribe (the callback itself)
     ; ------------------------------------------------------------
     Subscribe(eventName, callback)
     {
         if (eventName = "")
-            throw ValueError("EventBus.Subscribe: eventName vazio")
+            throw ValueError("EventBus.Subscribe: empty eventName")
         if (!IsObject(callback))
-            throw TypeError("EventBus.Subscribe: callback deve ser callable")
+            throw TypeError("EventBus.Subscribe: callback must be callable")
 
         if !this._subs.Has(eventName)
             this._subs[eventName] := []
@@ -53,7 +53,7 @@ class EventBus
 
     ; ------------------------------------------------------------
     ; Unsubscribe(eventName, callback)
-    ;   Remove a callback do evento. Sem efeito se nao estava inscrita.
+    ;   Removes the callback from the event. No effect if it wasn't subscribed.
     ; ------------------------------------------------------------
     Unsubscribe(eventName, callback)
     {
@@ -66,10 +66,10 @@ class EventBus
             {
                 this._subs[eventName].RemoveAt(i)
                 this._logger.Debug("Unsubscribed from '" eventName "'", "EventBus")
-                ; v17.15 (Bug #22): se ficou sem subscribers, apaga a
-                ; key do Map. Evita _subs crescer indefinidamente em
-                ; sessoes longas com ciclos Stop/Start (e mantem o
-                ; Publish() fast-path quando ngm escuta o evento).
+                ; v17.15 (Bug #22): if there are no subscribers left, delete
+                ; the Map key. Prevents _subs from growing indefinitely in
+                ; long sessions with Stop/Start cycles (and keeps the
+                ; Publish() fast-path when nobody listens to the event).
                 if (this._subs[eventName].Length = 0)
                     this._subs.Delete(eventName)
                 return true
@@ -80,16 +80,16 @@ class EventBus
 
     ; ------------------------------------------------------------
     ; Publish(eventName, data := "")
-    ;   Chama todas as callbacks inscritas em ordem de subscribe.
-    ;   Erros sao isolados — uma callback que estoura nao impede as
-    ;   demais. Erros sao logados como ERROR.
+    ;   Calls all subscribed callbacks in subscribe order.
+    ;   Errors are isolated — a callback that throws does not prevent
+    ;   the others. Errors are logged as ERROR.
     ; ------------------------------------------------------------
     Publish(eventName, data := "")
     {
         if !this._subs.Has(eventName)
             return 0
 
-        ; Clona para permitir Unsubscribe ou Subscribe novos durante o Publish
+        ; Clone to allow Unsubscribe or new Subscribe during Publish
         callbacks := this._subs[eventName].Clone()
         delivered := 0
 
@@ -103,7 +103,7 @@ class EventBus
             catch as e
             {
                 this._logger.Error(
-                    "Handler de '" eventName "' falhou: " e.Message
+                    "Handler for '" eventName "' failed: " e.Message
                     . " | What: " (e.HasOwnProp("What") ? e.What : "?")
                     . " | Line: " (e.HasOwnProp("Line") ? e.Line : "?"),
                     "EventBus"
@@ -116,7 +116,7 @@ class EventBus
 
     ; ------------------------------------------------------------
     ; Subscribers(eventName) -> int
-    ;   Quantos handlers estao inscritos. Util para debug/teste.
+    ;   How many handlers are subscribed. Useful for debug/test.
     ; ------------------------------------------------------------
     Subscribers(eventName)
     {
@@ -125,8 +125,8 @@ class EventBus
 
     ; ------------------------------------------------------------
     ; Clear()
-    ;   Remove TODOS os subscribers. Util em testes/teardown.
-    ;   NAO use em producao.
+    ;   Removes ALL subscribers. Useful in tests/teardown.
+    ;   Do NOT use in production.
     ; ------------------------------------------------------------
     Clear()
     {

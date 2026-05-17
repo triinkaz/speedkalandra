@@ -2,14 +2,14 @@
 ; SettingsRepository tests
 ; ============================================================
 ;
-; AppSettings <-> INI com varias sections:
+; AppSettings <-> INI with multiple sections:
 ;   [General] [Character] [CurrentArea] [Rules] [LoadingVisual]
 ;   [AutoFinalize] [AutoStart] [VendorRegexes] [Disclaimer]
 ;   [Hotkeys] [Window] [Overlay]
 ;
-; Estrategia: maioria dos testes faz roundtrip (Save com cfg modificada,
-; Load, compara). Cobre tambem invariantes especificos (truncamento
-; VendorRegexes em 50 chars, sanitizacao Overlay).
+; Strategy: most tests do a roundtrip (Save with modified cfg, Load,
+; compare). Also covers specific invariants (VendorRegexes truncation
+; at 50 chars, Overlay sanitization).
 
 class SettingsRepositoryTests extends TestCase
 {
@@ -19,7 +19,7 @@ class SettingsRepositoryTests extends TestCase
     }
 
     static Tests := [
-        ; --- Construtor ---
+        ; --- Constructor ---
         "constructor_throws_when_ini_not_inifile",
 
         ; --- Load: defaults ---
@@ -62,7 +62,7 @@ class SettingsRepositoryTests extends TestCase
     ]
 
     ; ============================================================
-    ; Construtor
+    ; Constructor
     ; ============================================================
 
     constructor_throws_when_ini_not_inifile()
@@ -324,7 +324,7 @@ class SettingsRepositoryTests extends TestCase
         cfg.vendorRegexes := [longRegex, "", ""]
         repo.Save(cfg)
 
-        ; INI deve ter o regex truncado em 50
+        ; INI must have the regex truncated at 50
         written := mainIni.Read("VendorRegexes", "Slot1")
         Assert.Equal(50, StrLen(written))
     }
@@ -332,7 +332,7 @@ class SettingsRepositoryTests extends TestCase
     load_truncates_long_vendor_regex_to_50_chars()
     {
         mainIni := IniFile(Fixtures.TempPath("ini"))
-        ; Escreve manualmente um regex de 80 chars no INI (bypass Save)
+        ; Manually write an 80-char regex to the INI (bypass Save)
         longRegex := ""
         Loop 80
             longRegex .= "x"
@@ -342,7 +342,7 @@ class SettingsRepositoryTests extends TestCase
         loaded := repo.Load()
 
         Assert.Equal(50, StrLen(loaded.vendorRegexes[1]),
-            "Load deve truncar defensivamente em 50 chars")
+            "Load must defensively truncate at 50 chars")
     }
 
     ; ============================================================
@@ -352,7 +352,7 @@ class SettingsRepositoryTests extends TestCase
     save_removes_obsolete_hotkey_keys()
     {
         mainIni := IniFile(Fixtures.TempPath("ini"))
-        ; Cria key antiga manualmente
+        ; Create an old key manually
         mainIni.Write("Ctrl+X", "Hotkeys", "obsolete_action")
 
         repo := SettingsRepository(mainIni)
@@ -360,7 +360,7 @@ class SettingsRepositoryTests extends TestCase
         cfg.hotkeys := Map("pause", "F1")
         repo.Save(cfg)
 
-        ; Key obsoleta deve ter sido apagada
+        ; Obsolete key must have been deleted
         Assert.Equal("", mainIni.Read("Hotkeys", "obsolete_action"))
         Assert.Equal("F1", mainIni.Read("Hotkeys", "pause"))
     }
@@ -368,12 +368,12 @@ class SettingsRepositoryTests extends TestCase
     save_removes_obsolete_overlay_keys()
     {
         mainIni := IniFile(Fixtures.TempPath("ini"))
-        ; Cria key antiga manualmente
+        ; Create an old key manually
         mainIni.Write("0.5", "Overlay", "obsoleteWidget.left")
 
         repo := SettingsRepository(mainIni)
         cfg := AppSettings.Defaults()
-        ; Adiciona apenas um widget (nao 'obsoleteWidget')
+        ; Adds only one widget (not 'obsoleteWidget')
         cfg.overlay.SetPosition("MainWidget", OverlayPosition.FromMap(
             Map("left", 0.1, "top", 0.1)))
         repo.Save(cfg)

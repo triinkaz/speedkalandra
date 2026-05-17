@@ -1,128 +1,128 @@
 ; ============================================================
-; CompactLayoutWidget - barra horizontal speedrun (Onda 4)
+; CompactLayoutWidget - horizontal speedrun bar (Wave 4)
 ; ============================================================
 ;
-; Substitui completamente o legado (que tinha 8 bandas + bossfight
-; widget integrado, dependia de campaign/step/buffs/syncEngine).
+; Fully replaces the legacy (which had 8 bands + integrated bossfight
+; widget, depended on campaign/step/buffs/syncEngine).
 ;
-; VERSAO POS-DEMOLICAO: minimalista, focada em speedrun puro.
+; POST-DEMOLITION VERSION: minimalist, focused on pure speedrun.
 ;
-; LAYOUT BASE (380x96 em scale=1.0):
+; BASE LAYOUT (380x96 at scale=1.0):
 ;
 ;   +-------------------------------------------+
 ;   | [accent stripe 3px]                       |
-;   | LINE 1 (3 zones): Ato 1 ·  Zona  · 00:00 / 00:00 |
+;   | LINE 1 (3 zones): Act 1 ·  Zone  · 00:00 / 00:00 |
 ;   | LINE 2 (3 zones): ✗ 2   | XP  | PB 00:00 / 00:00  |
-;   | LINE 3 (stacked bar): [Mapa][Load][Cidade]|
+;   | LINE 3 (stacked bar): [Map][Load][Town]   |
 ;   +-------------------------------------------+
 ;
-;   LINE 1 zone layout (v17.5 — antes era um text unico):
-;     - act    (esquerda fixa):  "Ato X ·"  fonte FONT_LINE1
-;     - zone   (centro variavel): nome da zona com fonte DINAMICA
-;                                  (reduz se nao couber)
-;     - zone_timer  (direita meio): "·  MM:SS"   cor dinamica baseada em zone PB
-;     - run_timer   (direita fim):  "/  MM:SS"   cor dinamica baseada em run PB
+;   LINE 1 zone layout (v17.5 — used to be a single text):
+;     - act    (left fixed):     "Act X ·"  font FONT_LINE1
+;     - zone   (center variable): zone name with DYNAMIC font
+;                                  (shrinks if it doesn't fit)
+;     - zone_timer  (right-middle): "·  MM:SS"   dynamic color based on zone PB
+;     - run_timer   (right-end):    "/  MM:SS"   dynamic color based on run PB
 ;
-;   Quando o nome do mapa eh longo, a fonte da zona reduz iterativamente
-;   ate caber no espaco disponivel (em vez de empurrar os timers pra
-;   direita ou cortar texto).
+;   When the map name is long, the zone font shrinks iteratively
+;   until it fits the available space (instead of pushing the timers
+;   right or truncating text).
 ;
 ;   LINE 2 zone layout:
-;     - Zona 1 (~quarter esquerda):  "✗ N" contador de mortes da run atual
-;                                    (cor muted=cinza quando 0, warn=amber quando >=1).
-;                                    Zera em RunStarted/Reset/Cancelled.
-;                                    v17.13: substituiu o display "Lv X · Area Y".
-;     - Zona 2 (~quarter centro):    "XP" (texto fixo, cor dinamica via
-;                                    XpRules — verde/amber/vermelho/cinza)
-;     - Zona 3 (half direita):       "PB MM:SS / MM:SS" (cor lavender suave
-;                                    pra diferenciar dos outros indicadores;
-;                                    primeiro = zone PB, segundo = run PB)
+;     - Zone 1 (~left quarter):  "✗ N" current-run death counter
+;                                 (color muted=gray when 0, warn=amber when >=1).
+;                                 Resets on RunStarted/Reset/Cancelled.
+;                                 v17.13: replaced the "Lv X · Area Y" display.
+;     - Zone 2 (~center quarter): "XP" (fixed text, dynamic color via
+;                                 XpRules — green/amber/red/gray)
+;     - Zone 3 (right half):      "PB MM:SS / MM:SS" (soft lavender color
+;                                 to differentiate from other indicators;
+;                                 first = zone PB, second = run PB)
 ;
 ; PERSONAL BESTS (v17.13):
-;   Os 2 timers da LINE 1 mudam de cor baseado em comparacao com PB:
-;     timer_atual <= PB → good (verde dessaturado)
-;     timer_atual >  PB → danger (vermelho dessaturado)
-;     PB ausente       → text (branco)
+;   The 2 LINE 1 timers change color based on comparison to PB:
+;     current_timer <= PB → good (desaturated green)
+;     current_timer >  PB → danger (desaturated red)
+;     PB absent           → text (white)
 ;
-;   PBs sao mantidos pelo PersonalBestService (carregados do INI no
-;   startup, atualizados em RunCompleted pelo composition root).
+;   PBs are maintained by PersonalBestService (loaded from INI on
+;   startup, updated on RunCompleted by the composition root).
 ;
-;   RUN PB POR ATO (v17.13):
-;     O Run timer agora compara contra o PB DO ATO ATUAL, nao um PB
-;     global. Cada ato tem seu proprio PB (tempo total da run no
-;     momento que aquele ato terminou). Quando o user muda de ato
-;     durante a run, o overlay automaticamente compara com o PB do
-;     novo ato — timer pode mudar de cor na hora.
+;   RUN PB PER ACT (v17.13):
+;     The Run timer now compares against the CURRENT ACT's PB, not
+;     a global PB. Each act has its own PB (total run time at the
+;     moment that act ended). When the user changes acts mid-run,
+;     the overlay automatically compares to the new act's PB — the
+;     timer may change color right then.
 ;
-;     PB DISPLAY (line2_pb): "PB ZONE_PB / ACT_PB" — segundo numero eh
-;     o PB do ato atual (nao um PB global).
+;     PB DISPLAY (line2_pb): "PB ZONE_PB / ACT_PB" — second number is
+;     the current act's PB (not a global PB).
 ;
-;   PRIMEIRO TIMER NA LINE 1 = tempo TOTAL na zona ativa durante a
-;   run (soma todas as visitas + elapsed atual). NAO eh tempo desde
-;   a ultima entrada — esse mostraria 00:00 toda vez que o pause
-;   detection pausa/despausa (cada ciclo zera _startMs internamente).
-;   Usa GetZoneTotalWithActive() pra robusto.
+;   FIRST TIMER ON LINE 1 = TOTAL time in the active zone during the
+;   run (sum of all visits + current elapsed). NOT time since the
+;   last entry — that would show 00:00 every time the pause detection
+;   pauses/unpauses (each cycle zeroes _startMs internally). Uses
+;   GetZoneTotalWithActive() for robustness.
 ;
-;   Largura base 380 (v17.4, era 500): User redimensiona via Ctrl+wheel
-;   se precisar de mais largura. Zonas longas tem fonte reduzida
-;   automaticamente.
+;   Base width 380 (v17.4, was 500): user resizes via Ctrl+wheel if
+;   they need more width. Long zones get reduced font automatically.
 ;
-; INDICADOR DE XP (v17.3):
-;   xp_indicator eh um Text control fixo "XP" cuja COR muda conforme
-;   o status calculado pelo XpRules. Texto sempre "XP" — nao mostra
-;   o status textual (OK/LIMITE/PENALTY/?) por preferencia de UX.
+; XP INDICATOR (v17.3):
+;   xp_indicator is a fixed "XP" Text control whose COLOR changes
+;   based on the status computed by XpRules. Text always "XP" —
+;   does not show the textual status (OK/LIMIT/PENALTY/?) as a UX
+;   preference.
 ;
-;   Status -> cor (de XpRules):
-;     ok       -> verde dessaturado (B8C7B0)
+;   Status -> color (from XpRules):
+;     ok       -> desaturated green (B8C7B0)
 ;     limit    -> amber (F59E0B)
-;     penalty  -> vermelho dessaturado (F87171)
-;     unknown  -> cinza (8B8B8B)
+;     penalty  -> desaturated red (F87171)
+;     unknown  -> gray (8B8B8B)
 ;
-;   Text controls do AHK so suportam UMA cor por controle. A cor eh
-;   atualizada via ctrl.SetFont quando o status XP muda (cache evita
-;   repaint a cada tick).
+;   AHK Text controls only support ONE color per control. The color
+;   is updated via ctrl.SetFont when the XP status changes (cache
+;   avoids repaint every tick).
 ;
-; BOSS DEFEATED VERDE (REMOVIDO em v17.13):
-;   Boss timer feature foi removida (voice lines de classe nao iam pra
-;   Client.txt do PoE2, entao detection era inviavel pra maioria dos bosses).
+; GREEN BOSS DEFEATED (REMOVED in v17.13):
+;   Boss timer feature was removed (class voice lines did not go to
+;   PoE2's Client.txt, so detection was unfeasible for most bosses).
 ;
 ; SCALE:
-;   O widget INTEIRO escala por `_position.scale` (interativo via
-;   Ctrl+wheel sobre o widget). _w/_h vem do LayoutWidgetBase.Show()
-;   ja escalados, e _BuildGui propaga o scale em todas as dimensoes
-;   internas (margens, posicoes de linha, font sizes, thresholds da
-;   stacked bar).
+;   The ENTIRE widget scales by `_position.scale` (interactive via
+;   Ctrl+wheel over the widget). _w/_h come from
+;   LayoutWidgetBase.Show() already scaled, and _BuildGui propagates
+;   the scale into all internal dimensions (margins, line positions,
+;   font sizes, stacked bar thresholds).
 ;
-;   Limites: [0.5, 3.0] (clamp em WidgetBase.SetScale).
+;   Limits: [0.5, 3.0] (clamped in WidgetBase.SetScale).
 ;
-;   STACKED BAR (paridade legado PerfWidget):
+;   STACKED BAR (legacy PerfWidget parity):
 ;     mapaMs   = max(0, runMs - loadingMs - townMs)
-;     mapaPct  = 100 - loadPct - townPct    (garante soma = 100)
-;     Cores: Mapa azul, Loading amarelo, Cidade roxo.
-;     Texto inline (label + %) so quando segmento >= minLabelW de
-;     largura escalada (~70px no scale 1.0).
+;     mapaPct  = 100 - loadPct - townPct    (ensures sum = 100)
+;     Colors: Map blue, Loading yellow, Town purple.
+;     Inline text (label + %) only when the segment is >= minLabelW
+;     of scaled width (~70px at scale 1.0).
 ;
 ; SUBSCRIPTIONS:
-;   Events.Tick               -> refresh (300ms tipico)
-;   Events.ZoneEntered        -> atualiza zona + ato
-;   Events.CharacterLevelUp   -> refresh (afeta XP indicator)
-;   Events.AreaLevelChanged   -> refresh (afeta XP indicator)
-;   Events.DeathDetected      -> incrementa contador de mortes (v17.13)
-;   Events.RunStarted         -> zera contador de mortes (v17.13)
-;   Events.RunReset/Cancelled -> zera contador + volta a estado vazio
+;   Events.Tick               -> refresh (300ms typical)
+;   Events.ZoneEntered        -> updates zone + act
+;   Events.CharacterLevelUp   -> refresh (affects XP indicator)
+;   Events.AreaLevelChanged   -> refresh (affects XP indicator)
+;   Events.DeathDetected      -> increments death counter (v17.13)
+;   Events.RunStarted         -> resets death counter (v17.13)
+;   Events.RunReset/Cancelled -> resets counter + returns to empty state
 ;
-; DEPENDENCIAS:
+; DEPENDENCIES:
 ;   timer         : TimerService    -> GetRunMs()
 ;   zoneTracker   : ZoneTrackingService -> GetActiveZone(), GetZoneTotalWithActive(),
 ;                                           GetTotalTownMs()
 ;   xp            : XpService       -> GetCharacterLevel(), GetCurrentAreaLevel(),
 ;                                       GetXpPenaltyInfo()
-;   zonesCatalog  : ZonesCatalog (opcional) -> mapeia zona -> ato
-;   loadingTotals : LoadingTotalsService (opcional) -> GetTotalMs() pro stacked bar
-;   cfg           : AppSettings (opcional) -> vendorRegexes
-;   pbService     : PersonalBestService (opcional) -> GetRunPbMs(), GetZonePbMs()
+;   zonesCatalog  : ZonesCatalog (optional) -> maps zone -> act
+;   loadingTotals : LoadingTotalsService (optional) -> GetTotalMs() for the stacked bar
+;   cfg           : AppSettings (optional) -> vendorRegexes
+;   pbService     : PersonalBestService (optional) -> GetRunPbMs(), GetZonePbMs()
 ;
-; CONSTRUCAO:
+; CONSTRUCTION:
 ;   widget := CompactLayoutWidget(bus, position, onPersist,
 ;                                 timer, zoneTracker, xp,
 ;                                 zonesCatalog, loadingTotals, cfg,
@@ -133,11 +133,11 @@ class CompactLayoutWidget extends LayoutWidgetBase
     static WIDGET_ID := "compactLayout"
     static DISPLAY_NAME := "Layout Compact"
 
-    ; Dimensoes BASE (scale=1.0). Show() aplica scale em cima.
+    ; BASE dimensions (scale=1.0). Show() applies scale on top.
     static FIXED_W := 380
     static FIXED_H := 96
 
-    ; Layout BASE (scale=1.0). _BuildGui multiplica por scale em runtime.
+    ; BASE layout (scale=1.0). _BuildGui multiplies by scale at runtime.
     static MARGIN_X := 12
     static STRIPE_H := 3
     static LINE1_Y  := 10
@@ -147,61 +147,61 @@ class CompactLayoutWidget extends LayoutWidgetBase
     static BAR_Y    := 68
     static BAR_H    := 18
 
-    ; Vendor clipboard buttons (v17.12): 3 quadrados discretos na
-    ; LATERAL DIREITA, empilhados verticalmente e centrados na altura.
-    ; Click (com Ctrl ativo) copia cfg.vendorRegexes[i] pra A_Clipboard.
+    ; Vendor clipboard buttons (v17.12): 3 discreet squares on the
+    ; RIGHT SIDE, stacked vertically and centered vertically. Click
+    ; (with Ctrl active) copies cfg.vendorRegexes[i] to A_Clipboard.
     ;
-    ; A coluna ocupa BTN_COL_W px do lado direito; o conteudo principal
-    ; (LINE 1/2/3) eh re-largura-calculado pra contentW = w - BTN_COL_W.
-    ; Banda surface e accent stripe continuam usando w completo — os
-    ; botoes ficam visualmente "dentro" do widget, com bg surface3 sobre
+    ; The column takes up BTN_COL_W px on the right side; the main
+    ; content (LINE 1/2/3) is re-width-computed for contentW = w - BTN_COL_W.
+    ; The surface band and the accent stripe still use full w — the
+    ; buttons visually sit "inside" the widget, with bg surface3 over
     ; surface.
-    static BTN_COL_W      := 22    ; largura da coluna lateral (btn + margem direita)
-    static BTN_SIZE       := 18    ; lado do quadrado
-    static BTN_VGAP       := 3     ; gap vertical entre botoes
-    static BTN_MARGIN_R   := 4     ; margem entre botao e borda direita do widget
+    static BTN_COL_W      := 22    ; side-column width (btn + right margin)
+    static BTN_SIZE       := 18    ; square side
+    static BTN_VGAP       := 3     ; vertical gap between buttons
+    static BTN_MARGIN_R   := 4     ; margin between button and right edge of widget
 
-    ; LINE 1 zone widths (v17.5) — BASE em scale=1.0
-    ; Reserva espaco fixo pra "Ato X ·" (esquerda) e timers (direita).
-    ; Zona ocupa o que sobrar entre eles e tem fonte dinamica.
-    ; Em v17.13 o timer block foi SUBDIVIDIDO em zone_timer + run_timer
-    ; pra ter cores independentes baseadas em PB. LINE1_TIMER_W eh a
-    ; soma das duas.
-    static LINE1_ACT_W        := 60    ; "Ato 1 ·"  ate "Ato 99 ·"
-    static LINE1_ZONE_TIMER_W := 80    ; "·  MM:SS"  ate "·  1:23:45"
-    static LINE1_RUN_TIMER_W  := 70    ; "/  MM:SS"  ate "/  1:23:45"
-    static LINE1_TIMER_W      := 150   ; soma das duas — mantida pra calcs legados
+    ; LINE 1 zone widths (v17.5) — BASE at scale=1.0
+    ; Reserves fixed space for "Act X ·" (left) and timers (right).
+    ; Zone occupies what remains between them and has a dynamic font.
+    ; In v17.13 the timer block was SPLIT into zone_timer + run_timer
+    ; to have independent PB-based colors. LINE1_TIMER_W is the sum.
+    static LINE1_ACT_W        := 60    ; "Act 1 ·"  to "Act 99 ·"
+    static LINE1_ZONE_TIMER_W := 80    ; "·  MM:SS"  to "·  1:23:45"
+    static LINE1_RUN_TIMER_W  := 70    ; "/  MM:SS"  to "/  1:23:45"
+    static LINE1_TIMER_W      := 150   ; sum of the two — kept for legacy calcs
 
-    ; Font sizes BASE (escaladas por _position.scale em runtime)
-    ; FONT_LINE1 reduzido de 13 -> 11 em v17.13 pra evitar overlap entre
-    ; zone label longo e os 2 timers separados (zone_timer + run_timer).
+    ; BASE font sizes (scaled by _position.scale at runtime)
+    ; FONT_LINE1 reduced from 13 -> 11 in v17.13 to avoid overlap
+    ; between long zone label and the 2 separate timers (zone_timer +
+    ; run_timer).
     static FONT_LINE1 := 11
     static FONT_LINE2 := 9
     static FONT_BAR   := 8
-    static FONT_BTN   := 8    ; v17.12: tamanho dos labels 1/2/3 nos quadrados laterais
+    static FONT_BTN   := 8    ; v17.12: size of the 1/2/3 labels on the side squares
 
-    ; Minimum font size pro nome da zona (apos shrinking). Em scale=1.0,
-    ; font 7 ainda eh legivel. Mais menor que isso vira ilegivel —
-    ; melhor truncar do que ler.
+    ; Minimum font size for the zone name (after shrinking). At scale=1.0,
+    ; font 7 is still readable. Smaller than that becomes illegible —
+    ; better to truncate than to read.
     static FONT_ZONE_MIN := 7
 
-    ; Thresholds BASE pro label da stacked bar (em scale=1.0).
-    static LABEL_MIN_W      := 70    ; >= isto: mostra "Mapa 70%"
-    static LABEL_MIN_PCT_W  := 30    ; >= isto: mostra "70%" so
+    ; BASE thresholds for the stacked bar label (at scale=1.0).
+    static LABEL_MIN_W      := 70    ; >= this: shows "Map 70%"
+    static LABEL_MIN_PCT_W  := 30    ; >= this: shows "70%" only
 
-    ; Cores do stacked bar (paridade com RunStatsPlotBuilder.SegmentDefinitions)
-    static COLOR_MAPA    := "38BDF8"    ; azul
-    static COLOR_LOADING := "FACC15"    ; amarelo
-    static COLOR_CIDADE  := "A78BFA"    ; roxo
+    ; Stacked bar colors (parity with RunStatsPlotBuilder.SegmentDefinitions)
+    static COLOR_MAPA    := "38BDF8"    ; blue
+    static COLOR_LOADING := "FACC15"    ; yellow
+    static COLOR_CIDADE  := "A78BFA"    ; purple
 
-    ; Cor do display de PB (LINE 2 zone 3). Teal-400 (v17.13c) — pink
-    ; F472B6 ainda compartilhava componente azul-violeta com a cor
-    ; "Cidade" (A78BFA, violet-400), parecendo similar em monitores.
-    ; Teal foge completamente desse espectro: verde-azulado, distinto
-    ; de tudo na paleta:
+    ; Color of the PB display (LINE 2 zone 3). Teal-400 (v17.13c) — pink
+    ; F472B6 still shared a blue-violet component with the "Town" color
+    ; (A78BFA, violet-400), looking similar on some monitors. Teal
+    ; completely escapes that spectrum: green-blue, distinct from
+    ; everything in the palette:
     ;   - 2DD4BF (R:45 G:212 B:191) - teal
-    ;   - A78BFA (R:167 G:139 B:250) - violet cidade
-    ;   - 38BDF8 (R:56 G:189 B:248) - sky mapa
+    ;   - A78BFA (R:167 G:139 B:250) - violet town
+    ;   - 38BDF8 (R:56 G:189 B:248) - sky map
     ;   - 4ADE80 (R:74 G:222 B:128) - green goodStrong
     ;   - FACC15 (R:250 G:204 B:21) - yellow loading
     static PB_COLOR := "2DD4BF"
@@ -212,21 +212,21 @@ class CompactLayoutWidget extends LayoutWidgetBase
     _xp            := ""
     _zonesCatalog  := ""
     _loadingTotals := ""
-    _cfg           := ""    ; AppSettings (Onda 8 — usado pelos botoes V1/V2/V3)
+    _cfg           := ""    ; AppSettings (Wave 8 — used by the V1/V2/V3 buttons)
     _pbService     := ""    ; PersonalBestService (v17.13)
 
-    ; Cache de state pra render
+    ; State cache for render
     _currentZone     := ""
     _currentAct      := 0
-    _deathCount      := 0    ; v17.13 — contador de mortes da run atual
+    _deathCount      := 0    ; v17.13 — current-run death counter
     _lastRenderMs    := 0
-    _lastXpColor     := ""   ; pra evitar SetFont desnecessario (perf)
-    _lastZoneTimerColor := ""   ; idem pra line1_zone_timer
-    _lastRunTimerColor  := ""   ; idem pra line1_run_timer
-    _lastDeathColor  := ""   ; idem pra line2_left (death counter)
-    _lastPbText      := ""   ; cache do texto PB pra evitar repaint
-    _lastZoneFontSize := 0   ; idem pro line1_zone font dinamica
-    _lastZoneText    := ""   ; cache do texto da zona pra evitar recompute
+    _lastXpColor     := ""   ; to avoid unnecessary SetFont (perf)
+    _lastZoneTimerColor := ""   ; idem for line1_zone_timer
+    _lastRunTimerColor  := ""   ; idem for line1_run_timer
+    _lastDeathColor  := ""   ; idem for line2_left (death counter)
+    _lastPbText      := ""   ; cache of PB text to avoid repaint
+    _lastZoneFontSize := 0   ; idem for the dynamic line1_zone font
+    _lastZoneText    := ""   ; cache of zone text to avoid recompute
 
     ; Handler refs (Section 17.32)
     _handlerTick           := ""
@@ -274,7 +274,7 @@ class CompactLayoutWidget extends LayoutWidgetBase
     _GetFixedSize() => Map("w", CompactLayoutWidget.FIXED_W, "h", CompactLayoutWidget.FIXED_H)
 
     ; ============================================================
-    ; _GetScale - le scale atual, com fallback defensivo
+    ; _GetScale - reads current scale, with defensive fallback
     ; ============================================================
     _GetScale()
     {
@@ -285,16 +285,16 @@ class CompactLayoutWidget extends LayoutWidgetBase
     }
 
     ; ============================================================
-    ; _BuildGui - constroi controles aplicando scale
+    ; _BuildGui - builds controls applying scale
     ; ============================================================
     _BuildGui()
     {
         wg := this._gui
-        w  := this._w           ; ja escalado pelo Show()
+        w  := this._w           ; already scaled by Show()
         h  := this._h
         s  := this._GetScale()
 
-        ; --- Dimensoes escaladas (px) ---
+        ; --- Scaled dimensions (px) ---
         marginX := Max(1, Round(CompactLayoutWidget.MARGIN_X * s))
         stripeH := Max(1, Round(CompactLayoutWidget.STRIPE_H * s))
         line1Y  := Round(CompactLayoutWidget.LINE1_Y * s)
@@ -304,37 +304,37 @@ class CompactLayoutWidget extends LayoutWidgetBase
         barY    := Round(CompactLayoutWidget.BAR_Y * s)
         barH    := Max(4, Round(CompactLayoutWidget.BAR_H * s))
 
-        ; LINE 1 zone widths escalados
+        ; Scaled LINE 1 zone widths
         line1ActW       := Max(20, Round(CompactLayoutWidget.LINE1_ACT_W        * s))
         line1ZoneTimerW := Max(40, Round(CompactLayoutWidget.LINE1_ZONE_TIMER_W * s))
         line1RunTimerW  := Max(35, Round(CompactLayoutWidget.LINE1_RUN_TIMER_W  * s))
         line1TimerW     := line1ZoneTimerW + line1RunTimerW
 
-        ; --- Font sizes (clamp minimo pra legibilidade) ---
+        ; --- Font sizes (minimum clamp for readability) ---
         fontL1  := Max(7, Round(CompactLayoutWidget.FONT_LINE1 * s))
         fontL2  := Max(6, Round(CompactLayoutWidget.FONT_LINE2 * s))
         fontBar := Max(6, Round(CompactLayoutWidget.FONT_BAR   * s))
 
-        ; Coluna lateral pros botoes vendor (v17.12). contentW eh a
-        ; largura util pra LINE 1/2/3 (conteudo principal); a banda
-        ; surface e a accent stripe ainda usam w completo (cobrem
-        ; widget inteiro pra que os botoes fiquem visualmente dentro).
+        ; Side column for vendor buttons (v17.12). contentW is the
+        ; usable width for LINE 1/2/3 (main content); the surface
+        ; band and accent stripe still use full w (covering the
+        ; entire widget so the buttons sit visually inside).
         btnColW  := Round(CompactLayoutWidget.BTN_COL_W * s)
         contentW := w - btnColW
 
-        ; Background surface principal (banda cobrindo tudo)
+        ; Main surface background (band covering everything)
         this._BuildKalandraBand(0, 0, w, h, "surface")
 
-        ; Accent stripe topo
+        ; Top accent stripe
         this._BuildAccentStripe(0, 0, w, stripeH)
 
-        ; --- LINE 1: 4 controles separados ---
-        ; line1_act:         "Ato X ·"        (esquerda fixa)
-        ; line1_zone:        nome da zona     (centro, fonte dinamica)
-        ; line1_zone_timer:  "· MM:SS"        (direita-meio, cor dinamica vs zone PB)
-        ; line1_run_timer:   "/ MM:SS"        (direita-fim,  cor dinamica vs run PB)
+        ; --- LINE 1: 4 separate controls ---
+        ; line1_act:         "Act X ·"        (left, fixed)
+        ; line1_zone:        zone name        (center, dynamic font)
+        ; line1_zone_timer:  "· MM:SS"        (right-middle, dynamic color vs zone PB)
+        ; line1_run_timer:   "/ MM:SS"        (right-end,    dynamic color vs run PB)
 
-        ; line1_act (esquerda, alinhado esquerda)
+        ; line1_act (left, left-aligned)
         this._SetFont(fontL1, "text", "")
         this._ctrls["line1_act"] := wg.Add("Text",
             "x" marginX " y" line1Y
@@ -342,12 +342,12 @@ class CompactLayoutWidget extends LayoutWidgetBase
             " Left Background" Theme.Color("surface"),
             "")
 
-        ; line1_zone (centro, alinhado esquerda, fonte dinamica)
-        ; Posicao: apos act, antes dos timers
+        ; line1_zone (center, left-aligned, dynamic font)
+        ; Position: after act, before the timers
         zoneX := marginX + line1ActW
         zoneW := contentW - 2*marginX - line1ActW - line1TimerW
         if (zoneW < 20)
-            zoneW := 20   ; defensivo: width minima
+            zoneW := 20   ; defensive: minimum width
         this._SetFont(fontL1, "text", "")
         this._ctrls["line1_zone"] := wg.Add("Text",
             "x" zoneX " y" line1Y
@@ -355,7 +355,7 @@ class CompactLayoutWidget extends LayoutWidgetBase
             " Left Background" Theme.Color("surface"),
             "")
 
-        ; line1_zone_timer (direita-meio, right-aligned, cor dinamica)
+        ; line1_zone_timer (right-middle, right-aligned, dynamic color)
         zoneTimerX := contentW - marginX - line1TimerW
         this._SetFont(fontL1, "text", "")
         this._ctrls["line1_zone_timer"] := wg.Add("Text",
@@ -364,7 +364,7 @@ class CompactLayoutWidget extends LayoutWidgetBase
             " Right Background" Theme.Color("surface"),
             "")
 
-        ; line1_run_timer (direita-fim, right-aligned, cor dinamica)
+        ; line1_run_timer (right-end, right-aligned, dynamic color)
         runTimerX := zoneTimerX + line1ZoneTimerW
         this._SetFont(fontL1, "text", "")
         this._ctrls["line1_run_timer"] := wg.Add("Text",
@@ -373,14 +373,14 @@ class CompactLayoutWidget extends LayoutWidgetBase
             " Right Background" Theme.Color("surface"),
             "")
 
-        ; --- LINE 2: 3 zonas ---
-        ; Zone 1: "Lv 47 · Area 10" (alinhado esquerda)
-        ; Zone 2: "XP" (texto fixo, centralizado, cor dinamica)
-        ; Zone 3: "PB MM:SS / MM:SS" (cor lavender suave — PB display, v17.13)
+        ; --- LINE 2: 3 zones ---
+        ; Zone 1: "Lv 47 · Area 10" (left-aligned)
+        ; Zone 2: "XP" (fixed text, centered, dynamic color)
+        ; Zone 3: "PB MM:SS / MM:SS" (soft lavender color — PB display, v17.13)
         halfW := contentW / 2
         quarterW := contentW / 4
 
-        ; LINE 2 zone 1 esquerda: char/area level
+        ; LINE 2 zone 1 left: char/area level
         this._SetFont(fontL2, "muted", "")
         ctrlLine2Left := wg.Add("Text",
             "x" marginX " y" line2Y
@@ -389,8 +389,8 @@ class CompactLayoutWidget extends LayoutWidgetBase
             "")
         this._ctrls["line2_left"] := ctrlLine2Left
 
-        ; LINE 2 zone 2 centro: XP indicator (cor dinamica setada no Refresh)
-        ; Texto fixo "XP" — so a cor muda baseada no status.
+        ; LINE 2 zone 2 center: XP indicator (dynamic color set in Refresh)
+        ; Fixed text "XP" — only the color changes based on status.
         this._SetFont(fontL2, "muted", "bold")
         ctrlXpIndicator := wg.Add("Text",
             "x" quarterW " y" line2Y
@@ -399,10 +399,10 @@ class CompactLayoutWidget extends LayoutWidgetBase
             "")
         this._ctrls["xp_indicator"] := ctrlXpIndicator
 
-        ; LINE 2 zone 3 direita: PB display (v17.13).
-        ; Texto: "PB ZZ:ZZ / TT:TT" — primeiro = zone PB, segundo = run PB.
-        ; Fallback: "—" pra valores ausentes (zona nova ou primeiro start do app).
-        ; Cor: lavender dessaturado (PB_COLOR) right-aligned.
+        ; LINE 2 zone 3 right: PB display (v17.13).
+        ; Text: "PB ZZ:ZZ / TT:TT" — first = zone PB, second = run PB.
+        ; Fallback: "—" for absent values (new zone or first app start).
+        ; Color: desaturated lavender (PB_COLOR), right-aligned.
         wg.SetFont("s" fontL2 " c" CompactLayoutWidget.PB_COLOR " bold", Theme.FONT_UI)
         ctrlLine2Pb := wg.Add("Text",
             "x" halfW " y" line2Y
@@ -411,7 +411,7 @@ class CompactLayoutWidget extends LayoutWidgetBase
             "")
         this._ctrls["line2_pb"] := ctrlLine2Pb
 
-        ; --- LINE 3: STACKED BAR (Mapa / Loading / Cidade) ---
+        ; --- LINE 3: STACKED BAR (Map / Loading / Town) ---
         barX := marginX
         barW := contentW - 2*marginX
 
@@ -436,12 +436,12 @@ class CompactLayoutWidget extends LayoutWidgetBase
             " Center 0x200 Background" CompactLayoutWidget.COLOR_CIDADE,
             "")
 
-        ; --- LATERAL DIREITA: VENDOR CLIPBOARD BUTTONS (v17.12) ---
-        ; 3 quadrados discretos empilhados verticalmente. Click com Ctrl
-        ; ativo copia cfg.vendorRegexes[i] pra A_Clipboard.
+        ; --- RIGHT SIDE: VENDOR CLIPBOARD BUTTONS (v17.12) ---
+        ; 3 discreet squares stacked vertically. Click with Ctrl active
+        ; copies cfg.vendorRegexes[i] to A_Clipboard.
         this._BuildVendorButtons(s)
 
-        ; Reset caches pra forcar primeiro SetFont
+        ; Reset caches to force the first SetFont
         this._lastXpColor       := ""
         this._lastZoneTimerColor := ""
         this._lastRunTimerColor  := ""
@@ -453,18 +453,18 @@ class CompactLayoutWidget extends LayoutWidgetBase
     }
 
     ; ============================================================
-    ; Refresh - le state dos services e atualiza controles
+    ; Refresh - reads service state and updates controls
     ; ============================================================
     _Refresh()
     {
         if !this._gui
             return
 
-        ; --- LINE 1: 4 controles separados ---
-        ; line1_act:         "Ato X ·"
-        ; line1_zone:        nome da zona (com fonte dinamica)
-        ; line1_zone_timer:  "·  MM:SS"  (cor vs zone PB)
-        ; line1_run_timer:   "/  MM:SS"  (cor vs run PB)
+        ; --- LINE 1: 4 separate controls ---
+        ; line1_act:         "Act X ·"
+        ; line1_zone:        zone name (with dynamic font)
+        ; line1_zone_timer:  "·  MM:SS"  (color vs zone PB)
+        ; line1_run_timer:   "/  MM:SS"  (color vs run PB)
         actStr   := this._FormatAct() . "  ·"
         zoneStr  := this._currentZone != "" ? this._currentZone : "—"
         zoneMs   := IsObject(this._zoneTracker) && this._currentZone != ""
@@ -476,12 +476,12 @@ class CompactLayoutWidget extends LayoutWidgetBase
         this._TrySetText("line1_zone_timer", "·  " this._FormatMs(zoneMs))
         this._TrySetText("line1_run_timer",  "/  " this._FormatMs(runMs))
         this._RefreshTimerColors(zoneMs, runMs)
-        this._RefreshZoneText(zoneStr)   ; cuida da fonte dinamica
+        this._RefreshZoneText(zoneStr)   ; handles dynamic font
 
-        ; --- LINE 2 zone 1: contador de mortes ---
+        ; --- LINE 2 zone 1: death counter ---
         this._RefreshDeathCount()
 
-        ; --- LINE 2 zone 2: XP indicator com cor dinamica ---
+        ; --- LINE 2 zone 2: XP indicator with dynamic color ---
         this._RefreshXpIndicator()
 
         ; --- LINE 2 zone 3: PB display ---
@@ -492,19 +492,19 @@ class CompactLayoutWidget extends LayoutWidgetBase
     }
 
     ; ============================================================
-    ; _RefreshTimerColors - aplica cor dinamica nos 2 timers da LINE 1
+    ; _RefreshTimerColors - applies dynamic color to the 2 LINE 1 timers
     ;
-    ; Regra (independente pra cada timer):
-    ;   - PB ausente (0):              cor = text (branco)
-    ;   - timer_atual <= PB:           cor = good (verde dessaturado)
-    ;   - timer_atual >  PB:           cor = danger (vermelho dessaturado)
+    ; Rule (independent for each timer):
+    ;   - PB absent (0):                color = text (white)
+    ;   - current_timer <= PB:          color = good (desaturated green)
+    ;   - current_timer >  PB:          color = danger (desaturated red)
     ;
-    ; Edge case: durante uma run em curso, comparar runMs (que cresce
-    ; continuamente) com runPB faz sentido — indica visualmente se voce
-    ; ainda esta abaixo do tempo recorde.
+    ; Edge case: during an in-progress run, comparing runMs (which
+    ; grows continuously) with runPB makes sense — visually indicates
+    ; whether you are still below the record time.
     ;
-    ; Cache _lastZoneTimerColor / _lastRunTimerColor evitam SetFont a
-    ; cada tick quando a cor nao mudou.
+    ; Cache _lastZoneTimerColor / _lastRunTimerColor avoids SetFont
+    ; every tick when the color did not change.
     ; ============================================================
     _RefreshTimerColors(zoneMs, runMs)
     {
@@ -534,14 +534,14 @@ class CompactLayoutWidget extends LayoutWidgetBase
         }
     }
 
-    ; Resolve cor pra um timer baseado em comparacao com PB.
+    ; Resolves the color for a timer based on comparison with the PB.
     ;
-    ; v17.13: usa "goodStrong" (4ADE80, vibrante) em vez de "good"
-    ; (B8C7B0, dessaturado) pra que o verde "abaixo do PB" seja
-    ; visualmente mais forte e contrastante com o vermelho.
+    ; v17.13: uses "goodStrong" (4ADE80, vibrant) instead of "good"
+    ; (B8C7B0, desaturated) so the "below PB" green is visually
+    ; stronger and contrasts with the red.
     _ResolveTimerColor(currentMs, pbMs)
     {
-        ; PB ausente ou timer ainda em 0: cor neutra
+        ; PB absent or timer still at 0: neutral color
         if (pbMs <= 0 || currentMs <= 0)
             return Theme.Color("text")
         if (currentMs <= pbMs)
@@ -549,17 +549,18 @@ class CompactLayoutWidget extends LayoutWidgetBase
         return Theme.Color("danger")
     }
 
-    ; Queries seguras pro PB service (tolera _pbService = "" sem deps).
+    ; Safe queries to the PB service (tolerates _pbService = "" without deps).
     ;
-    ; v17.13: GetRunPbMs agora retorna PB DO ATO ATUAL em vez de PB
-    ; global. Quando o user muda de ato durante a run, o valor muda
-    ; automaticamente — _currentAct eh atualizado por _OnZoneEntered
-    ; e refresh recalcula a cada tick.
+    ; v17.13: GetRunPbMs now returns the CURRENT ACT's PB instead of
+    ; the global PB. When the user changes acts mid-run, the value
+    ; updates automatically — _currentAct is updated by _OnZoneEntered
+    ; and refresh recalculates every tick.
     ;
-    ; ROBUSTEZ (v17.13b): se _currentAct=0 (ZoneEntered ainda nao foi
-    ; disparado ou veio sem actIndex), tenta derivar do _zonesCatalog
-    ; usando _currentZone como fallback. Evita PB ficar vazio durante
-    ; uma run em curso so porque o widget perdeu o ZoneEntered inicial.
+    ; ROBUSTNESS (v17.13b): if _currentAct=0 (ZoneEntered has not yet
+    ; fired or came without actIndex), tries to derive from
+    ; _zonesCatalog using _currentZone as a fallback. Avoids the PB
+    ; staying empty during an in-progress run just because the widget
+    ; missed the initial ZoneEntered.
     _GetRunPbMs()
     {
         if !IsObject(this._pbService)
@@ -581,31 +582,31 @@ class CompactLayoutWidget extends LayoutWidgetBase
         return 0
     }
 
-    ; Resolve o ato atual usando fallbacks em cascata (v17.13b):
-    ;   1. this._currentAct (setado por _OnZoneEntered)
-    ;   2. derivar de _currentZone via _zonesCatalog.GetActOfName
-    ;   3. consultar zona ativa do _zoneTracker + catalog
+    ; Resolves the current act using cascade fallbacks (v17.13b):
+    ;   1. this._currentAct (set by _OnZoneEntered)
+    ;   2. derive from _currentZone via _zonesCatalog.GetActOfName
+    ;   3. query active zone from _zoneTracker + catalog
     ;
-    ; Util pra resiliencia em situacoes tipo:
-    ;   - App startou com run hidratada (sem ZoneEntered novo)
-    ;   - ZoneEntered veio com actIndex=0 (zona nao catalogada)
+    ; Useful for resilience in situations like:
+    ;   - App started with a hydrated run (no new ZoneEntered)
+    ;   - ZoneEntered came with actIndex=0 (uncatalogued zone)
     _ResolveCurrentAct()
     {
         if (this._currentAct > 0)
             return this._currentAct
 
-        ; Fallback 1: usa _currentZone se temos
+        ; Fallback 1: use _currentZone if we have one
         if (this._currentZone != "" && IsObject(this._zonesCatalog))
         {
             act := this._zonesCatalog.GetActOfName(this._currentZone)
             if (act > 0)
             {
-                this._currentAct := act    ; cacheia pra proximos ticks
+                this._currentAct := act    ; cache for next ticks
                 return act
             }
         }
 
-        ; Fallback 2: consulta zone tracker (caso _currentZone esteja vazio)
+        ; Fallback 2: query the zone tracker (in case _currentZone is empty)
         if (IsObject(this._zoneTracker) && IsObject(this._zonesCatalog))
         {
             try
@@ -628,19 +629,19 @@ class CompactLayoutWidget extends LayoutWidgetBase
     }
 
     ; ============================================================
-    ; _RefreshPbDisplay - atualiza texto do line2_pb
+    ; _RefreshPbDisplay - updates the line2_pb text
     ;
-    ; Formato: "PB ZZ:ZZ / TT:TT"  (ambos disponiveis)
-    ;          "PB — / TT:TT"     (zone PB ausente)
-    ;          "PB ZZ:ZZ / —"     (run PB ausente)
-    ;          "PB — / —"       (ambos ausentes)
+    ; Format: "PB ZZ:ZZ / TT:TT"  (both available)
+    ;         "PB — / TT:TT"     (zone PB absent)
+    ;         "PB ZZ:ZZ / —"     (run PB absent)
+    ;         "PB — / —"        (both absent)
     ;
-    ; v17.13b: sempre exibe o display (mesmo com ambos PBs ausentes),
-    ; pra que o user saiba ONDE o PB apareceria — evita parecer que o
-    ; feature nao esta funcionando quando ainda nao ha PBs salvos.
+    ; v17.13b: always shows the display (even with both PBs absent),
+    ; so the user knows WHERE the PB would appear — avoids the feature
+    ; looking broken when there are no PBs saved yet.
     ;
-    ; Cache _lastPbText evita escrita repetida no ctrl.
-    ; Cor eh fixa (PB_COLOR) e setada em _BuildGui — nao precisa re-aplicar.
+    ; Cache _lastPbText avoids repeated writes to the ctrl.
+    ; Color is fixed (PB_COLOR) and set in _BuildGui — no need to re-apply.
     ; ============================================================
     _RefreshPbDisplay()
     {
@@ -662,17 +663,17 @@ class CompactLayoutWidget extends LayoutWidgetBase
     }
 
     ; ============================================================
-    ; _RefreshZoneText - texto da zona com fonte que reduz se necessario
+    ; _RefreshZoneText - zone text with font that shrinks if needed
     ;
-    ; Quando o nome do mapa eh longo (e.g. "Cemetery of the Eternals"),
-    ; nao queremos cortar texto nem empurrar os timers. Em vez disso,
-    ; reduzimos a fonte iterativamente ate caber no espaco disponivel.
+    ; When the map name is long (e.g. "Cemetery of the Eternals"), we
+    ; don't want to truncate text or push the timers. Instead, we
+    ; reduce the font iteratively until it fits in the available space.
     ;
-    ; Estimativa de largura: chars × fontSize × 0.6 (Segoe UI). Nao eh
-    ; precisa em pixels mas funciona pra decidir "cabe ou nao cabe".
+    ; Width estimate: chars × fontSize × 0.6 (Segoe UI). Not precise
+    ; in pixels but enough to decide "fits or doesn't fit".
     ;
-    ; Cache _lastZoneFontSize evita SetFont desnecessario quando a
-    ; mesma zona renderiza repetidamente.
+    ; Cache _lastZoneFontSize avoids unnecessary SetFont when the same
+    ; zone renders repeatedly.
     ; ============================================================
     _RefreshZoneText(zoneStr)
     {
@@ -684,7 +685,7 @@ class CompactLayoutWidget extends LayoutWidgetBase
         baseSize := Max(7, Round(CompactLayoutWidget.FONT_LINE1 * s))
         minSize  := Max(6, Round(CompactLayoutWidget.FONT_ZONE_MIN * s))
 
-        ; Espaco disponivel pra zona (mesma conta do _BuildGui)
+        ; Space available for the zone (same math as _BuildGui)
         marginX     := Max(1, Round(CompactLayoutWidget.MARGIN_X * s))
         line1ActW   := Max(20, Round(CompactLayoutWidget.LINE1_ACT_W   * s))
         line1ZoneTimerW := Max(40, Round(CompactLayoutWidget.LINE1_ZONE_TIMER_W * s))
@@ -696,7 +697,7 @@ class CompactLayoutWidget extends LayoutWidgetBase
         if (zoneAvailW < 20)
             zoneAvailW := 20
 
-        ; Encontra a maior fonte que cabe (top-down)
+        ; Find the largest font size that fits (top-down)
         sizeFound := baseSize
         while (sizeFound > minSize)
         {
@@ -706,14 +707,14 @@ class CompactLayoutWidget extends LayoutWidgetBase
             sizeFound--
         }
 
-        ; Aplica fonte so se mudou
+        ; Apply font only if it changed
         if (sizeFound != this._lastZoneFontSize)
         {
             try ctrl.SetFont("s" sizeFound " c" Theme.Color("text"), Theme.FONT_UI)
             this._lastZoneFontSize := sizeFound
         }
 
-        ; Aplica texto so se mudou
+        ; Apply text only if it changed
         if (zoneStr != this._lastZoneText)
         {
             try ctrl.Value := zoneStr
@@ -722,14 +723,14 @@ class CompactLayoutWidget extends LayoutWidgetBase
     }
 
     ; ============================================================
-    ; _EstimateTextW - estima largura de texto em pixels (Segoe UI)
+    ; _EstimateTextW - estimates text width in pixels (Segoe UI)
     ;
-    ; Aproximacao: chars × fontSize × 0.6. Segoe UI tem chars variaveis
-    ; (M largo, i estreito) mas a media gira em torno disso.
+    ; Approximation: chars × fontSize × 0.6. Segoe UI has variable
+    ; char widths (wide M, narrow i) but the average is around this.
     ;
-    ; Conservador (subestima ligeiramente): chars largos podem exceder
-    ; estimativa. Em compensacao, controles em AHK truncam graciosamente
-    ; sem quebrar layout.
+    ; Conservative (slightly underestimates): wide chars may exceed
+    ; the estimate. In exchange, AHK controls truncate gracefully
+    ; without breaking layout.
     ; ============================================================
     static _EstimateTextW(text, fontSize)
     {
@@ -737,19 +738,19 @@ class CompactLayoutWidget extends LayoutWidgetBase
     }
 
     ; ============================================================
-    ; _RefreshXpIndicator - atualiza COR do texto "XP" fixo
+    ; _RefreshXpIndicator - updates the COLOR of the fixed "XP" text
     ;
-    ; Texto: sempre "XP" — nao mostra OK/LIMITE/PENALTY/? por
-    ; preferencia de UX (apenas a cor comunica o status).
+    ; Text: always "XP" — does not show OK/LIMIT/PENALTY/? as a UX
+    ; preference (only the color communicates status).
     ;
-    ; Cor vem de XpRules.Calculate (via xpService.GetXpPenaltyInfo):
-    ;   ok      -> good (verde dessaturado)
+    ; Color comes from XpRules.Calculate (via xpService.GetXpPenaltyInfo):
+    ;   ok      -> good (desaturated green)
     ;   limit   -> warn (amber)
-    ;   penalty -> danger (vermelho dessaturado)
-    ;   unknown -> COLOR_UNKNOWN (cinza)
+    ;   penalty -> danger (desaturated red)
+    ;   unknown -> COLOR_UNKNOWN (gray)
     ;
-    ; Otimizacao: so chama SetFont quando a cor mudou (evita repaint
-    ; desnecessario a cada tick).
+    ; Optimization: only calls SetFont when the color changed (avoids
+    ; unnecessary repaint every tick).
     ; ============================================================
     _RefreshXpIndicator()
     {
@@ -773,7 +774,7 @@ class CompactLayoutWidget extends LayoutWidgetBase
     }
 
     ; ============================================================
-    ; _RefreshBar - calcula pcts e ajusta os 3 segments
+    ; _RefreshBar - computes pcts and adjusts the 3 segments
     ; ============================================================
     _RefreshBar(runMs)
     {
@@ -850,30 +851,31 @@ class CompactLayoutWidget extends LayoutWidgetBase
     }
 
     ; ============================================================
-    ; Vendor clipboard buttons (lateral direita, v17.12)
+    ; Vendor clipboard buttons (right side, v17.12)
     ; ============================================================
     ;
-    ; Cria 3 controles Text quadrados (BTN_SIZE x BTN_SIZE) com Background
-    ; surface3, empilhados verticalmente na lateral direita e centrados
-    ; verticalmente no widget (descontando a accent stripe do topo).
+    ; Creates 3 square Text controls (BTN_SIZE x BTN_SIZE) with
+    ; surface3 Background, stacked vertically on the right side and
+    ; vertically centered in the widget (discounting the top accent
+    ; stripe).
     ;
     ; LABELS:
-    ;   Preenchido: numero ("1"/"2"/"3") em cor 'muted' (cinza dessaturado)
-    ;   Vazio:      ponto medio ("·") em cor 'subtle' (cinza mais fraco)
+    ;   Filled: number ("1"/"2"/"3") in 'muted' color (desaturated gray)
+    ;   Empty:  middle dot ("·") in 'subtle' color (lighter gray)
     ;
     ; CLICK-THROUGH:
-    ;   O widget tem WS_EX_TRANSPARENT setado por default (cliques passam
-    ;   pro jogo). OverlayInteractionService remove esse bit enquanto
-    ;   Ctrl esta pressionado. Ou seja: os botoes so respondem com Ctrl
-    ;   ativo — mesmo comportamento de drag/resize do overlay.
+    ;   The widget has WS_EX_TRANSPARENT set by default (clicks pass
+    ;   through to the game). OverlayInteractionService removes that
+    ;   bit while Ctrl is held. That is: the buttons only respond
+    ;   with Ctrl active — same behavior as overlay drag/resize.
     ;
     ; CLOSURE CAPTURE:
-    ;   _BindVendorButton eh um metodo helper isolado porque a arrow
-    ;   function precisa capturar slotIdx por VALOR. Como slotIdx eh
-    ;   parametro do metodo, cada chamada cria escopo novo e o closure
-    ;   captura corretamente. Se inlinassemos o lambda dentro do Loop
-    ;   usando A_Index ou i diretamente, capturaria por referencia e
-    ;   todos os 3 botoes acionariam o ultimo slot.
+    ;   _BindVendorButton is an isolated helper method because the
+    ;   arrow function needs to capture slotIdx BY VALUE. Since
+    ;   slotIdx is a method param, each call creates a fresh scope
+    ;   and the closure captures correctly. If we inlined the lambda
+    ;   inside the Loop using A_Index or i directly, it would capture
+    ;   by reference and all 3 buttons would trigger the last slot.
     ; ============================================================
     _BuildVendorButtons(s)
     {
@@ -884,10 +886,10 @@ class CompactLayoutWidget extends LayoutWidgetBase
         fontBtn := Max(7, Round(CompactLayoutWidget.FONT_BTN * s))
         stripeH := Max(1, Round(CompactLayoutWidget.STRIPE_H * s))
 
-        ; Posicao X: alinhado a direita do widget
+        ; X position: aligned to the widget's right edge
         btnX := this._w - mRight - btnSize
 
-        ; Empilhamento vertical centralizado abaixo do accent stripe
+        ; Vertical stacking centered below the accent stripe
         availH := this._h - stripeH
         totalH := 3 * btnSize + 2 * vGap
         startY := stripeH + Max(0, Round((availH - totalH) / 2))
@@ -914,18 +916,18 @@ class CompactLayoutWidget extends LayoutWidgetBase
         }
     }
 
-    ; Helper isolado pra garantir captura de slotIdx por valor (escope
-    ; novo a cada chamada). Ver doc do _BuildVendorButtons.
+    ; Isolated helper to guarantee slotIdx capture by value (fresh
+    ; scope on each call). See _BuildVendorButtons doc.
     _BindVendorButton(btn, slotIdx)
     {
         btn.OnEvent("Click", (*) => this._OnVendorClick(slotIdx))
     }
 
-    ; Handler de click. Le cfg.vendorRegexes[slotIdx]; se vazio, mostra
-    ; TrayTip orientando o user pra Settings. Se preenchido, copia pra
-    ; A_Clipboard e mostra TrayTip com preview (primeiros 30 chars).
+    ; Click handler. Reads cfg.vendorRegexes[slotIdx]; if empty,
+    ; shows a TrayTip guiding the user to Settings. If filled, copies
+    ; to A_Clipboard and shows a TrayTip with a preview (first 30 chars).
     ;
-    ; Tolerante: cfg pode ser "" (sem deps injetadas) — no-op silencioso.
+    ; Tolerant: cfg can be "" (no injected deps) — silent no-op.
     _OnVendorClick(slotIdx)
     {
         if !IsObject(this._cfg)
@@ -958,7 +960,7 @@ class CompactLayoutWidget extends LayoutWidgetBase
     }
 
     ; ============================================================
-    ; Helpers de formato
+    ; Format helpers
     ; ============================================================
 
     _FormatAct()
@@ -968,7 +970,7 @@ class CompactLayoutWidget extends LayoutWidgetBase
         return "Act —"
     }
 
-    ; v0.1.2 (auditoria #19): consolidado em Duration.FormatMs.
+    ; v0.1.2 (audit #19): consolidated into Duration.FormatMs.
     _FormatMs(ms) => Duration.FormatMs(ms)
 
     _TrySetText(ctrlKey, text)
@@ -1006,13 +1008,13 @@ class CompactLayoutWidget extends LayoutWidgetBase
     }
 
     ; ============================================================
-    ; _OnRunRestart - zera contador de mortes quando a run reinicia
+    ; _OnRunRestart - resets death counter when the run restarts
     ;
-    ; Subscrito em 3 eventos: RunStarted, RunReset, RunCancelled.
-    ; Sempre que a run entra em um estado "comeco do zero", o contador
-    ; volta a 0. RunCompleted NAO eh tratado aqui — quando o user
-    ; finaliza a run, os dados ficam preservados ate a proxima Reset/Start
-    ; (pra eventual review/plot post-run).
+    ; Subscribed to 3 events: RunStarted, RunReset, RunCancelled.
+    ; Whenever the run enters a "fresh start" state, the counter
+    ; goes back to 0. RunCompleted is NOT handled here — when the
+    ; user finalizes the run, the data is preserved until the next
+    ; Reset/Start (for eventual post-run review/plot).
     ; ============================================================
     _OnRunRestart(data)
     {
@@ -1021,11 +1023,11 @@ class CompactLayoutWidget extends LayoutWidgetBase
     }
 
     ; ============================================================
-    ; _OnDeathDetected - incrementa contador local
+    ; _OnDeathDetected - increments local counter
     ;
-    ; Subscrito em Evt.DeathDetected (publicado por XpService quando
-    ; detecta penalty negativa no log, ou outra fonte). Cada disparo
-    ; conta como uma morte da run atual.
+    ; Subscribed to Evt.DeathDetected (published by XpService when
+    ; it detects a negative penalty in the log, or another source).
+    ; Each fire counts as one death in the current run.
     ; ============================================================
     _OnDeathDetected(data)
     {
@@ -1034,15 +1036,15 @@ class CompactLayoutWidget extends LayoutWidgetBase
     }
 
     ; ============================================================
-    ; _RefreshDeathCount - atualiza texto e cor do line2_left
+    ; _RefreshDeathCount - updates the text and color of line2_left
     ;
-    ; Formato: "✗ N" onde N = _deathCount.
-    ; Cor dinamica:
-    ;   - 0 mortes:    muted (cinza dessaturado) — estado normal
-    ;   - >= 1 mortes: warn  (amber)             — ja morreu, sinal sutil
+    ; Format: "✗ N" where N = _deathCount.
+    ; Dynamic color:
+    ;   - 0 deaths:   muted (desaturated gray) — normal state
+    ;   - >= 1 death: warn  (amber)            — already died, subtle signal
     ;
-    ; Cache _lastDeathColor evita SetFont desnecessario quando a cor
-    ; nao mudou (a maior parte dos ticks, ja que mortes sao raras).
+    ; Cache _lastDeathColor avoids unnecessary SetFont when the color
+    ; did not change (most ticks, since deaths are rare).
     ; ============================================================
     _RefreshDeathCount()
     {

@@ -1,55 +1,55 @@
 ﻿; ============================================================
-; TextEncoding — deteccao de BOM (R11.1)
+; TextEncoding — BOM detection (R11.1)
 ; ============================================================
 ;
-; HISTORICO:
-;   - R11 introduziu TextEncoding com 3 metodos:
-;       DetectBom            -> identifica encoding via BOM
-;       ConvertUtf16ToUtf8   -> reescreve UTF-16 LE como UTF-8 BOM
-;       MigrateIniToUtf8     -> facade detect+convert para INIs
+; HISTORY:
+;   - R11 introduced TextEncoding with 3 methods:
+;       DetectBom            -> identifies encoding via BOM
+;       ConvertUtf16ToUtf8   -> rewrites UTF-16 LE as UTF-8 BOM
+;       MigrateIniToUtf8     -> detect+convert facade for INIs
 ;
-;   - R11.1 (Bug #2, regression tests Wave 9): ConvertUtf16ToUtf8 e
-;     MigrateIniToUtf8 foram REMOVIDOS. Manter so DetectBom.
+;   - R11.1 (Bug #2, Wave 9 regression tests): ConvertUtf16ToUtf8 and
+;     MigrateIniToUtf8 were REMOVED. Keep only DetectBom.
 ;
-; POR QUE A REMOCAO:
-;   IniRead key-lookup do AHK v2 SO funciona em arquivos UTF-16 LE BOM.
-;   Em UTF-8 BOM, IniRead(path, section, key, default) sempre retorna
-;   o default — independente de line endings, encoding correto, etc.
+; WHY THE REMOVAL:
+;   AHK v2's IniRead key-lookup ONLY works in UTF-16 LE BOM files.
+;   On UTF-8 BOM, IniRead(path, section, key, default) always returns
+;   the default — regardless of line endings, correct encoding, etc.
 ;
-;   A funcao MigrateIniToUtf8 prometia "auto-converter INIs de UTF-16
-;   pra UTF-8 BOM pra economizar espaco e melhorar diffs". Mas o efeito
-;   colateral era catastrofico: TODO Load() dos repositorios falhava
-;   silenciosamente, retornando defaults pra todas as keys. PBs, run
-;   state, settings — tudo lido como se nao existisse.
+;   MigrateIniToUtf8 promised "auto-convert INIs from UTF-16 to UTF-8
+;   BOM to save space and improve diffs". But the side effect was
+;   catastrophic: EVERY repository's Load() silently failed, returning
+;   defaults for every key. PBs, run state, settings — all read as if
+;   they did not exist.
 ;
-;   O bug ficou latente porque IniFile.__New tinha a chamada envolvida
-;   em try/catch e a funcao foi desativada antes de ser amplamente
-;   testada. Os regression tests da Wave 9 (text_encoding_tests
-;   `iniread_works_after_migration_*`) confirmaram empiricamente que
-;   o IniRead falhava apos a migration.
+;   The bug stayed latent because IniFile.__New had the call wrapped
+;   in try/catch and the function was disabled before being widely
+;   tested. Wave 9 regression tests (text_encoding_tests
+;   `iniread_works_after_migration_*`) confirmed empirically that
+;   IniRead failed after the migration.
 ;
-;   Sem caminho de fix viavel:
-;     - UTF-8 sem BOM: AHK trata como ANSI/CP1252; acentos quebram.
-;     - UTF-16 BE: AHK v2 FileRead nao tem flag explicita BE.
-;     - UTF-8 BOM: o que MigrateIniToUtf8 fazia — quebra IniRead.
-;     - Manter UTF-16 LE: o que o AHK ja gera por default — funcao
-;                         vira no-op semanticamente.
+;   No viable fix path:
+;     - UTF-8 without BOM: AHK treats it as ANSI/CP1252; accents break.
+;     - UTF-16 BE: AHK v2 FileRead has no explicit BE flag.
+;     - UTF-8 BOM: what MigrateIniToUtf8 did — breaks IniRead.
+;     - Keep UTF-16 LE: what AHK already generates by default — the
+;                       function becomes a semantic no-op.
 ;
-;   Conclusao: a migration era uma feature INVIAVEL. INIs do projeto
-;   continuam em UTF-16 LE BOM (o que o AHK gera por default em
-;   IniWrite quando o arquivo nao existe). Sem migration = sem bug.
+;   Conclusion: the migration was an UNFEASIBLE feature. The project's
+;   INIs remain in UTF-16 LE BOM (what AHK generates by default in
+;   IniWrite when the file does not exist). No migration = no bug.
 ;
-; PITFALL RELACIONADO (PersonalBestRepositoryTests):
-;   O teste `iniread_key_lookup_works_in_utf16_le_bom_but_not_utf8_bom`
-;   documenta o comportamento do AHK v2 que motivou esta remocao.
+; RELATED PITFALL (PersonalBestRepositoryTests):
+;   The test `iniread_key_lookup_works_in_utf16_le_bom_but_not_utf8_bom`
+;   documents the AHK v2 behavior that motivated this removal.
 ;
-; USO ATUAL:
+; CURRENT USAGE:
 ;   enc := TextEncoding.DetectBom(path)
 ;   ; enc in {"UTF-16-LE", "UTF-16-BE", "UTF-8-BOM", "NONE"}
 ;
-;   ; Use casos: diagnostico, debug, validar que IniWrite gerou o
-;   ; encoding esperado. NAO use pra converter — nao temos mais essa
-;   ; capacidade no projeto.
+;   ; Use cases: diagnosis, debug, validate that IniWrite produced
+;   ; the expected encoding. DO NOT use to convert — we no longer
+;   ; have that capability in the project.
 
 
 class TextEncoding
@@ -57,20 +57,20 @@ class TextEncoding
     ; ------------------------------------------------------------
     ; DetectBom(path) -> "UTF-16-LE" | "UTF-16-BE" | "UTF-8-BOM" | "NONE"
     ;
-    ; Le os primeiros 2-3 bytes do arquivo via FileRead(..., "RAW")
-    ; e identifica o BOM. "NONE" cobre: arquivo vazio, sem BOM, ou
-    ; menor que 2 bytes.
+    ; Reads the first 2-3 bytes of the file via FileRead(..., "RAW")
+    ; and identifies the BOM. "NONE" covers: empty file, no BOM, or
+    ; smaller than 2 bytes.
     ;
-    ; Throws OSError se o arquivo nao existe.
+    ; Throws OSError if the file does not exist.
     ; ------------------------------------------------------------
     static DetectBom(path)
     {
         if !FileExist(path)
-            throw OSError("TextEncoding.DetectBom: arquivo nao existe: " path)
+            throw OSError("TextEncoding.DetectBom: file does not exist: " path)
 
-        ; FileRead "RAW" retorna Buffer com bytes crus, sem decode.
-        ; Limita a 4 bytes pra evitar carregar arquivos grandes
-        ; quando so precisamos do BOM.
+        ; FileRead "RAW" returns a Buffer with raw bytes, no decode.
+        ; Limits to 4 bytes to avoid loading large files when we only
+        ; need the BOM.
         buf := FileRead(path, "RAW")
         if (buf.Size < 2)
             return "NONE"

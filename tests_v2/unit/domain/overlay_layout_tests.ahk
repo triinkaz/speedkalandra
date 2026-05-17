@@ -2,16 +2,16 @@
 ; OverlayLayout tests - OverlayPosition + OverlayLayout
 ; ============================================================
 ;
-; OverlayPosition: posicao de um widget
+; OverlayPosition: a widget's position
 ;   - left/top: float [0..95]      (clamp via property setter)
 ;   - scale:    float [0.5..3.0]   (clamp via FromMap._GetScale)
 ;   - visible:  bool
 ;   - centered: bool
 ;
-; OverlayLayout: colecao Map<widgetId, OverlayPosition> + hoverHide
-;   - Defaults com compactLayout e microLayout pre-populados
+; OverlayLayout: Map<widgetId, OverlayPosition> collection + hoverHide
+;   - Defaults with compactLayout and microLayout pre-populated
 ;   - HasWidget / GetPosition / SetPosition / RemovePosition / WidgetIds / Count
-;   - FromMap aceita OverlayPosition instance OU Map (mixed input)
+;   - FromMap accepts an OverlayPosition instance OR a Map (mixed input)
 
 class OverlayPositionTests extends TestCase
 {
@@ -22,7 +22,7 @@ class OverlayPositionTests extends TestCase
         "defaults_visible_is_true",
         "defaults_centered_is_false",
 
-        ; --- Setter left/top clamps ---
+        ; --- left/top setter clamps ---
         "left_setter_clamps_below_zero_to_zero",
         "left_setter_clamps_above_95_to_95",
         "top_setter_clamps_below_zero_to_zero",
@@ -138,13 +138,13 @@ class OverlayPositionTests extends TestCase
     from_map_clamps_scale_below_min()
     {
         op := OverlayPosition.FromMap(Map("scale", 0.1))
-        Assert.Equal(0.5, op.scale, "Scale abaixo de MIN_SCALE clampa pra 0.5")
+        Assert.Equal(0.5, op.scale, "Scale below MIN_SCALE clamps to 0.5")
     }
 
     from_map_clamps_scale_above_max()
     {
         op := OverlayPosition.FromMap(Map("scale", 10.0))
-        Assert.Equal(3.0, op.scale, "Scale acima de MAX_SCALE clampa pra 3.0")
+        Assert.Equal(3.0, op.scale, "Scale above MAX_SCALE clamps to 3.0")
     }
 
     from_map_clamps_left_top_to_safe_range()
@@ -336,7 +336,7 @@ class OverlayLayoutTests extends TestCase
         ol.SetPosition("compactLayout", replacement)
 
         Assert.Equal(88.0, ol.GetPosition("compactLayout").left)
-        Assert.Equal(2, ol.Count(), "Conta nao muda em overwrite")
+        Assert.Equal(2, ol.Count(), "Count doesn't change on overwrite")
     }
 
     set_position_throws_on_empty_widget_id()
@@ -401,15 +401,15 @@ class OverlayLayoutTests extends TestCase
 
     from_map_merges_with_defaults()
     {
-        ; FromMap aplica defaults primeiro; chaves do payload sobrescrevem
+        ; FromMap applies defaults first; keys from the payload override
         ol := OverlayLayout.FromMap(Map(
             "positions", Map("compactLayout", Map("left", 99.0))
         ))
         Assert.True(ol.HasWidget("compactLayout"))
         Assert.True(ol.HasWidget("microLayout"),
-            "microLayout veio dos defaults (merge)")
+            "microLayout came from defaults (merge)")
         Assert.Equal(95.0, ol.GetPosition("compactLayout").left,
-            "99 fora do range, clampado para 95")
+            "99 out of range, clamped to 95")
     }
 
     from_map_accepts_overlay_position_instance()
@@ -461,10 +461,10 @@ class OverlayLayoutTests extends TestCase
         m := ol.ToMap()
         Assert.True(IsObject(m["positions"]))
         Assert.True(m["positions"].Has("compactLayout"))
-        ; Cada position serializada e' um Map (nao OverlayPosition)
+        ; Each serialized position is a Map (not OverlayPosition)
         compact := m["positions"]["compactLayout"]
         Assert.False(compact is OverlayPosition,
-            "ToMap deve serializar cada position como Map")
+            "ToMap must serialize each position as a Map")
         Assert.Equal(10.0, compact["left"])
     }
 

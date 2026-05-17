@@ -2,18 +2,18 @@
 ; XpServiceTests
 ; ============================================================
 ;
-; XpService eh state puro: sem deps externas, sem bus, sem clock.
-; Setters atualizam state; Hydrate faz overwrite completo (aceita
-; zeros); Reset zera; calculos delegam XpRules.
+; XpService is pure state: no external deps, no bus, no clock.
+; Setters update state; Hydrate does a full overwrite (accepts
+; zeros); Reset zeroes; calculations delegate to XpRules.
 ;
-; Cobertura:
-;   - defaults pos-__New
-;   - SetCharacter (aceita validos, ignora 0/vazios, parcial)
-;   - SetCurrentArea (aceita level>0, ignora <=0)
-;   - Hydrate (overwrite total, aceita zeros)
+; Coverage:
+;   - post-__New defaults
+;   - SetCharacter (accepts valid, ignores 0/empty, partial)
+;   - SetCurrentArea (accepts level>0, ignores <=0)
+;   - Hydrate (full overwrite, accepts zeros)
 ;   - Reset / ResetCurrentArea
 ;   - Getters
-;   - Calculos delegam XpRules (penalty, safe range)
+;   - Calculations delegate to XpRules (penalty, safe range)
 
 
 class XpServiceTests extends TestCase
@@ -61,7 +61,7 @@ class XpServiceTests extends TestCase
         "reset_current_area_only_zeroes_area_fields",
         "reset_current_area_preserves_character",
 
-        ; --- Calculos (delegam XpRules) ---
+        ; --- Calculations (delegate to XpRules) ---
         "get_xp_penalty_info_uses_current_character_and_area",
         "get_xp_penalty_info_returns_unknown_when_level_zero",
         "get_xp_penalty_info_for_area_uses_arbitrary_area",
@@ -98,7 +98,7 @@ class XpServiceTests extends TestCase
     {
         this.svc.SetCharacter("Olaf", "Warrior", 42)
         this.svc.SetCharacter("", "Sorceress", 50)
-        Assert.Equal("Olaf",      this.svc.GetCharacterName(), "name preservado")
+        Assert.Equal("Olaf",      this.svc.GetCharacterName(), "name preserved")
         Assert.Equal("Sorceress", this.svc.GetCharacterClass())
         Assert.Equal(50,          this.svc.GetCharacterLevel())
     }
@@ -108,7 +108,7 @@ class XpServiceTests extends TestCase
         this.svc.SetCharacter("Olaf", "Warrior", 42)
         this.svc.SetCharacter("Bjorn", "", 50)
         Assert.Equal("Bjorn",   this.svc.GetCharacterName())
-        Assert.Equal("Warrior", this.svc.GetCharacterClass(), "class preservada")
+        Assert.Equal("Warrior", this.svc.GetCharacterClass(), "class preserved")
         Assert.Equal(50,        this.svc.GetCharacterLevel())
     }
 
@@ -118,14 +118,14 @@ class XpServiceTests extends TestCase
         this.svc.SetCharacter("Bjorn", "Sorceress", 0)
         Assert.Equal("Bjorn",     this.svc.GetCharacterName())
         Assert.Equal("Sorceress", this.svc.GetCharacterClass())
-        Assert.Equal(42,          this.svc.GetCharacterLevel(), "level preservado")
+        Assert.Equal(42,          this.svc.GetCharacterLevel(), "level preserved")
     }
 
     set_character_ignores_negative_level()
     {
         this.svc.SetCharacter("Olaf", "Warrior", 42)
         this.svc.SetCharacter("Bjorn", "Sorceress", -5)
-        Assert.Equal(42, this.svc.GetCharacterLevel(), "level preservado em negativo")
+        Assert.Equal(42, this.svc.GetCharacterLevel(), "level preserved when negative")
     }
 
     set_character_coerces_numeric_level_to_int()
@@ -138,7 +138,7 @@ class XpServiceTests extends TestCase
     set_character_partial_update_preserves_previous()
     {
         this.svc.SetCharacter("Olaf", "Warrior", 42)
-        ; Apenas level muda (name "" e class "" ignorados)
+        ; Only level changes (name "" and class "" ignored)
         this.svc.SetCharacter("", "", 50)
         Assert.Equal("Olaf",    this.svc.GetCharacterName())
         Assert.Equal("Warrior", this.svc.GetCharacterClass())
@@ -160,8 +160,8 @@ class XpServiceTests extends TestCase
     {
         this.svc.SetCurrentArea(45, "G1_1")
         this.svc.SetCurrentArea(0, "G2_2")
-        Assert.Equal(45,     this.svc.GetCurrentAreaLevel(), "level preservado")
-        Assert.Equal("G1_1", this.svc.GetCurrentAreaCode(), "code preservado em level zero")
+        Assert.Equal(45,     this.svc.GetCurrentAreaLevel(), "level preserved")
+        Assert.Equal("G1_1", this.svc.GetCurrentAreaCode(), "code preserved at level zero")
     }
 
     set_current_area_ignores_negative_level()
@@ -207,7 +207,7 @@ class XpServiceTests extends TestCase
     {
         this.svc.SetCharacter("Olaf", "Warrior", 42)
         this.svc.Hydrate("Olaf", "Warrior", 0, 0, "")
-        Assert.Equal(0, this.svc.GetCharacterLevel(), "Hydrate zera (Set ignoraria)")
+        Assert.Equal(0, this.svc.GetCharacterLevel(), "Hydrate zeroes (Set would ignore)")
         Assert.Equal(0, this.svc.GetCurrentAreaLevel())
     }
 
@@ -266,7 +266,7 @@ class XpServiceTests extends TestCase
     }
 
     ; ============================================================
-    ; Calculos (delegam XpRules)
+    ; Calculations (delegate to XpRules)
     ; ============================================================
 
     get_xp_penalty_info_uses_current_character_and_area()
@@ -280,20 +280,20 @@ class XpServiceTests extends TestCase
 
     get_xp_penalty_info_returns_unknown_when_level_zero()
     {
-        ; Sem dados: char level 0 -> XpRules.Calculate retorna unknown
+        ; No data: char level 0 -> XpRules.Calculate returns unknown
         info := this.svc.GetXpPenaltyInfo()
         Assert.Equal("unknown", info.status)
     }
 
     get_xp_penalty_info_for_area_uses_arbitrary_area()
     {
-        ; Char 20 + area arbitraria 50 -> penalty alta (50 > 20 + threshold)
+        ; Char 20 + arbitrary area 50 -> high penalty (50 > 20 + threshold)
         this.svc.SetCharacter("Olaf", "Warrior", 20)
-        ; Note que currentAreaLevel pode ser outra coisa (15)
+        ; Note that currentAreaLevel can be something else (15)
         this.svc.SetCurrentArea(15, "G1_1")
         info := this.svc.GetXpPenaltyInfoForArea(50)
         Assert.Equal("penalty", info.status,
-            "GetXpPenaltyInfoForArea ignora currentAreaLevel e usa o param")
+            "GetXpPenaltyInfoForArea ignores currentAreaLevel and uses the param")
     }
 
     get_safe_range_uses_current_character_level()
@@ -307,7 +307,7 @@ class XpServiceTests extends TestCase
 
     get_safe_range_returns_zero_zero_for_invalid_level()
     {
-        ; Char level 0 -> XpRules retorna [0, 0]
+        ; Char level 0 -> XpRules returns [0, 0]
         range := this.svc.GetSafeRange()
         Assert.Equal(0, range[1])
         Assert.Equal(0, range[2])

@@ -2,17 +2,17 @@
 ; InMemoryLogger tests
 ; ============================================================
 ;
-; InMemoryLogger captura logs em memoria pra assertion. Eh o logger
-; de escolha quando o teste precisa verificar que algo foi logado
-; (geralmente erros isolados pelo EventBus, warnings de validacao,
+; InMemoryLogger captures logs in memory for assertion. It's the
+; logger of choice when the test needs to verify that something was
+; logged (typically errors isolated by EventBus, validation warnings,
 ; etc).
 ;
-; API testada:
+; API tested:
 ;   - Debug/Info/Warn/Error -> entries.Push(Map(level, msg, context, ts))
-;   - GetWarnCount / GetErrorCount -> filtram por level
-;   - HasEntry(level)             -> existencia
-;   - HasEntry(level, substring)  -> existencia + substring no msg
-;   - Clear / ResetCounts         -> esvaziam entries
+;   - GetWarnCount / GetErrorCount -> filter by level
+;   - HasEntry(level)             -> existence
+;   - HasEntry(level, substring)  -> existence + substring in msg
+;   - Clear / ResetCounts         -> empty entries
 
 class InMemoryLoggerTests extends TestCase
 {
@@ -63,7 +63,7 @@ class InMemoryLoggerTests extends TestCase
         Assert.Equal("WARN",        entry["level"])
         Assert.Equal("hello world", entry["msg"])
         Assert.Equal("MyCtx",       entry["context"])
-        ; ts vem de A_Now: YYYYMMDDHH24MISS = 14 chars
+        ; ts comes from A_Now: YYYYMMDDHH24MISS = 14 chars
         Assert.Equal(14, StrLen(entry["ts"]))
     }
 
@@ -135,8 +135,8 @@ class InMemoryLoggerTests extends TestCase
 
     reset_counts_clears_all_entries()
     {
-        ; Implementacao atual: ResetCounts() => this.Clear()
-        ; Verificamos esse contrato.
+        ; Current implementation: ResetCounts() => this.Clear()
+        ; We verify that contract.
         this.memLog.Warn("w")
         this.memLog.Error("e")
         Assert.Equal(1, this.memLog.GetWarnCount())
@@ -146,7 +146,7 @@ class InMemoryLoggerTests extends TestCase
         Assert.Equal(0, this.memLog.GetWarnCount())
         Assert.Equal(0, this.memLog.GetErrorCount())
         Assert.Equal(0, this.memLog.entries.Length,
-            "ResetCounts limpa entries (alias para Clear)")
+            "ResetCounts wipes entries (alias for Clear)")
     }
 }
 

@@ -1,20 +1,20 @@
 ; ============================================================
-; SettingsRepository - AppSettings <-> INI (Onda 6, simplificado)
+; SettingsRepository - AppSettings <-> INI (Wave 6, simplified)
 ; ============================================================
 ;
-; VERSAO POS-DEMOLICAO: alinhada com AppSettings/OverlayLayout/WindowState
-; minimalistas.
+; POST-DEMOLITION VERSION: aligned with the minimalist AppSettings/
+; OverlayLayout/WindowState.
 ;
-; v17.15 (Bug #15): removido handling de campos desconectados:
+; v17.15 (Bug #15): removed handling of disconnected fields:
 ;   [General].PanelOverlayKeys, [Rules].GamePauseDetectionEnabled.
-;   Keys legadas em INIs antigos ficam orfas mas inertes — nao sao
-;   lidas, nao sao escritas, nao afetam comportamento.
+;   Legacy keys in old INIs are orphaned but inert — they are not
+;   read, not written, and do not affect behavior.
 ;
-; v17.15.1: re-adicionado [Rules].DeathPenaltyEnabled + DeathPenaltyMs
-; apos descoberta de que RunStatsPlotBuilder JA consumia. INI antigo
-; com essas keys eh respeitado.
+; v17.15.1: re-added [Rules].DeathPenaltyEnabled + DeathPenaltyMs
+; after discovering that RunStatsPlotBuilder ALREADY consumed them.
+; Old INIs with those keys are respected.
 ;
-; SECOES SUPORTADAS:
+; SUPPORTED SECTIONS:
 ;   [General]      ProfileName, GamePatch, LogFile
 ;   [Character]    Name, Class, Level
 ;   [CurrentArea]  Level, Code
@@ -27,11 +27,11 @@
 ;   [Window]       MicroLocked
 ;   [Overlay]      <widgetId>.{left,top,scale,visible,centered} + hoverHide
 ;
-; CONSTRUCAO:
+; CONSTRUCTION:
 ;   ini  := IniFile(A_ScriptDir "\poe2_tracker.ini")
 ;   repo := SettingsRepository(ini)
 ;
-; OPERACOES:
+; OPERATIONS:
 ;   cfg := repo.Load()
 ;   repo.Save(cfg)
 
@@ -43,7 +43,7 @@ class SettingsRepository
     __New(iniFileObj)
     {
         if !(iniFileObj is IniFile)
-            throw TypeError("SettingsRepository: 'iniFileObj' deve ser IniFile")
+            throw TypeError("SettingsRepository: 'iniFileObj' must be IniFile")
         this._ini := iniFileObj
     }
 
@@ -68,7 +68,7 @@ class SettingsRepository
     Save(cfg)
     {
         if !(cfg is AppSettings)
-            throw TypeError("SettingsRepository.Save: 'cfg' deve ser AppSettings")
+            throw TypeError("SettingsRepository.Save: 'cfg' must be AppSettings")
         this._SaveGeneral(cfg)
         this._SaveCharacter(cfg)
         this._SaveCurrentArea(cfg)
@@ -205,14 +205,14 @@ class SettingsRepository
     }
 
     ; ============================================================
-    ; [VendorRegexes] (Onda 8)
+    ; [VendorRegexes] (Wave 8)
     ;
-    ; Persiste 3 slots de regex curto (max 50 chars cada) usados
-    ; pelos botoes V1/V2/V3 do CompactLayoutWidget pra copy-to-clipboard
-    ; durante a run.
+    ; Persists 3 short regex slots (max 50 chars each) used by the
+    ; V1/V2/V3 buttons of CompactLayoutWidget for copy-to-clipboard
+    ; during the run.
     ;
-    ; Truncamento defensivo aplicado em ambos Load e Save: garante o
-    ; invariante mesmo se o INI for editado a mao com string longa.
+    ; Defensive truncation applied in both Load and Save: guarantees
+    ; the invariant even if the INI is hand-edited with a long string.
     ; ============================================================
     _LoadVendorRegexes(cfg)
     {
@@ -247,9 +247,9 @@ class SettingsRepository
     ; ============================================================
     ; [Disclaimer] (v17.15.2)
     ;
-    ; Persiste flag de acknowledgment do dialog de disclaimer mostrado
-    ; no boot. False = mostra a cada boot; true = silencia (user marcou
-    ; "don't show again").
+    ; Persists the acknowledgment flag of the disclaimer dialog shown
+    ; on boot. False = shown on each boot; true = silenced (user
+    ; ticked "don't show again").
     ; ============================================================
     _LoadDisclaimer(cfg)
     {
@@ -292,7 +292,7 @@ class SettingsRepository
     _SaveWindow(ws)
     {
         if !(ws is WindowState)
-            throw TypeError("SettingsRepository._SaveWindow: 'ws' deve ser WindowState")
+            throw TypeError("SettingsRepository._SaveWindow: 'ws' must be WindowState")
         this._ini.Write(ws.microLocked ? 1 : 0, "Window", "MicroLocked")
     }
 
@@ -340,7 +340,7 @@ class SettingsRepository
     _SaveOverlay(ol)
     {
         if !(ol is OverlayLayout)
-            throw TypeError("SettingsRepository._SaveOverlay: 'ol' deve ser OverlayLayout")
+            throw TypeError("SettingsRepository._SaveOverlay: 'ol' must be OverlayLayout")
 
         ini := this._ini
 
@@ -373,7 +373,7 @@ class SettingsRepository
     }
 
     ; ============================================================
-    ; Helpers privados
+    ; Private helpers
     ; ============================================================
     static _BuildPositionData(propsMap)
     {

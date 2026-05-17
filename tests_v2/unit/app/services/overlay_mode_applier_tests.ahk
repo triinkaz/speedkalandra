@@ -2,15 +2,16 @@
 ; OverlayModeApplierTests
 ; ============================================================
 ;
-; OverlayModeApplier subscribe a OverlayModeChanged. Pra cada widget
-; registrado (Map<id, widget>), chama widget.SetModeVisible(bool) com
-; o resultado de ShouldShowInMode(id, mode):
-;   compactLayout visible em mode=compact
-;   microLayout   visible em mode=micro
-;   steveLayout   visible em mode=steve
+; OverlayModeApplier subscribes to OverlayModeChanged. For each
+; registered widget (Map<id, widget>), calls
+; widget.SetModeVisible(bool) with the result of
+; ShouldShowInMode(id, mode):
+;   compactLayout visible in mode=compact
+;   microLayout   visible in mode=micro
+;   steveLayout   visible in mode=steve
 ;
-; Stub _OverlayApplierStubWidget tem campo `visible` que rastreia
-; ultimo valor passado pra SetModeVisible.
+; Stub _OverlayApplierStubWidget has a `visible` field that tracks
+; the last value passed to SetModeVisible.
 
 
 class _OverlayApplierStubWidget
@@ -51,12 +52,12 @@ class OverlayModeApplierTests extends TestCase
     }
 
     static Tests := [
-        ; --- Construtor ---
+        ; --- Constructor ---
         "constructor_throws_when_bus_not_event_bus",
         "constructor_throws_when_widgets_not_map",
         "constructor_subscribes_to_overlay_mode_changed",
 
-        ; --- Static: ShouldShowInMode (puro) ---
+        ; --- Static: ShouldShowInMode (pure) ---
         "should_show_compact_layout_in_compact_mode",
         "should_show_micro_layout_in_micro_mode",
         "should_show_steve_layout_in_steve_mode",
@@ -82,7 +83,7 @@ class OverlayModeApplierTests extends TestCase
     ]
 
     ; ============================================================
-    ; Construtor
+    ; Constructor
     ; ============================================================
 
     constructor_throws_when_bus_not_event_bus()
@@ -175,17 +176,17 @@ class OverlayModeApplierTests extends TestCase
     {
         this.applier.ApplyMode("")
         Assert.Equal(0, this.widgets[OverlayModeApplier.LAYOUT_COMPACT_ID].setCount,
-            "Empty mode: SetModeVisible nao chamado")
+            "Empty mode: SetModeVisible not called")
     }
 
     apply_mode_hides_unregistered_layout_ids()
     {
-        ; Adiciona widget com id desconhecido (defesa em profundidade)
+        ; Adds a widget with an unknown id (defense in depth)
         unknownWidget := _OverlayApplierStubWidget()
         this.widgets["legacy_widget"] := unknownWidget
         this.applier.ApplyMode(OverlayModes.COMPACT)
         Assert.False(unknownWidget.visible,
-            "Widget id desconhecido sempre escondido")
+            "Unknown widget id is always hidden")
     }
 
     ; ============================================================

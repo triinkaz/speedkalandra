@@ -1,17 +1,17 @@
 ; ============================================================
-; PersonalBestRepository - persiste tempos de PB em disco (v17.13)
+; PersonalBestRepository - persists PB times to disk (v17.13)
 ; ============================================================
 ;
-; ESCOPO:
-;   Persiste 2 categorias de Personal Bests:
-;     - PB de run inteira (melhor runDurationMs em uma run completed)
-;     - PB por zona (melhor zoneTotalMs final em uma run completed)
+; SCOPE:
+;   Persists 2 categories of Personal Bests:
+;     - Full-run PB (best runDurationMs in a completed run)
+;     - Per-zone PB (best final zoneTotalMs in a completed run)
 ;
-;   Salva no INI `data/personal_bests.ini`. Atualizado pelo
-;   PersonalBestService apos cada RunCompleted (NAO em RunCancelled —
-;   runs canceladas nao viram PB).
+;   Saves to INI `data/personal_bests.ini`. Updated by
+;   PersonalBestService after each RunCompleted (NOT on RunCancelled —
+;   cancelled runs do not become PBs).
 ;
-; FORMATO DO INI:
+; INI FORMAT:
 ;
 ;   [Run]
 ;   BestMs=410000
@@ -29,23 +29,23 @@
 ;   The Riverbank=95000
 ;   ...
 ;
-; [RunByAct] (v17.13): PB do tempo TOTAL DA RUN no momento que cada
-; ato terminou. Key = "Act<N>Ms" onde N eh o numero do ato (1-10).
-; Substitui o PB global de run inteira (que misturava runs de Ato 1
-; com runs de campanha completa, inutilmente).
+; [RunByAct] (v17.13): PB of the TOTAL RUN TIME at the moment each
+; act ended. Key = "Act<N>Ms" where N is the act number (1-10).
+; Replaces the global full-run PB (which uselessly mixed Act-1-only
+; runs with full-campaign runs).
 ;
-; NOTA SOBRE ZONA COMO KEY:
-;   Nomes de zona do PoE2 nao tem `=` ou `]` ou quebra de linha, entao
-;   funcionam como keys de INI sem escape. Espacos sao permitidos.
-;   Se uma zona com caracteres problematicos aparecer, o IniFile.Write
-;   vai falhar e o save eh skipado (try silencia).
+; NOTE ON ZONE AS KEY:
+;   PoE2 zone names have no `=`, `]`, or newlines, so they work as
+;   INI keys without escaping. Spaces are allowed. If a zone with
+;   problematic characters shows up, IniFile.Write will fail and the
+;   save is skipped (try silences it).
 ;
 ; API:
 ;   Load() -> Map{ "runPbMs": int, "runPbRunId": string, "zonePbs": Map<zone, ms> }
 ;   Save(data) -> bool
 ;   GetPath() -> string
 ;
-; CONSTRUCAO:
+; CONSTRUCTION:
 ;   repo := PersonalBestRepository(A_ScriptDir "\data\personal_bests.ini")
 
 
@@ -56,14 +56,14 @@ class PersonalBestRepository
     __New(path)
     {
         if (Trim(String(path)) = "")
-            throw ValueError("PersonalBestRepository: 'path' obrigatorio")
+            throw ValueError("PersonalBestRepository: 'path' is required")
         this._path := path
     }
 
     GetPath() => this._path
 
     ; ------------------------------------------------------------
-    ; Load - retorna Map com PBs (vazio se arquivo nao existe)
+    ; Load - returns Map with PBs (empty if the file does not exist)
     ; ------------------------------------------------------------
     Load()
     {
@@ -89,7 +89,7 @@ class PersonalBestRepository
         catch
             result["runPbRunId"] := ""
 
-        ; [RunByAct] (v17.13) — PB por ato
+        ; [RunByAct] (v17.13) — per-act PB
         try
         {
             byActMap := ini.ReadSectionAsMap("RunByAct")
@@ -100,7 +100,7 @@ class PersonalBestRepository
                     keyStr := String(k)
                     if (keyStr = "")
                         continue
-                    ; Match "Act<N>Ms" -> extrai N
+                    ; Match "Act<N>Ms" -> extract N
                     if !RegExMatch(keyStr, "i)^Act(\d+)Ms$", &m)
                         continue
                     actNum := Integer(m[1] + 0)
@@ -144,25 +144,25 @@ class PersonalBestRepository
     }
 
     ; ------------------------------------------------------------
-    ; Save - persiste PBs em disco ATOMICAMENTE (v17.15, Bug #7)
+    ; Save - persists PBs to disk ATOMICALLY (v17.15, Bug #7)
     ;
-    ; Antes: 6-8 IniWrite sequenciais com Delete entre eles. Crash
-    ; entre Delete("RunByAct") e Write -> PBs acumulados ao longo de
-    ; semanas eram perdidos.
+    ; Before: 6-8 sequential IniWrites with Delete between them. A
+    ; crash between Delete("RunByAct") and Write -> PBs accumulated
+    ; over weeks were lost.
     ;
-    ; Agora: serializa INI inteiro em memoria e escreve via AtomicWriter
-    ; (.tmp + FileMove). Crash antes do FileMove deixa .tmp orfao mas
-    ; o INI original intacto.
+    ; Now: serializes the entire INI in memory and writes via
+    ; AtomicWriter (.tmp + FileMove). A crash before FileMove leaves
+    ; an orphan .tmp but the original INI intact.
     ;
-    ; ENCODING (v0.1.0): AtomicWriter usa "UTF-16" em vez de "UTF-8".
-    ; Descoberta na Wave 4 de testes: IniRead key-lookup
-    ; (`IniRead(path, section, key, default)`) em AHK v2 NAO funciona
-    ; em arquivos UTF-8 BOM, retornando sempre o default. Funciona
-    ; apenas em UTF-16 LE BOM (formato nativo de IniWrite). Bug latente
-    ; no R11 do projeto (TextEncoding.MigrateIniToUtf8) tambem.
+    ; ENCODING (v0.1.0): AtomicWriter uses "UTF-16" instead of "UTF-8".
+    ; Discovered in Wave 4 testing: AHK v2 IniRead key-lookup
+    ; (`IniRead(path, section, key, default)`) does NOT work on UTF-8
+    ; BOM files, always returning the default. Works only on UTF-16
+    ; LE BOM (the native IniWrite format). Latent bug in the project's
+    ; R11 (TextEncoding.MigrateIniToUtf8) too.
     ;
-    ; Falhas: loga OutputDebug e retorna false. Caller (service) decide
-    ; o que fazer (atualmente silencia, mas pelo menos tem o sinal).
+    ; Failures: logs to OutputDebug and returns false. Caller (service)
+    ; decides what to do (currently silences, but at least has the signal).
     ; ------------------------------------------------------------
     Save(data)
     {
@@ -177,32 +177,33 @@ class PersonalBestRepository
         }
         catch as ex
         {
-            OutputDebug("PersonalBestRepository.Save falhou: " ex.Message)
+            OutputDebug("PersonalBestRepository.Save failed: " ex.Message)
             return false
         }
     }
 
     ; ------------------------------------------------------------
-    ; _Serialize - monta conteudo INI completo em string
+    ; _Serialize - builds the complete INI content as a string
     ;
-    ; Output compativel com IniRead (que Load usa pra parsear).
-    ; Defensivo: valida tipos, sanitiza chaves de zona.
+    ; Output compatible with IniRead (which Load uses to parse it).
+    ; Defensive: validates types, sanitizes zone keys.
     ;
-    ; LINE ENDINGS: usa CRLF (`r`n) porque IniRead chama Win32
-    ; GetPrivateProfileString, que em arquivos UTF-8 BOM NAO reconhece
-    ; key=value separados por LF puro. Section-reads (`IniRead(file,
-    ; section)`) toleram LF, mas key-lookups (`IniRead(file, section,
-    ; key, default)`) retornam default. v0.1.0 fix: convencao Windows.
+    ; LINE ENDINGS: uses CRLF (`r`n) because IniRead calls Win32
+    ; GetPrivateProfileString, which on UTF-8 BOM files does NOT
+    ; recognize key=value separated by pure LF. Section reads
+    ; (`IniRead(file, section)`) tolerate LF, but key lookups
+    ; (`IniRead(file, section, key, default)`) return the default.
+    ; v0.1.0 fix: Windows convention.
     ; ------------------------------------------------------------
     static _Serialize(data)
     {
         ; --- [Run] ---
         runMs := (data.Has("runPbMs") && IsNumber(data["runPbMs"]))
                  ? Integer(data["runPbMs"]) : 0
-        ; v0.1.0: renomeado de `runId` pra `currentRunId` (case-insensitive
-        ; collision com classe `RunId` do domain disparava #Warn).
+        ; v0.1.0: renamed from `runId` to `currentRunId` (case-insensitive
+        ; collision with the domain class `RunId` was triggering #Warn).
         currentRunId := data.Has("runPbRunId") ? String(data["runPbRunId"]) : ""
-        ; Sanitiza id (paranoia: nao deveria ter caracteres invalidos)
+        ; Sanitize id (paranoia: should not have invalid characters)
         currentRunId := StrReplace(currentRunId, "`r", "")
         currentRunId := StrReplace(currentRunId, "`n", "")
 
@@ -238,7 +239,7 @@ class PersonalBestRepository
                     continue
                 if !IsNumber(ms) || ms <= 0
                     continue
-                ; Sanitiza nome da zona contra chars que quebrariam INI
+                ; Sanitize zone name against chars that would break the INI
                 zStr := StrReplace(zStr, "`r", "")
                 zStr := StrReplace(zStr, "`n", "")
                 zStr := StrReplace(zStr, "=", "")

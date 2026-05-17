@@ -1,49 +1,49 @@
 ; ============================================================
-; JsonFile — escrita de arquivos JSON (Fase B2.1)
+; JsonFile — JSON file writing (Phase B2.1)
 ; ============================================================
 ;
-; Espelha CsvFile/IniFile: instance-based com path no construtor.
+; Mirrors CsvFile/IniFile: instance-based with path in the constructor.
 ;
-; FILOSOFIA:
-;   - Escrita primeiro, leitura fica pra fase futura quando precisarmos
-;     re-importar runs exportadas.
-;   - Pretty-print por default (indent=2 espacos) — UX prioriza
-;     inspecao manual em editor de texto.
-;   - Encoding sempre UTF-8 (consistente com CsvFile).
+; PHILOSOPHY:
+;   - Write first, reading is left for a future phase when we need to
+;     re-import exported runs.
+;   - Pretty-print by default (indent=2 spaces) — UX prioritizes
+;     manual inspection in a text editor.
+;   - Always UTF-8 encoding (consistent with CsvFile).
 ;
-; TIPOS SUPORTADOS no value de entrada:
-;   - String  -> JSON string com escape (")
-;   - Number  -> JSON number literal (sem aspas)
-;   - JsonBool(true|false) -> JSON true|false (boolean nativo)
+; SUPPORTED TYPES in the input value:
+;   - String  -> JSON string with escapes (")
+;   - Number  -> JSON number literal (no quotes)
+;   - JsonBool(true|false) -> JSON true|false (native boolean)
 ;   - JsonNull() -> JSON null
 ;   - Map     -> JSON object {...}
 ;   - Array   -> JSON array [...]
 ;
-; CONVENCAO DE BOOLEANS:
-;   AHK v2 trata `true` como 1 e `false` como 0. Sem distincao
-;   entre "1 numero" vs "true booleano". Pra serializar bool
-;   explicito como `true`/`false`, use `JsonBool(value)` wrapper.
-;   Senao, valores numericos viram numeros JSON (1, 0).
+; BOOLEAN CONVENTION:
+;   AHK v2 treats `true` as 1 and `false` as 0. There is no distinction
+;   between "1 number" vs "true boolean". To serialize an explicit
+;   bool as `true`/`false`, use the `JsonBool(value)` wrapper.
+;   Otherwise, numeric values become JSON numbers (1, 0).
 ;
-; CONSTRUCAO:
+; CONSTRUCTION:
 ;   jf := JsonFile(path)
 ;
-; USO:
+; USAGE:
 ;   jf.Write(Map("name", "Run1", "active", JsonBool(true)))
-;   ; Resultado em disco:
+;   ; Result on disk:
 ;   ; {
 ;   ;   "name": "Run1",
 ;   ;   "active": true
 ;   ; }
 ;
 ; STATIC HELPERS:
-;   JsonFile.Stringify(value, indent := 2) -> string com JSON
-;   JsonFile.EscapeString(s) -> string com escapes (sem as aspas)
+;   JsonFile.Stringify(value, indent := 2) -> JSON string
+;   JsonFile.EscapeString(s) -> escaped string (without quotes)
 
 
 class JsonNull
 {
-    ; Marker class — sem campos, sem metodos. Uso:
+    ; Marker class — no fields, no methods. Usage:
     ;   Map("key", JsonNull())  ->  "key": null
 }
 
@@ -65,16 +65,17 @@ class JsonFile
     __New(path)
     {
         if (Trim(String(path)) = "")
-            throw ValueError("JsonFile: 'path' obrigatorio")
+            throw ValueError("JsonFile: 'path' is required")
         this._path := path
     }
 
     GetPath() => this._path
 
-    ; Write(value, indent := 2) — serializa value e escreve no path.
-    ; Overwrites file completamente (sem append). UTF-8.
-    ; Refactor R10: usa AtomicWriter pra evitar corrupção por crash
-    ; entre FileDelete e FileAppend (gap visivel onde arquivo desaparecia).
+    ; Write(value, indent := 2) — serializes value and writes to path.
+    ; Overwrites file completely (no append). UTF-8.
+    ; Refactor R10: uses AtomicWriter to avoid corruption on crash
+    ; between FileDelete and FileAppend (visible gap where the file
+    ; would disappear).
     Write(value, indent := 2)
     {
         json := JsonFile.Stringify(value, indent)
@@ -85,9 +86,9 @@ class JsonFile
     ; Static API
     ; ============================================================
 
-    ; Stringify(value, indent := 2) — converte value em string JSON.
-    ;   indent = 0  -> minified (sem espacos extras)
-    ;   indent >= 1 -> pretty-printed (newlines + indent espacos)
+    ; Stringify(value, indent := 2) — converts value into a JSON string.
+    ;   indent = 0  -> minified (no extra spaces)
+    ;   indent >= 1 -> pretty-printed (newlines + indent spaces)
     static Stringify(value, indent := 2)
     {
         n := IsNumber(indent) ? Integer(indent + 0) : 2
@@ -97,61 +98,61 @@ class JsonFile
     }
 
     ; ============================================================
-    ; Parse(jsonStr) — le string JSON e retorna estrutura AHK (v0.1.0)
+    ; Parse(jsonStr) — reads JSON string and returns an AHK structure (v0.1.0)
     ; ============================================================
     ;
-    ; Mapeamento de tipos JSON -> AHK:
+    ; JSON type -> AHK type mapping:
     ;   JSON object   -> Map
     ;   JSON array    -> Array
-    ;   JSON string   -> String (com unescape de \n, \t, \uXXXX, etc)
-    ;   JSON number   -> Integer (se nao tem `.` nem expoente) ou Float
-    ;   JSON true     -> 1 (AHK trata 1/0 como bool nativo)
+    ;   JSON string   -> String (with unescape of \n, \t, \uXXXX, etc.)
+    ;   JSON number   -> Integer (if no `.` and no exponent) or Float
+    ;   JSON true     -> 1 (AHK treats 1/0 as native bool)
     ;   JSON false    -> 0
-    ;   JSON null     -> "" (string vazia eh o "nulo" idiomatico em AHK)
+    ;   JSON null     -> "" (empty string is the idiomatic "null" in AHK)
     ;
-    ; CAVEAT: roundtrip Stringify(Parse(s)) nao preserva JsonBool/
-    ; JsonNull wrappers — eles viram 1/0/"" puros. Pra nosso caso de
-    ; uso (importar buildResult exportado), isso eh OK porque os
-    ; dados sao primitivos.
+    ; CAVEAT: Stringify(Parse(s)) roundtrip does not preserve JsonBool/
+    ; JsonNull wrappers — they become plain 1/0/"". For our use case
+    ; (importing exported buildResult), this is OK because the data
+    ; is primitive.
     ;
-    ; Throws Error com mensagem clara em JSON malformado, indicando
-    ; posicao (1-indexed). Caller deve usar try/catch.
+    ; Throws Error with a clear message on malformed JSON, indicating
+    ; position (1-indexed). Caller must use try/catch.
     static Parse(jsonStr)
     {
         if !(jsonStr is String) && !IsNumber(jsonStr)
-            throw TypeError("JsonFile.Parse: input deve ser string")
+            throw TypeError("JsonFile.Parse: input must be a string")
         text := String(jsonStr)
         state := Map("text", text, "pos", 1, "len", StrLen(text))
         JsonFile._ParseSkipWS(state)
         if (state["pos"] > state["len"])
-            throw Error("JsonFile.Parse: input vazio")
+            throw Error("JsonFile.Parse: empty input")
         result := JsonFile._ParseValue(state)
         JsonFile._ParseSkipWS(state)
         if (state["pos"] <= state["len"])
         {
             ch := SubStr(text, state["pos"], 1)
-            throw Error("JsonFile.Parse: conteudo extra apos JSON na posicao "
+            throw Error("JsonFile.Parse: extra content after JSON at position "
                 . state["pos"] " (char '" ch "')")
         }
         return result
     }
 
-    ; EscapeString(s) — retorna string com escapes JSON SEM as aspas
-    ; envolventes. Util pra debug ou composicao manual.
+    ; EscapeString(s) — returns the string with JSON escapes WITHOUT
+    ; the surrounding quotes. Useful for debug or manual composition.
     static EscapeString(s)
     {
-        ; Internamente usa _SerializeString e tira as aspas.
+        ; Internally uses _SerializeString and strips the quotes.
         full := JsonFile._SerializeString(s)
         return SubStr(full, 2, StrLen(full) - 2)
     }
 
     ; ============================================================
-    ; Helpers privados de serializacao
+    ; Private serialization helpers
     ; ============================================================
 
     static _SerializeValue(v, indent, depth)
     {
-        ; --- Wrappers explicitos primeiro ---
+        ; --- Explicit wrappers first ---
         if IsObject(v)
         {
             if (v is JsonNull)
@@ -162,25 +163,25 @@ class JsonFile
                 return JsonFile._SerializeMap(v, indent, depth)
             if (v is Array)
                 return JsonFile._SerializeArray(v, indent, depth)
-            ; Objetos sem suporte: tenta extrair via ToMap se houver
+            ; Unsupported objects: try to extract via ToMap if available
             if v.HasMethod("ToMap")
             {
                 m := v.ToMap()
                 if (m is Map)
                     return JsonFile._SerializeMap(m, indent, depth)
             }
-            throw TypeError("JsonFile: tipo de objeto nao suportado (" Type(v) ")")
+            throw TypeError("JsonFile: unsupported object type (" Type(v) ")")
         }
 
-        ; --- Primitivos ---
-        ; AHK v2: vazio sem tipo concreto -> tratamos como null pra
-        ; manter JSON valido (em vez de string vazia).
+        ; --- Primitives ---
+        ; AHK v2: empty value with no concrete type -> we treat it as
+        ; null to keep JSON valid (rather than an empty string).
         if (v = "" && !IsNumber(v))
-            return '""'    ; string vazia explicita
+            return '""'    ; explicit empty string
         if IsNumber(v)
         {
-            ; Integer ou Float
-            ; Format: numbers em AHK v2 ja serializam direito como string
+            ; Integer or Float
+            ; Format: numbers in AHK v2 already serialize cleanly as strings
             return v . ""
         }
         ; String
@@ -281,7 +282,7 @@ class JsonFile
     }
 
     ; ============================================================
-    ; Helpers privados do Parse
+    ; Private Parse helpers
     ; ============================================================
 
     static _ParseSkipWS(state)
@@ -307,7 +308,7 @@ class JsonFile
     {
         JsonFile._ParseSkipWS(state)
         if (state["pos"] > state["len"])
-            throw Error("JsonFile.Parse: fim inesperado de input")
+            throw Error("JsonFile.Parse: unexpected end of input")
         ch := SubStr(state["text"], state["pos"], 1)
         if (ch = "{")
             return JsonFile._ParseObject(state)
@@ -317,7 +318,7 @@ class JsonFile
             return JsonFile._ParseString(state)
         if (ch = "-" || (Ord(ch) >= 48 && Ord(ch) <= 57))
             return JsonFile._ParseNumber(state)
-        ; Literais: true/false/null
+        ; Literals: true/false/null
         if (SubStr(state["text"], state["pos"], 4) = "true")
         {
             state["pos"] += 4
@@ -333,13 +334,13 @@ class JsonFile
             state["pos"] += 4
             return ""
         }
-        throw Error("JsonFile.Parse: char inesperado '" ch "' na posicao "
+        throw Error("JsonFile.Parse: unexpected char '" ch "' at position "
             . state["pos"])
     }
 
     static _ParseObject(state)
     {
-        state["pos"] += 1   ; pula '{'
+        state["pos"] += 1   ; skip '{'
         result := Map()
         JsonFile._ParseSkipWS(state)
         if (state["pos"] <= state["len"] && SubStr(state["text"], state["pos"], 1) = "}")
@@ -351,19 +352,19 @@ class JsonFile
         {
             JsonFile._ParseSkipWS(state)
             if (state["pos"] > state["len"] || SubStr(state["text"], state["pos"], 1) != '"')
-                throw Error("JsonFile.Parse: esperava string-key em object na posicao "
+                throw Error("JsonFile.Parse: expected string-key in object at position "
                     . state["pos"])
             key := JsonFile._ParseString(state)
             JsonFile._ParseSkipWS(state)
             if (state["pos"] > state["len"] || SubStr(state["text"], state["pos"], 1) != ":")
-                throw Error("JsonFile.Parse: esperava ':' apos key '" key "' na posicao "
+                throw Error("JsonFile.Parse: expected ':' after key '" key "' at position "
                     . state["pos"])
             state["pos"] += 1
             value := JsonFile._ParseValue(state)
             result[key] := value
             JsonFile._ParseSkipWS(state)
             if (state["pos"] > state["len"])
-                throw Error("JsonFile.Parse: object nao fechado")
+                throw Error("JsonFile.Parse: object not closed")
             ch := SubStr(state["text"], state["pos"], 1)
             if (ch = ",")
             {
@@ -375,14 +376,14 @@ class JsonFile
                 state["pos"] += 1
                 return result
             }
-            throw Error("JsonFile.Parse: esperava ',' ou '}' em object, achou '"
-                . ch "' na posicao " state["pos"])
+            throw Error("JsonFile.Parse: expected ',' or '}' in object, got '"
+                . ch "' at position " state["pos"])
         }
     }
 
     static _ParseArray(state)
     {
-        state["pos"] += 1   ; pula '['
+        state["pos"] += 1   ; skip '['
         result := []
         JsonFile._ParseSkipWS(state)
         if (state["pos"] <= state["len"] && SubStr(state["text"], state["pos"], 1) = "]")
@@ -396,7 +397,7 @@ class JsonFile
             result.Push(value)
             JsonFile._ParseSkipWS(state)
             if (state["pos"] > state["len"])
-                throw Error("JsonFile.Parse: array nao fechado")
+                throw Error("JsonFile.Parse: array not closed")
             ch := SubStr(state["text"], state["pos"], 1)
             if (ch = ",")
             {
@@ -408,14 +409,14 @@ class JsonFile
                 state["pos"] += 1
                 return result
             }
-            throw Error("JsonFile.Parse: esperava ',' ou ']' em array, achou '"
-                . ch "' na posicao " state["pos"])
+            throw Error("JsonFile.Parse: expected ',' or ']' in array, got '"
+                . ch "' at position " state["pos"])
         }
     }
 
     static _ParseString(state)
     {
-        ; Assume primeiro char eh '"'
+        ; Assumes first char is '"'
         state["pos"] += 1
         text := state["text"]
         len := state["len"]
@@ -432,7 +433,7 @@ class JsonFile
             if (ch = "\")
             {
                 if (pos + 1 > len)
-                    throw Error("JsonFile.Parse: escape incompleto no fim do input")
+                    throw Error("JsonFile.Parse: incomplete escape at end of input")
                 esc := SubStr(text, pos + 1, 1)
                 if (esc = '"')
                 {
@@ -477,26 +478,26 @@ class JsonFile
                 else if (esc = "u")
                 {
                     if (pos + 5 > len)
-                        throw Error("JsonFile.Parse: \\uXXXX incompleto na posicao " pos)
+                        throw Error("JsonFile.Parse: incomplete \\uXXXX at position " pos)
                     hex := SubStr(text, pos + 2, 4)
                     if !RegExMatch(hex, "^[0-9A-Fa-f]{4}$")
-                        throw Error("JsonFile.Parse: \\uXXXX invalido '" hex "' na posicao " pos)
+                        throw Error("JsonFile.Parse: invalid \\uXXXX '" hex "' at position " pos)
                     code := Integer("0x" hex)
                     out .= Chr(code)
                     pos += 6
                 }
                 else
                 {
-                    throw Error("JsonFile.Parse: escape desconhecido '\\" esc "' na posicao " pos)
+                    throw Error("JsonFile.Parse: unknown escape '\\" esc "' at position " pos)
                 }
                 continue
             }
             if (Ord(ch) < 32)
-                throw Error("JsonFile.Parse: char de controle nao escapado na posicao " pos)
+                throw Error("JsonFile.Parse: unescaped control char at position " pos)
             out .= ch
             pos += 1
         }
-        throw Error("JsonFile.Parse: string nao fechada")
+        throw Error("JsonFile.Parse: string not closed")
     }
 
     static _ParseNumber(state)
@@ -518,8 +519,8 @@ class JsonFile
             }
             break
         }
-        ; v0.1.0: renomeado de `isFloat` pra `numIsFloat` (case-insensitive
-        ; collision com builtin function `IsFloat` disparava #Warn).
+        ; v0.1.0: renamed from `isFloat` to `numIsFloat` (case-insensitive
+        ; collision with the builtin function `IsFloat` was triggering #Warn).
         numIsFloat := false
         if (pos <= len && SubStr(text, pos, 1) = ".")
         {
@@ -564,7 +565,7 @@ class JsonFile
         numStr := SubStr(text, start, pos - start)
         state["pos"] := pos
         if (numStr = "" || numStr = "-")
-            throw Error("JsonFile.Parse: numero invalido na posicao " start)
+            throw Error("JsonFile.Parse: invalid number at position " start)
         return numIsFloat ? Float(numStr) : Integer(numStr)
     }
 }

@@ -2,31 +2,31 @@
 ; LogMonitorServiceTests
 ; ============================================================
 ;
-; LogMonitorService eh parsing puro do Client.txt do PoE2. ProcessText
-; eh a interface publica de testes — recebe um chunk de texto e publica
-; eventos no bus.
+; LogMonitorService is pure parsing of PoE2's Client.txt. ProcessText
+; is the public test interface — receives a chunk of text and
+; publishes events on the bus.
 ;
-; Linhas reconhecidas:
+; Recognized lines:
 ;   - "X (Class) is now level N"     -> CharacterLevelUp
 ;   - "Generating level N area X"    -> AreaLevelChanged
 ;   - "[SCENE] Set Source [name]"    -> SceneEntered + ZoneChanged (Bug #21)
 ;   - "You have entered X"           -> ZoneChanged
-;   - "<Name> has been slain."       -> DeathDetected (com filtro v17.15)
+;   - "<Name> has been slain."       -> DeathDetected (with v17.15 filter)
 ;   - "[WINDOW] Lost/Gained focus"   -> WindowFocusChanged
 ;
-; Tambem publica LogLineRead pra TODA linha (broadcast pra parsers
-; especializados).
+; Also publishes LogLineRead for EVERY line (broadcast for
+; specialized parsers).
 ;
-; Filtros:
-;   - Scene: filtra "(null)", "(unknown)", "Act N" (marker de transicao)
-;   - Death: requer _characterName setado + match exato (Bug #2 v17.15)
+; Filters:
+;   - Scene: filters "(null)", "(unknown)", "Act N" (transition marker)
+;   - Death: requires _characterName set + exact match (Bug #2 v17.15)
 ;
-; Particularidades de parsing:
-;   - Partial line: chunks que nao terminam com `n sao bufferizados
-;   - CRLF/CR: normalizados pra LF
+; Parsing details:
+;   - Partial line: chunks not ending with `n are buffered
+;   - CRLF/CR: normalized to LF
 ;
-; Lifecycle (Start/Stop/Tick) NAO testado aqui — depende de FileOpen,
-; testaremos em integration na Wave 8.
+; Lifecycle (Start/Stop/Tick) NOT tested here — depends on FileOpen,
+; will be tested in integration in Wave 8.
 
 
 class LogMonitorServiceTests extends TestCase
@@ -50,7 +50,7 @@ class LogMonitorServiceTests extends TestCase
     }
 
     static Tests := [
-        ; --- Construtor ---
+        ; --- Constructor ---
         "constructor_throws_when_clock_missing_now_ms",
         "constructor_throws_when_bus_not_event_bus",
         "constructor_throws_when_log_missing_info_method",
@@ -78,7 +78,7 @@ class LogMonitorServiceTests extends TestCase
         "area_level_changed_includes_level_and_code",
         "area_level_changed_trims_quotes_from_code",
 
-        ; --- SceneEntered + ZoneChanged duplo (Bug #21) ---
+        ; --- SceneEntered + ZoneChanged double (Bug #21) ---
         "extracts_scene_simple_case",
         "scene_publishes_scene_entered_event",
         "scene_also_publishes_zone_changed_event_bug_21",
@@ -94,7 +94,7 @@ class LogMonitorServiceTests extends TestCase
         "zone_entered_zone_name_trimmed",
         "zone_entered_scene_id_empty",
 
-        ; --- DeathDetected (filtro Bug #2 v17.15) ---
+        ; --- DeathDetected (Bug #2 v17.15 filter) ---
         "death_not_published_when_character_name_empty",
         "death_published_when_matches_character_name",
         "death_not_published_when_does_not_match_character",
@@ -118,7 +118,7 @@ class LogMonitorServiceTests extends TestCase
         "cr_normalized_to_lf",
         "mixed_line_endings_handled",
 
-        ; --- Linhas desconhecidas ---
+        ; --- Unknown lines ---
         "unknown_line_still_publishes_log_line_read",
         "unknown_line_publishes_no_specific_event"
     ]
@@ -135,7 +135,7 @@ class LogMonitorServiceTests extends TestCase
     }
 
     ; ============================================================
-    ; Construtor
+    ; Constructor
     ; ============================================================
 
     constructor_throws_when_clock_missing_now_ms()
@@ -211,7 +211,7 @@ class LogMonitorServiceTests extends TestCase
     {
         capturedEvents := this._CaptureEvents(Events.LogLineRead)
         this.svc.ProcessText("   `nactual`n   `n")
-        Assert.Equal(1, capturedEvents.Length, "Apenas 'actual' nao eh vazio apos Trim")
+        Assert.Equal(1, capturedEvents.Length, "Only 'actual' is non-empty after Trim")
     }
 
     ; ============================================================
@@ -237,8 +237,8 @@ class LogMonitorServiceTests extends TestCase
 
     character_level_up_ignored_with_zero_level()
     {
-        ; level 0 nao deve passar pelo extractor (regex exige \d+ mas
-        ; o check `charLevel > 0` filtra)
+        ; level 0 must not pass through the extractor (regex requires
+        ; \d+ but the `charLevel > 0` check filters it)
         capturedEvents := this._CaptureEvents(Events.CharacterLevelUp)
         this.svc.ProcessText(": Olaf (Warrior) is now level 0`n")
         Assert.Equal(0, capturedEvents.Length)
@@ -279,14 +279,14 @@ class LogMonitorServiceTests extends TestCase
 
     area_level_changed_trims_quotes_from_code()
     {
-        ; Em algumas linhas o area code vem entre aspas duplas
+        ; In some lines the area code is enclosed in double quotes
         capturedEvents := this._CaptureEvents(Events.AreaLevelChanged)
         this.svc.ProcessText('Generating level 10 area "G1_2" with seed 42`n')
-        Assert.Equal("G1_2", capturedEvents[1]["areaCode"], "Aspas trimadas")
+        Assert.Equal("G1_2", capturedEvents[1]["areaCode"], "Quotes trimmed")
     }
 
     ; ============================================================
-    ; SceneEntered + ZoneChanged duplo (Bug #21 v17.15)
+    ; SceneEntered + ZoneChanged double (Bug #21 v17.15)
     ; ============================================================
 
     extracts_scene_simple_case()
@@ -306,9 +306,9 @@ class LogMonitorServiceTests extends TestCase
 
     scene_also_publishes_zone_changed_event_bug_21()
     {
-        ; Bug #21: PoE2 atual nao emite "You have entered" em todas as
-        ; transicoes; so [SCENE]. Republicar como ZoneChanged garante que
-        ; ZoneTrackingService receba a mudanca.
+        ; Bug #21: current PoE2 doesn't emit "You have entered" on all
+        ; transitions; only [SCENE]. Republishing as ZoneChanged
+        ; ensures ZoneTrackingService gets the change.
         capturedEvents := this._CaptureEvents(Events.ZoneChanged)
         this.svc.ProcessText("[SCENE] Set Source [Clearfell]`n")
         Assert.Equal(1, capturedEvents.Length)
@@ -333,12 +333,12 @@ class LogMonitorServiceTests extends TestCase
 
     scene_with_act_marker_is_filtered_case_insensitive()
     {
-        ; "Act 1" nao eh zona, eh cinematica/title card
+        ; "Act 1" is not a zone, it's a cinematic/title card
         sceneEvents := this._CaptureEvents(Events.SceneEntered)
         this.svc.ProcessText("[SCENE] Set Source [Act 1]`n")
         this.svc.ProcessText("[SCENE] Set Source [act 2]`n")
         this.svc.ProcessText("[SCENE] Set Source [ACT 6]`n")
-        Assert.Equal(0, sceneEvents.Length, "Todos os Act markers filtrados")
+        Assert.Equal(0, sceneEvents.Length, "All Act markers filtered")
     }
 
     scene_with_empty_name_is_filtered()
@@ -350,8 +350,8 @@ class LogMonitorServiceTests extends TestCase
 
     scene_zone_changed_includes_scene_id()
     {
-        ; Diferente de ZoneChanged via "You have entered" (sceneId=""),
-        ; ZoneChanged via [SCENE] inclui sceneId.
+        ; Unlike ZoneChanged via "You have entered" (sceneId=""),
+        ; ZoneChanged via [SCENE] includes the sceneId.
         capturedEvents := this._CaptureEvents(Events.ZoneChanged)
         this.svc.ProcessText("[SCENE] Set Source [G1_2]`n")
         Assert.Equal("G1_2", capturedEvents[1]["sceneId"])
@@ -378,7 +378,7 @@ class LogMonitorServiceTests extends TestCase
 
     zone_entered_zone_name_trimmed()
     {
-        ; Ponto final removido pelo Trim(m[1], " .")
+        ; Trailing period removed by Trim(m[1], " .")
         capturedEvents := this._CaptureEvents(Events.ZoneChanged)
         this.svc.ProcessText(": You have entered Clearfell Encampment.`n")
         Assert.Equal("Clearfell Encampment", capturedEvents[1]["zoneName"])
@@ -386,7 +386,7 @@ class LogMonitorServiceTests extends TestCase
 
     zone_entered_scene_id_empty()
     {
-        ; ZoneChanged via "You have entered" tem sceneId=""
+        ; ZoneChanged via "You have entered" has sceneId=""
         capturedEvents := this._CaptureEvents(Events.ZoneChanged)
         this.svc.ProcessText(": You have entered Mud Burrow.`n")
         Assert.Equal("", capturedEvents[1]["sceneId"])
@@ -398,7 +398,7 @@ class LogMonitorServiceTests extends TestCase
 
     death_not_published_when_character_name_empty()
     {
-        ; characterName="" = filtro desativado = death NUNCA publicado
+        ; characterName="" = filter disabled = death is NEVER published
         capturedEvents := this._CaptureEvents(Events.DeathDetected)
         this.svc.ProcessText(": Olaf has been slain.`n")
         Assert.Equal(0, capturedEvents.Length)
@@ -415,11 +415,11 @@ class LogMonitorServiceTests extends TestCase
 
     death_not_published_when_does_not_match_character()
     {
-        ; Bug #2: bosses tambem disparam "has been slain" — filtro evita
+        ; Bug #2: bosses also trigger "has been slain" — the filter prevents it
         capturedEvents := this._CaptureEvents(Events.DeathDetected)
         this.svc.SetCharacterName("Olaf")
         this.svc.ProcessText(": Geonor has been slain.`n")
-        Assert.Equal(0, capturedEvents.Length, "Boss kill nao infla deathCount")
+        Assert.Equal(0, capturedEvents.Length, "Boss kill doesn't inflate deathCount")
     }
 
     death_extracts_name_with_colon_prefix()
@@ -432,7 +432,7 @@ class LogMonitorServiceTests extends TestCase
 
     death_extracts_name_without_colon_prefix()
     {
-        ; Linhas sem prefixo de timestamp (formato raro mas existe)
+        ; Lines without timestamp prefix (rare format but exists)
         capturedEvents := this._CaptureEvents(Events.DeathDetected)
         this.svc.SetCharacterName("Olaf")
         this.svc.ProcessText("Olaf has been slain.`n")
@@ -480,11 +480,11 @@ class LogMonitorServiceTests extends TestCase
 
     partial_line_buffered_until_newline_arrives()
     {
-        ; Chunk sem newline final: bufferiza
+        ; Chunk without trailing newline: buffers
         capturedEvents := this._CaptureEvents(Events.LogLineRead)
         this.svc.ProcessText("incomplete...")
-        Assert.Equal(0, capturedEvents.Length, "Sem newline: nao processa")
-        ; Quando o newline chega, processa a linha completa
+        Assert.Equal(0, capturedEvents.Length, "Without newline: doesn't process")
+        ; When the newline arrives, processes the full line
         this.svc.ProcessText(" continued`n")
         Assert.Equal(1, capturedEvents.Length)
         Assert.Equal("incomplete... continued", capturedEvents[1]["line"])
@@ -510,9 +510,9 @@ class LogMonitorServiceTests extends TestCase
     trailing_newline_clears_partial_buffer()
     {
         capturedEvents := this._CaptureEvents(Events.LogLineRead)
-        this.svc.ProcessText("first`nsecond")   ; bufferiza "second"
+        this.svc.ProcessText("first`nsecond")   ; buffers "second"
         this.svc.ProcessText("`n")              ; flush
-        this.svc.ProcessText("third`n")         ; nao concatena com "second"
+        this.svc.ProcessText("third`n")         ; doesn't concat with "second"
         Assert.Equal(3, capturedEvents.Length)
         Assert.Equal("first",  capturedEvents[1]["line"])
         Assert.Equal("second", capturedEvents[2]["line"])
@@ -534,7 +534,7 @@ class LogMonitorServiceTests extends TestCase
 
     cr_normalized_to_lf()
     {
-        ; Old-Mac line ending — caso raro mas suportado
+        ; Old-Mac line ending — rare case but supported
         capturedEvents := this._CaptureEvents(Events.LogLineRead)
         this.svc.ProcessText("line1`rline2`r")
         Assert.Equal(2, capturedEvents.Length)
@@ -548,12 +548,12 @@ class LogMonitorServiceTests extends TestCase
     }
 
     ; ============================================================
-    ; Linhas desconhecidas
+    ; Unknown lines
     ; ============================================================
 
     unknown_line_still_publishes_log_line_read()
     {
-        ; LogLineRead eh broadcast ANTES de qualquer parsing especifico
+        ; LogLineRead is broadcast BEFORE any specific parsing
         capturedEvents := this._CaptureEvents(Events.LogLineRead)
         this.svc.ProcessText("some random garbage that matches nothing`n")
         Assert.Equal(1, capturedEvents.Length)

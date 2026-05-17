@@ -1,22 +1,22 @@
 ; ============================================================
-; OverlayModeApplier - aplica visibility por modo (Onda 4)
+; OverlayModeApplier - applies visibility by mode (Wave 4)
 ; ============================================================
 ;
-; VERSAO POS-DEMOLICAO: simplificada pra 2 modos (COMPACT/MICRO).
-; Removidos widgets soltos / CUSTOM mode / position swap.
+; POST-DEMOLITION VERSION: simplified to 2 modes (COMPACT/MICRO).
+; Loose widgets / CUSTOM mode / position swap removed.
 ;
-; Subscribe Evt.OverlayModeChanged e, pra cada widget conhecido,
-; aplica SetModeVisible(shouldShow). NAO mexe em _position.visible
-; do usuario.
+; Subscribes to Evt.OverlayModeChanged and, for each known widget,
+; applies SetModeVisible(shouldShow). Does NOT touch the user's
+; _position.visible.
 ;
-; REGRAS:
-;   COMPACT -> apenas "compactLayout" visivel
-;   MICRO   -> apenas "microLayout" visivel
+; RULES:
+;   COMPACT -> only "compactLayout" visible
+;   MICRO   -> only "microLayout" visible
 ;
-; Qualquer outro widget id vai pra hidden. Defesa em profundidade
-; caso composition root registre algum widget legado por engano.
+; Any other widget id goes to hidden. Defense in depth in case the
+; composition root accidentally registers a legacy widget.
 ;
-; CONSTRUCAO:
+; CONSTRUCTION:
 ;   applier := OverlayModeApplier(bus, widgets)
 ;   applier.ApplyMode(initialMode)
 ;
@@ -35,9 +35,9 @@ class OverlayModeApplier
     __New(bus, widgets)
     {
         if !(bus is EventBus)
-            throw TypeError("OverlayModeApplier: 'bus' deve ser EventBus")
+            throw TypeError("OverlayModeApplier: 'bus' must be EventBus")
         if !(widgets is Map)
-            throw TypeError("OverlayModeApplier: 'widgets' deve ser Map<id, WidgetBase>")
+            throw TypeError("OverlayModeApplier: 'widgets' must be Map<id, WidgetBase>")
 
         this._bus     := bus
         this._widgets := widgets
@@ -56,7 +56,7 @@ class OverlayModeApplier
     }
 
     ; ============================================================
-    ; ApplyMode(mode) - aplica visibility por widget
+    ; ApplyMode(mode) - applies visibility per widget
     ; ============================================================
     ApplyMode(mode)
     {
@@ -70,7 +70,7 @@ class OverlayModeApplier
     }
 
     ; ============================================================
-    ; ShouldShowInMode - funcao pura, testavel sem widgets reais
+    ; ShouldShowInMode - pure function, testable without real widgets
     ; ============================================================
     static ShouldShowInMode(widgetId, mode)
     {

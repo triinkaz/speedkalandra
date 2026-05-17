@@ -2,41 +2,41 @@
 ; ActCheckpointTracker (v17.13)
 ; ============================================================
 ;
-; Rastreia o tempo TOTAL DA RUN no momento que cada ato terminou.
-; Termina = primeira ZoneEntered de um ato N+1 (saindo do ato N).
+; Tracks the TOTAL RUN time at the moment each act ends.
+; Ends = first ZoneEntered of an act N+1 (leaving act N).
 ;
-; Usado pelo PersonalBestService pra criar PBs por ato MAX ALCANCADO,
-; em vez de um PB global da run inteira que era inutil quando o user
-; misturava runs curtas (Ato 1 only) com runs longas (campanha cheia).
+; Used by PersonalBestService to create PBs by MAX ACT REACHED,
+; instead of a global full-run PB that was useless when the user
+; mixed short runs (Act 1 only) with long runs (full campaign).
 ;
-; FLUXO DURANTE A RUN:
+; FLOW DURING THE RUN:
 ;
 ;   t=0:00      RunStarted -> _currentAct=0, _checkpoints={}
 ;   t=0:00      ZoneEntered(Clearfell, act=1)
-;                 -> _currentAct era 0, agora vira 1 (sem checkpoint)
+;                 -> _currentAct was 0, now becomes 1 (no checkpoint)
 ;   t=28:45     ZoneEntered(Vastiri Outskirts, act=2)
-;                 -> _currentAct era 1, agora vira 2
+;                 -> _currentAct was 1, now becomes 2
 ;                 -> CHECKPOINT: _checkpoints[1] = 28:45
 ;   t=1:05:00   ZoneEntered(Sandswept Marsh, act=3)
 ;                 -> CHECKPOINT: _checkpoints[2] = 1:05:00
 ;   t=1:55:00   RunCompleted (Ctrl+Alt+F)
-;                 -> Composition root chama CaptureCurrentAsCheckpoint(1:55:00)
+;                 -> Composition root calls CaptureCurrentAsCheckpoint(1:55:00)
 ;                 -> _checkpoints[3] = 1:55:00
 ;
 ; SUBSCRIPTIONS:
-;   Evt.ZoneEntered      -> detecta transicao de ato
-;   Evt.RunStarted       -> zera state
-;   Evt.RunReset         -> zera state
-;   Evt.RunCancelled     -> zera state
+;   Evt.ZoneEntered      -> detects act transition
+;   Evt.RunStarted       -> clears state
+;   Evt.RunReset         -> clears state
+;   Evt.RunCancelled     -> clears state
 ;
-; DEPENDENCIAS:
-;   timer : TimerService -> GetRunMs() pra capturar momento da transicao
+; DEPENDENCIES:
+;   timer : TimerService -> GetRunMs() to capture the transition moment
 ;
 ; QUERIES:
-;   GetCheckpoints() -> Map<actNum, runMs> dos atos confirmados
-;   GetCurrentAct()  -> ato atual (em curso, sem checkpoint salvo)
+;   GetCheckpoints() -> Map<actNum, runMs> of confirmed acts
+;   GetCurrentAct()  -> current act (in progress, no checkpoint saved)
 ;
-; CONSTRUCAO:
+; CONSTRUCTION:
 ;   tracker := ActCheckpointTracker(bus, timer)
 
 
@@ -56,9 +56,9 @@ class ActCheckpointTracker
     __New(bus, timer)
     {
         if !(bus is EventBus)
-            throw TypeError("ActCheckpointTracker: 'bus' deve ser EventBus")
+            throw TypeError("ActCheckpointTracker: 'bus' must be EventBus")
         if !IsObject(timer) || !timer.HasMethod("GetRunMs")
-            throw TypeError("ActCheckpointTracker: 'timer' deve ter GetRunMs()")
+            throw TypeError("ActCheckpointTracker: 'timer' must have GetRunMs()")
 
         this._bus   := bus
         this._timer := timer
@@ -120,12 +120,12 @@ class ActCheckpointTracker
     }
 
     ; ============================================================
-    ; CaptureCurrentAsCheckpoint - registra checkpoint do ato em curso
+    ; CaptureCurrentAsCheckpoint - records the current act's checkpoint
     ;
-    ; Chamado pelo composition root no _SaveRunSnapshot quando reason=
-    ; "completed". O ato atual (em que a run foi finalizada) ainda nao
-    ; teve uma transicao saindo dele, entao precisa ser registrado
-    ; explicitamente com o runMs final.
+    ; Called by the composition root in _SaveRunSnapshot when reason=
+    ; "completed". The current act (in which the run was finalized)
+    ; has not had a transition leaving it yet, so it must be explicitly
+    ; registered with the final runMs.
     ; ============================================================
     CaptureCurrentAsCheckpoint(runMs)
     {
@@ -147,8 +147,8 @@ class ActCheckpointTracker
         if !IsNumber(newAct) || newAct <= 0
             return
 
-        ; Transicao entre atos: registra checkpoint do anterior.
-        ; Primeiro ato da run nao registra (nao houve ato anterior).
+        ; Transition between acts: records the previous act's checkpoint.
+        ; The first act of the run does not record (there was no previous act).
         if (this._currentAct > 0 && newAct != this._currentAct)
         {
             runMs := 0

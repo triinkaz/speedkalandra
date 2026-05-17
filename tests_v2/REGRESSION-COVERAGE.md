@@ -1,128 +1,128 @@
 # SpeedKalandra — Regression Coverage Matrix
 
-Mapeia bugs catalogados (auditoria interna pré-release + os encontrados nas Waves de teste) aos testes que comprovam o fix. Útil pra garantir que nenhum bug volta silenciosamente em refactor futuro.
+Maps catalogued bugs (pre-release internal audit + the ones found in the test Waves) to the tests that prove the fix. Useful for ensuring no bug returns silently in a future refactor.
 
-Convenção:
-- **Auditoria #N**: bugs da auditoria interna pré-release (numeração legada v17.15)
-- **Wave #N**: bugs descobertos durante a construção do test suite (numeração interna deste doc)
+Convention:
+- **Audit #N**: bugs from the pre-release internal audit (legacy v17.15 numbering)
+- **Wave #N**: bugs discovered during construction of the test suite (internal numbering of this doc)
 
 ---
 
-## Bugs da auditoria pré-release
+## Pre-release audit bugs
 
-### 🔴 Bloqueadores
+### 🔴 Blockers
 
-| #     | Sintoma                                                  | Fix em                                            | Regression test                                                                                                                          |
+| #     | Symptom                                                  | Fix in                                            | Regression test                                                                                                                          |
 | ----- | -------------------------------------------------------- | ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| #1    | Tempo da última zona perdido em FinalizeRun              | `zone_tracking_service.ahk::_OnTimerStopped`      | `ZoneTrackingServiceTests::timer_stopped_flushes_active_zone_before_zeroing`, `…::run_completed_flushes_active_zone_to_totals`            |
-| #2    | `deathCount` inflado por kills de boss                   | `log_monitor_service.ahk` filtro `_characterName` | `LogMonitorServiceTests::death_not_published_when_does_not_match_character`, `…::death_not_published_when_character_name_empty`           |
-| #4    | AutoStart wipe de run hidratada após reload              | `auto_start_service.ahk::__New(.., runService)`   | `AutoStartServiceTests::constructor_run_active_false_when_no_run_service_provided`, `…::constructor_queries_run_service_when_provided`    |
-| #7    | Atomicidade de PBs                                       | `personal_best_repository.ahk::Save`              | `PersonalBestRepositoryTests::save_does_not_leave_tmp_behind`, `…::save_creates_file`, `…::roundtrip_load_save_preserves_pbs`              |
-| #25   | `Map has no method Count` (catch enriquecido)            | `app.ahk` (try/catch com What/Line/File)          | Sem test direto (lógica de mensagem de erro). Coberto indiretamente por `SpeedKalandraAppIntegrationTests::constructor_*` (não throws).   |
-| #33–34| Surface de WARN/ERROR no boot                            | `log_service.ahk` (`_warnCount`/`_errorCount`)    | `LogServiceTests::warn_counter_increments_regardless_of_min_level`, `…::error_counter_increments_regardless_of_min_level`, `…::reset_counts_zeroes_warn_and_error_counters` |
+| #1    | Time of the last zone lost in FinalizeRun                | `zone_tracking_service.ahk::_OnTimerStopped`      | `ZoneTrackingServiceTests::timer_stopped_flushes_active_zone_before_zeroing`, `…::run_completed_flushes_active_zone_to_totals`            |
+| #2    | `deathCount` inflated by boss kills                      | `log_monitor_service.ahk` `_characterName` filter | `LogMonitorServiceTests::death_not_published_when_does_not_match_character`, `…::death_not_published_when_character_name_empty`           |
+| #4    | AutoStart wipe of hydrated run after reload              | `auto_start_service.ahk::__New(.., runService)`   | `AutoStartServiceTests::constructor_run_active_false_when_no_run_service_provided`, `…::constructor_queries_run_service_when_provided`    |
+| #7    | PB atomicity                                             | `personal_best_repository.ahk::Save`              | `PersonalBestRepositoryTests::save_does_not_leave_tmp_behind`, `…::save_creates_file`, `…::roundtrip_load_save_preserves_pbs`              |
+| #25   | `Map has no method Count` (enriched catch)               | `app.ahk` (try/catch with What/Line/File)         | No direct test (error message logic). Indirectly covered by `SpeedKalandraAppIntegrationTests::constructor_*` (does not throw).            |
+| #33–34| Surface of WARN/ERROR on boot                            | `log_service.ahk` (`_warnCount`/`_errorCount`)    | `LogServiceTests::warn_counter_increments_regardless_of_min_level`, `…::error_counter_increments_regardless_of_min_level`, `…::reset_counts_zeroes_warn_and_error_counters` |
 
-### 🟠 Pré-v1.0
+### 🟠 Pre-v1.0
 
-| #   | Sintoma                                                | Fix em                                       | Regression test                                                                                                  |
+| #   | Symptom                                                | Fix in                                       | Regression test                                                                                                  |
 | --- | ------------------------------------------------------ | -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| #3  | Collision de runId no mesmo segundo                    | `run_service.ahk::_GenerateRunId` (+ms)      | `RunServiceTests::new_run_generates_run_id_in_yyyyMMdd_HHmmss_nnn_format`                                         |
-| #5  | Prompt bloqueante sem pausar timer                     | `app.ahk::_PromptHydratedRun`                | Headless skip — não testado direto. Funcionalidade pulada em `SpeedKalandraAppIntegrationTests` (headless=true). Mesmo padrão de skip aplicado ao setup dialog do Client.txt em v0.1.3. |
-| #8  | `try` sem `catch` (múltiplos)                          | Vários services                              | Sem test direto (padrão de código). Coberto pela ausência de logs silenciados em tests existentes.                |
-| #9  | Riverbank reseta level a cada entry                    | `app.ahk::_OnZoneEnteredForLevel` + flag     | `SpeedKalandraAppIntegrationTests::bug9_*` (Wave 9)                                                                |
-| #11 | autoStartRegex default em inglês                       | `app_settings.ahk`                           | `AppSettingsTests::defaults_auto_start_regex_is_wounded_man_line` + `defaults_auto_finalize_regex_empty`. Default reverted to the Wounded Man line (`i)Wounded Man: By the First Ones!` — case-insensitive via PCRE flag) with caveat documented: jogadores non-EN editam via Settings dialog. |
-| #12 | Test suite obsoleta                                    | Movido pra `_LIXEIRA/`                       | N/A (cleanup)                                                                                                      |
-| #27 | Doc de atomicidade enganosa                            | `atomic_write.ahk` (só doc)                  | N/A (só comentário)                                                                                                |
-| #32 | Log sem rotação                                        | `log_service.ahk::_RotateIfTooBig`           | `LogServiceTests::constructor_rotates_existing_log_over_5mb`, `…::constructor_does_not_rotate_when_log_under_threshold` |
+| #3  | runId collision in the same second                     | `run_service.ahk::_GenerateRunId` (+ms)      | `RunServiceTests::new_run_generates_run_id_in_yyyyMMdd_HHmmss_nnn_format`                                         |
+| #5  | Blocking prompt without pausing the timer              | `app.ahk::_PromptHydratedRun`                | Headless skip — not directly tested. Functionality skipped in `SpeedKalandraAppIntegrationTests` (headless=true). Same skip pattern applied to the Client.txt setup dialog in v0.1.3. |
+| #8  | `try` without `catch` (multiple)                       | Several services                             | No direct test (code pattern). Covered by the absence of silenced logs in existing tests.                         |
+| #9  | Riverbank resets level on every entry                  | `app.ahk::_OnZoneEnteredForLevel` + flag     | `SpeedKalandraAppIntegrationTests::bug9_*` (Wave 9)                                                                |
+| #11 | autoStartRegex default in English                      | `app_settings.ahk`                           | `AppSettingsTests::defaults_auto_start_regex_is_wounded_man_line` + `defaults_auto_finalize_regex_empty`. Default reverted to the Wounded Man line (`i)Wounded Man: By the First Ones!` — case-insensitive via PCRE flag) with caveat documented: non-EN players edit via the Settings dialog. |
+| #12 | Obsolete test suite                                    | Moved to `_LIXEIRA/`                         | N/A (cleanup)                                                                                                      |
+| #27 | Misleading atomicity doc                               | `atomic_write.ahk` (comment-only)            | N/A (comment-only)                                                                                                 |
+| #32 | Log without rotation                                   | `log_service.ahk::_RotateIfTooBig`           | `LogServiceTests::constructor_rotates_existing_log_over_5mb`, `…::constructor_does_not_rotate_when_log_under_threshold` |
 
-### 🟡 Limpeza
+### 🟡 Cleanup
 
-| #   | Sintoma                                            | Fix em                                          | Regression test                                                                                       |
+| #   | Symptom                                            | Fix in                                          | Regression test                                                                                       |
 | --- | -------------------------------------------------- | ----------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| #13 | Diretórios vazios                                  | Movidos pra `_LIXEIRA/`                         | N/A                                                                                                    |
-| #14 | Services não instanciados                          | Movidos pra `_LIXEIRA/`                         | N/A                                                                                                    |
-| #15 | Settings de features mortas                        | `app_settings.ahk` removeu keys                 | `AppSettingsTests::defaults_*` (não menciona keys removidas)                                            |
-| #16 | Hotkey `^!g` + classe `GamePauseHotkeyHelpers`     | `speedkalandra.ahk` removido                    | N/A (cleanup)                                                                                          |
+| #13 | Empty directories                                  | Moved to `_LIXEIRA/`                            | N/A                                                                                                    |
+| #14 | Services not instantiated                          | Moved to `_LIXEIRA/`                            | N/A                                                                                                    |
+| #15 | Settings for dead features                         | `app_settings.ahk` removed keys                 | `AppSettingsTests::defaults_*` (doesn't mention removed keys)                                          |
+| #16 | Hotkey `^!g` + `GamePauseHotkeyHelpers` class      | `speedkalandra.ahk` removed                     | N/A (cleanup)                                                                                          |
 | #17 | `#Warn All, Off`                                   | `speedkalandra.ahk` `#Warn VarUnset`            | N/A (config)                                                                                           |
-| #18 | `ReplayClock` dead code                            | `core/clock.ahk` removido                       | N/A (cleanup)                                                                                          |
-| #19 | `_FormatMs` duplicado                              | `Duration.FormatMs(ms)` static (v0.1.2)         | `DurationTests::format_ms_*` (9 tests cobrindo o contrato). 4 callers refatorados pra delegar. |
-| #20 | Comentários "Smoke fix Turno N"                    | `log_monitor_service.ahk` reescritos            | N/A (só comentário)                                                                                    |
-| #21 | SCENE pra ZoneChanged (PoE2 não emite "entered")   | `log_monitor_service.ahk`                       | `LogMonitorServiceTests::scene_also_publishes_zone_changed_event_bug_21`, `…::scene_with_*_is_filtered` |
-| #22 | EventBus deixa keys vazias no Unsubscribe          | `event_bus.ahk::Unsubscribe`                    | `EventBusTests::unsubscribing_last_handler_removes_key_from_internal_map`                              |
-| #24 | `_ComputeTotalsHash` ordem do Map                  | Descartado (Map preserva ordem)                 | N/A                                                                                                    |
-| #29 | `README-DIST.txt` hotkey/cor errada                | `build-dist.ps1`                                | N/A (build script)                                                                                     |
-| #30 | Build não embute versão                            | `src_v2/version.ahk::Version.STRING` (v0.1.2)   | N/A (display-only). Propagado pra tray IconTip, Settings dialog title, Plot subheader. |
-| #31 | OverlayModeService subscreve a comandos mortos     | `overlay_mode_service.ahk` removeu subs         | `OverlayModeServiceTests::constructor_subscribes_to_3_commands` (validates count)                       |
+| #18 | `ReplayClock` dead code                            | `core/clock.ahk` removed                        | N/A (cleanup)                                                                                          |
+| #19 | Duplicated `_FormatMs`                             | `Duration.FormatMs(ms)` static (v0.1.2)         | `DurationTests::format_ms_*` (9 tests covering the contract). 4 callers refactored to delegate. |
+| #20 | "Smoke fix Turno N" comments                       | `log_monitor_service.ahk` rewritten             | N/A (comment-only)                                                                                     |
+| #21 | SCENE for ZoneChanged (PoE2 does not emit "entered")| `log_monitor_service.ahk`                       | `LogMonitorServiceTests::scene_also_publishes_zone_changed_event_bug_21`, `…::scene_with_*_is_filtered` |
+| #22 | EventBus leaves empty keys on Unsubscribe          | `event_bus.ahk::Unsubscribe`                    | `EventBusTests::unsubscribing_last_handler_removes_key_from_internal_map`                              |
+| #24 | `_ComputeTotalsHash` Map order                     | Discarded (Map preserves order)                 | N/A                                                                                                    |
+| #29 | `README-DIST.txt` wrong hotkey/color               | `build-dist.ps1`                                | N/A (build script)                                                                                     |
+| #30 | Build does not embed version                       | `src_v2/version.ahk::Version.STRING` (v0.1.2)   | N/A (display-only). Propagated to tray IconTip, Settings dialog title, Plot subheader. |
+| #31 | OverlayModeService subscribes to dead commands     | `overlay_mode_service.ahk` removed subs         | `OverlayModeServiceTests::constructor_subscribes_to_3_commands` (validates count)                       |
 
 ---
 
-## Features v0.1.3 (UX improvements)
+## v0.1.3 features (UX improvements)
 
-Não são bugs — são comportamentos novos cobertos por tests pra blindar contra regressões futuras. Catalogados aqui pra que refactors mantenham os 4 invariantes intencionais.
+Not bugs — they are new behaviors covered by tests to shield against future regressions. Catalogued here so refactors preserve the 4 intentional invariants.
 
-| Feature | Implementação | Regression test |
+| Feature | Implementation | Regression test |
 | ------- | -------------- | --------------- |
-| Setup dialog do Client.txt na 1ª execução (app não roda sem path válido) | `app.ahk::_PromptLogFileSetupIfNeeded` + helpers `_SetupBrowseLog`/`_SetupValidatePath`. Chamado em `Start()` entre `_ShowDisclaimerIfNeeded` e `_PromptHydratedRun`. Cancel → `ExitApp()`. | Headless skip (UI puro). Testes integration usam `headless=true` que pula o dialog na primeira linha do método — mesma estratégia do disclaimer e do hydrated run prompt. |
-| Edit do Settings dialog com altura fixa (`h22`) pra não auto-expandir com path longo | `settings_dialog.ahk::_AddEdit` opts string contains `h22` | N/A (UI-only, sem comportamento testável) |
-| Death penalty aplicada no timer real-time (antes só no plot post-finalize) | Novo `TimerService.AddPenaltyMs(ms)` + handler `app.ahk::_OnDeathApplyTimerPenalty` subscrito a `Evt.DeathDetected` em `_WireEventHandlers` | `TimerServiceTests::add_penalty_ms_*` (13 tests cobrindo: retorno true/false por tipo de input, comportamento em RUNNING/PAUSED/IDLE, não congelamento do timer, ausência de eventos publicados, coerção float→int, múltiplas aplicações, sobrevivência ao Pause/Resume). `SpeedKalandraAppIntegrationTests::death_penalty_*` (6 tests cobrindo: happy path, 4 guards do handler, múltiplas mortes, valor custom de `cfg.deathPenaltyMs`). |
-| Campo "Patch" removido do Settings dialog (mantido internamente como `cfg.gamePatch="Unknown"` pra retrocompat) | `settings_dialog.ahk` (Label+Edit+save removidos), `run_stats_plot_dialog.ahk` (Patch tirado do subTxt). `AppSettings.gamePatch` mantido como field interno. | N/A (UI removal). `AppSettingsTests` continua passando porque o field permanece em AppSettings com default. |
+| Client.txt setup dialog on 1st run (app doesn't run without a valid path) | `app.ahk::_PromptLogFileSetupIfNeeded` + helpers `_SetupBrowseLog`/`_SetupValidatePath`. Called in `Start()` between `_ShowDisclaimerIfNeeded` and `_PromptHydratedRun`. Cancel → `ExitApp()`. | Headless skip (pure UI). Integration tests use `headless=true` which skips the dialog on the first line of the method — same strategy as the disclaimer and the hydrated run prompt. |
+| Settings dialog Edit with fixed height (`h22`) so it doesn't auto-expand with long paths | `settings_dialog.ahk::_AddEdit` opts string contains `h22` | N/A (UI-only, no testable behavior) |
+| Death penalty applied to the timer in real-time (previously only in the post-finalize plot) | New `TimerService.AddPenaltyMs(ms)` + handler `app.ahk::_OnDeathApplyTimerPenalty` subscribed to `Evt.DeathDetected` in `_WireEventHandlers` | `TimerServiceTests::add_penalty_ms_*` (13 tests covering: true/false return per input type, behavior in RUNNING/PAUSED/IDLE, no timer freeze, no events published, float→int coercion, multiple applications, survival across Pause/Resume). `SpeedKalandraAppIntegrationTests::death_penalty_*` (6 tests covering: happy path, the 4 handler guards, multiple deaths, custom `cfg.deathPenaltyMs` value). |
+| "Patch" field removed from the Settings dialog (kept internally as `cfg.gamePatch="Unknown"` for back-compat) | `settings_dialog.ahk` (Label+Edit+save removed), `run_stats_plot_dialog.ahk` (Patch dropped from subTxt). `AppSettings.gamePatch` kept as an internal field. | N/A (UI removal). `AppSettingsTests` keeps passing because the field remains in AppSettings with default. |
 
 ---
 
-## Bugs descobertos durante construção do test suite
+## Bugs discovered during construction of the test suite
 
 ### Wave 4 (infra)
 
-| # | Sintoma | Fix em | Regression test |
+| # | Symptom | Fix in | Regression test |
 | - | ------- | ------ | --------------- |
-| W4.1 | PersonalBest INI escrito em UTF-8 mas `IniRead` precisa UTF-16 LE BOM | `personal_best_repository.ahk::Save` mudou de "UTF-8" pra "UTF-16" | `PersonalBestRepositoryTests::iniread_key_lookup_works_in_utf16_le_bom_but_not_utf8_bom` (documenta pitfall AHK) |
+| W4.1 | PersonalBest INI written in UTF-8 but `IniRead` needs UTF-16 LE BOM | `personal_best_repository.ahk::Save` changed from "UTF-8" to "UTF-16" | `PersonalBestRepositoryTests::iniread_key_lookup_works_in_utf16_le_bom_but_not_utf8_bom` (documents AHK pitfall) |
 
-### Wave 5a (services puros)
+### Wave 5a (pure services)
 
-| # | Sintoma | Fix em | Regression test |
+| # | Symptom | Fix in | Regression test |
 | - | ------- | ------ | --------------- |
-| W5.1 | `_MapToDebugStr` com keys integer comparava `m[k]` (int) vs string keys, retornava ausência | (test framework) | Coberto por `LoadingDetectionServiceTests` (uses keys integer no Map de pontos) |
-| W5.2 | `_SafeCategoryLabel` escopo-dependente — lookup dinâmico via `%"..."%` falhava em testes isolados sem builder no escopo | `run_history_repository.ahk::_SafeCategoryLabel` fallback hardcoded | `RunHistoryRepositoryTests::safe_category_label_fallback_for_known_categories`, `…::safe_category_label_passes_through_unknown` |
+| W5.1 | `_MapToDebugStr` with integer keys was comparing `m[k]` (int) vs string keys, returned absence | (test framework) | Covered by `LoadingDetectionServiceTests` (uses integer keys in the points Map) |
+| W5.2 | `_SafeCategoryLabel` scope-dependent — dynamic lookup via `%"..."%` failed in isolated tests without builder in scope | `run_history_repository.ahk::_SafeCategoryLabel` hardcoded fallback | `RunHistoryRepositoryTests::safe_category_label_fallback_for_known_categories`, `…::safe_category_label_passes_through_unknown` |
 
-### Wave 9 (este doc)
+### Wave 9 (this doc)
 
-| # | Sintoma | Fix em | Regression test |
+| # | Symptom | Fix in | Regression test |
 | - | ------- | ------ | --------------- |
-| W9.1 | `MigrateIniToUtf8` corrompia `IniRead` (footgun latente) | `text_encoding.ahk` (API removida) | `TextEncodingTests::bug2_convert_utf16_to_utf8_was_removed`, `…::bug2_migrate_ini_to_utf8_was_removed` |
-| W9.2 | `LoadingDetectionService._End` descartava timeouts (> maxMs sumia silenciosamente) | `loading_detection_service.ahk::_End` removeu filtro `> maxMs` | `LoadingDetectionServiceTests::tick_timeout_publishes_loading_measured`, `…::bug5_loading_100s_publishes_with_real_duration`, `…::bug5_loading_300s_publishes_with_real_duration` |
+| W9.1 | `MigrateIniToUtf8` corrupted `IniRead` (latent footgun) | `text_encoding.ahk` (API removed) | `TextEncodingTests::bug2_convert_utf16_to_utf8_was_removed`, `…::bug2_migrate_ini_to_utf8_was_removed` |
+| W9.2 | `LoadingDetectionService._End` discarded timeouts (> maxMs vanished silently) | `loading_detection_service.ahk::_End` removed `> maxMs` filter | `LoadingDetectionServiceTests::tick_timeout_publishes_loading_measured`, `…::bug5_loading_100s_publishes_with_real_duration`, `…::bug5_loading_300s_publishes_with_real_duration` |
 
 ---
 
-## Pitfalls do AutoHotkey v2 (não-bugs, mas comportamentos não-óbvios)
+## AutoHotkey v2 pitfalls (not bugs, but non-obvious behaviors)
 
-Catalogados pra evitar reintroduzir:
+Catalogued to avoid reintroducing them:
 
 | Pitfall                                                                                      | Doc / Regression                                                                            |
 | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| `IniRead` key-lookup só funciona em UTF-16 LE BOM (UTF-8 BOM retorna default silenciosamente) | `PersonalBestRepositoryTests::iniread_key_lookup_works_in_utf16_le_bom_but_not_utf8_bom`     |
-| Variáveis locais com nome de builtin (`Run`, `File`, `Edit`, `Buffer`) disparam `#Warn All`  | Pitfall #4 no README do projeto. Convenção: `run` → `runItem`, `file` → `selectedFile`, `edit` → `editCtrl` |
-| Variáveis locais com nome de classe (case-insensitive!) — `runId` vs class `RunId`           | Convenção: `runId` → `currentRunId`. Aplicado em ~10 arquivos durante Wave 8.                |
-| `throw` não cabe em arrow function (parser AHK v2)                                            | Pitfall #1 no README                                                                         |
-| Closure-in-loop captura por referência (não valor)                                            | `CompactLayoutWidget::_BindVendorButton` usa método helper pra criar escopo                  |
-| Object-literal com método: arrow `() => …` precisa receber `this` como primeiro param        | Pitfall #11 no README                                                                        |
-| `IniWrite` cria UTF-16 LE BOM por default em arquivos novos                                   | Documentado em `IniFile.__New` e `text_encoding.ahk`                                          |
-| Single-line `if` sem braces com `:=` pode confundir parser                                    | Convenção: sempre usar braces multi-line. Pitfall #12 no README                              |
-| `\"` não é escape válido em AHK v2 — use `""` (duplica) ou aspas simples `'...'` como delimitador externo | Descoberto na Wave 9 ao tentar `"texto \"The Riverbank\""`. Convencão adotada: aspas simples dentro de string entre aspas duplas |
+| `IniRead` key-lookup only works on UTF-16 LE BOM (UTF-8 BOM silently returns default)         | `PersonalBestRepositoryTests::iniread_key_lookup_works_in_utf16_le_bom_but_not_utf8_bom`     |
+| Local variables named after a builtin (`Run`, `File`, `Edit`, `Buffer`) trigger `#Warn All`   | Pitfall #4 in the project README. Convention: `run` → `runItem`, `file` → `selectedFile`, `edit` → `editCtrl` |
+| Local variables with class names (case-insensitive!) — `runId` vs class `RunId`              | Convention: `runId` → `currentRunId`. Applied to ~10 files during Wave 8.                    |
+| `throw` does not fit inside an arrow function (AHK v2 parser)                                | Pitfall #1 in the README                                                                     |
+| Closure-in-loop captures by reference (not value)                                            | `CompactLayoutWidget::_BindVendorButton` uses a helper method to create a fresh scope         |
+| Object-literal with method: arrow `() => …` must receive `this` as the first param          | Pitfall #11 in the README                                                                    |
+| `IniWrite` creates UTF-16 LE BOM by default on new files                                      | Documented in `IniFile.__New` and `text_encoding.ahk`                                         |
+| Single-line `if` without braces with `:=` may confuse the parser                              | Convention: always use multi-line braces. Pitfall #12 in the README                          |
+| `\"` is not a valid escape in AHK v2 — use `""` (doubled) or single quotes `'...'` as outer delimiter | Discovered in Wave 9 when trying `"text \"The Riverbank\""`. Adopted convention: single quotes inside a string between double quotes |
 
 ---
 
-## Como manter este doc atualizado
+## How to keep this doc up to date
 
-1. **Ao fixar um bug**: adicione linha na tabela apropriada com link pro test.
-2. **Ao adicionar um test que cobre comportamento de bug**: marque `RegressionFor: #N` no docstring do test.
-3. **Bugs ainda pendentes**: marcar com 🚧 na coluna "Fix em" e referenciar issue/comment.
-4. **Pitfalls do AHK descobertos**: adicionar na seção final com test que documenta.
+1. **When you fix a bug**: add a line in the appropriate table with a link to the test.
+2. **When you add a test that covers bug behavior**: mark `RegressionFor: #N` in the test's docstring.
+3. **Bugs still pending**: mark with 🚧 in the "Fix in" column and reference an issue/comment.
+4. **AHK pitfalls discovered**: add to the final section with a test that documents it.
 
-Pra rodar todo o suite:
+To run the whole suite:
 ```
 "C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe" tests_v2\run_tests.ahk
 ```
 
-Pra rodar só tests de regression específicos:
+To run only specific regression tests:
 ```
 AutoHotkey64.exe tests_v2\run_tests.ahk bug9
 AutoHotkey64.exe tests_v2\run_tests.ahk regression

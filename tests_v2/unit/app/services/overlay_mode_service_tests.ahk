@@ -2,15 +2,17 @@
 ; OverlayModeServiceTests
 ; ============================================================
 ;
-; State machine com 3 modos: COMPACT (default), MICRO, STEVE.
-; Modos lockados (microLocked/steveLocked) sao mutuamente exclusivos.
-; Modo MICRO AUTO eh entrada temporaria via panel keys (i/v/c/g/p/u/m)
-; mas v17.15 (Bug #31) desconectou o publisher — _heldKeys fica sempre
-; vazio em uso real. Os metodos OnPanelKeyDown/Up + ClearHeldKeys ainda
-; sao chamaveis externamente (cobertos pelos testes).
+; State machine with 3 modes: COMPACT (default), MICRO, STEVE.
+; Locked modes (microLocked/steveLocked) are mutually exclusive.
+; AUTO MICRO mode is a temporary entry via panel keys
+; (i/v/c/g/p/u/m), but v17.15 (Bug #31) disconnected the publisher
+; — _heldKeys is always empty in real use. The OnPanelKeyDown/Up +
+; ClearHeldKeys methods are still externally callable (covered by
+; the tests).
 ;
-; Subscribers a 3 Commands. Publica OverlayModeChanged em transicoes.
-; Hydrate le window.{microLocked,steveLocked} do AppSettings.
+; Subscribes to 3 Commands. Publishes OverlayModeChanged on
+; transitions. Hydrate reads window.{microLocked,steveLocked} from
+; AppSettings.
 
 class OverlayModeServiceTests extends TestCase
 {
@@ -33,7 +35,7 @@ class OverlayModeServiceTests extends TestCase
     }
 
     static Tests := [
-        ; --- Construtor ---
+        ; --- Constructor ---
         "constructor_throws_when_bus_not_event_bus",
         "constructor_throws_when_cfg_not_app_settings",
         "constructor_subscribes_to_3_commands",
@@ -118,7 +120,7 @@ class OverlayModeServiceTests extends TestCase
     }
 
     ; ============================================================
-    ; Construtor
+    ; Constructor
     ; ============================================================
 
     constructor_throws_when_bus_not_event_bus()
@@ -179,13 +181,13 @@ class OverlayModeServiceTests extends TestCase
 
     hydrate_steve_takes_precedence_over_micro()
     {
-        ; Defensivo contra edicao manual conflitante no INI
+        ; Defensive against conflicting manual edit in the INI
         this.cfg.window.microLocked := true
         this.cfg.window.steveLocked := true
         this.svc.Hydrate()
         Assert.True(this.svc.IsSteveLocked())
         Assert.False(this.svc.IsMicroLocked(),
-            "Steve sobrescreve micro quando ambos sao true")
+            "Steve overrides micro when both are true")
     }
 
     hydrate_no_locks_sets_compact_mode()
@@ -198,7 +200,7 @@ class OverlayModeServiceTests extends TestCase
 
     hydrate_with_missing_window_settings_defaults_to_compact()
     {
-        this.cfg.window := ""   ; sem object
+        this.cfg.window := ""   ; no object
         this.svc.Hydrate()
         Assert.Equal(OverlayModes.COMPACT, this.svc.GetMode())
         Assert.False(this.svc.IsMicroLocked())
@@ -230,7 +232,7 @@ class OverlayModeServiceTests extends TestCase
         this.svc.ToggleMicroLock()
         Assert.True(this.svc.IsMicroLocked())
         Assert.False(this.svc.IsSteveLocked(),
-            "Steve desativado ao ativar micro (mutuamente exclusivos)")
+            "Steve deactivated when activating micro (mutually exclusive)")
     }
 
     toggle_micro_lock_returns_true()
@@ -250,7 +252,7 @@ class OverlayModeServiceTests extends TestCase
     {
         this.svc.ToggleMicroLock()
         Assert.True(this.cfg.window.microLocked,
-            "Flag escrita no settings.window pra persistir entre runs")
+            "Flag written to settings.window to persist across runs")
     }
 
     ; ============================================================
@@ -334,7 +336,7 @@ class OverlayModeServiceTests extends TestCase
     {
         this.svc.SetMode(OverlayModes.MICRO)
         Assert.False(this.svc.SetMode(OverlayModes.MICRO),
-            "Setar mesmo modo: nada muda, retorna false")
+            "Setting same mode: nothing changes, returns false")
     }
 
     set_mode_publishes_when_changed()
@@ -360,13 +362,13 @@ class OverlayModeServiceTests extends TestCase
     {
         this.svc.OnPanelKeyDown("i")
         Assert.Equal(OverlayModes.MICRO, this.svc.GetMode())
-        Assert.True(this.svc.IsMicroAuto(), "MICRO mas nao locked = auto")
+        Assert.True(this.svc.IsMicroAuto(), "MICRO but not locked = auto")
     }
 
     panel_key_down_second_press_same_key_closes_panel()
     {
         this.svc.OnPanelKeyDown("i")
-        this.svc.OnPanelKeyDown("i")   ; toggle fecha
+        this.svc.OnPanelKeyDown("i")   ; toggle closes
         Assert.Equal(0, this.svc.GetHeldKeyCount())
         Assert.Equal(OverlayModes.COMPACT, this.svc.GetMode())
     }
@@ -376,10 +378,10 @@ class OverlayModeServiceTests extends TestCase
         this.svc.ToggleMicroLock()
         capturedEvents := this._CaptureEvents(Events.OverlayModeChanged)
         this.svc.OnPanelKeyDown("i")
-        ; Modo continua MICRO (locked), mas keys foram registradas
+        ; Mode stays MICRO (locked), but keys were registered
         Assert.Equal(OverlayModes.MICRO, this.svc.GetMode())
         Assert.Equal(1, this.svc.GetHeldKeyCount())
-        Assert.Equal(0, capturedEvents.Length, "Locked: nao publica")
+        Assert.Equal(0, capturedEvents.Length, "Locked: doesn't publish")
     }
 
     panel_key_down_with_steve_locked_does_not_change_mode()
@@ -392,8 +394,8 @@ class OverlayModeServiceTests extends TestCase
     panel_key_down_normalizes_key_case()
     {
         this.svc.OnPanelKeyDown("I")
-        Assert.True(this.svc.HasHeldKey("i"), "Key normalizada pra lowercase")
-        Assert.True(this.svc.HasHeldKey("I"), "Lookup tambem normaliza")
+        Assert.True(this.svc.HasHeldKey("i"), "Key normalized to lowercase")
+        Assert.True(this.svc.HasHeldKey("I"), "Lookup also normalizes")
     }
 
     panel_key_down_empty_key_returns_false()
@@ -413,8 +415,8 @@ class OverlayModeServiceTests extends TestCase
     {
         this.svc.OnPanelKeyDown("i")
         Assert.False(this.svc.OnPanelKeyUp("i"),
-            "Toggle semantics: UP eh no-op, retorna false")
-        Assert.Equal(1, this.svc.GetHeldKeyCount(), "Key continua held")
+            "Toggle semantics: UP is no-op, returns false")
+        Assert.Equal(1, this.svc.GetHeldKeyCount(), "Key stays held")
     }
 
     ; ============================================================
@@ -447,7 +449,7 @@ class OverlayModeServiceTests extends TestCase
         this.svc.OnPanelKeyDown("i")
         this.svc.ClearHeldKeys()
         Assert.Equal(OverlayModes.MICRO, this.svc.GetMode(),
-            "Locked: ClearHeldKeys nao tira do MICRO")
+            "Locked: ClearHeldKeys doesn't pull out of MICRO")
     }
 
     ; ============================================================

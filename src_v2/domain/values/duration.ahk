@@ -1,23 +1,23 @@
 ﻿; ============================================================
-; Duration — value object para representar duracao em milissegundos
+; Duration — value object representing duration in milliseconds
 ; ============================================================
 ;
-; Imutavel (operacoes retornam nova instancia).
-; Validacao na construcao: estoura se ms invalido.
+; Immutable (operations return a new instance).
+; Validation in the constructor: throws on invalid ms.
 ;
-; Uso:
+; Usage:
 ;   d := Duration(1500)
 ;   d.Formatted()     ; "00:01"
 ;   d2 := d.Plus(Duration.FromSeconds(30))
 ;   d2.Formatted()    ; "00:31"
 ;
-; FORMATOS DISPONIVEIS:
-;   d.Formatted()           - sempre MM:SS, com minutos longos ("105:30")
-;                             Filosofia speedrun: padding consistente.
-;   Duration.FormatMs(ms)   - static, MM:SS se < 1h, H:MM:SS se >= 1h.
-;                             Versao "longa" usada em TrayTip, dialogs e
-;                             widgets de overlay (Compact/Micro/Plot).
-;                             Consolidado em #19 (auditoria pre-release).
+; AVAILABLE FORMATS:
+;   d.Formatted()           - always MM:SS, with long minutes ("105:30")
+;                             Speedrun philosophy: consistent padding.
+;   Duration.FormatMs(ms)   - static, MM:SS if < 1h, H:MM:SS if >= 1h.
+;                             "Long" version used in TrayTip, dialogs
+;                             and overlay widgets (Compact/Micro/Plot).
+;                             Consolidated in #19 (pre-release audit).
 
 class Duration
 {
@@ -26,10 +26,10 @@ class Duration
     __New(ms)
     {
         if (!IsNumber(ms))
-            throw TypeError("Duration.ms deve ser numero, recebi: " Type(ms) " (" ms ")")
+            throw TypeError("Duration.ms must be a number, got: " Type(ms) " (" ms ")")
         if (ms < 0)
-            throw ValueError("Duration.ms deve ser >= 0, recebi: " ms)
-        ; Coerce float -> integer (mantem precisao em ms)
+            throw ValueError("Duration.ms must be >= 0, got: " ms)
+        ; Coerce float -> integer (preserves ms precision)
         this.ms := Integer(ms)
     }
 
@@ -37,7 +37,7 @@ class Duration
     static FromSeconds(s) => Duration(s * 1000)
     static FromMinutes(m) => Duration(m * 60 * 1000)
 
-    ; Formato "MM:SS" (ate 99:59 sem hora). Acima disso usa minutos longos.
+    ; "MM:SS" format (up to 99:59 without hours). Above that uses long minutes.
     Formatted()
     {
         totalSec := this.ms // 1000
@@ -47,17 +47,17 @@ class Duration
     }
 
     ; ============================================================
-    ; FormatMs(ms) - static; formato "H:MM:SS" se >= 1h, "MM:SS" sub-1h.
+    ; FormatMs(ms) - static; "H:MM:SS" format if >= 1h, "MM:SS" sub-1h.
     ;
-    ; Consolidado em v0.1.2 (auditoria #19): antes 4 copias identicas
-    ; em app.ahk, run_stats_plot_builder.ahk, compact/micro widgets.
-    ; Steve mantem _FormatMsWithMillis (formato diferente, com
-    ; centesimos pra movimento visual de alta frequencia).
+    ; Consolidated in v0.1.2 (audit #19): previously 4 identical copies
+    ; in app.ahk, run_stats_plot_builder.ahk, compact/micro widgets.
+    ; Steve keeps _FormatMsWithMillis (different format, with hundredths
+    ; for high-frequency visual motion).
     ;
-    ; Aceita qualquer numero (negativos viram 0, floats truncam pra int).
-    ; Nao usa Duration instance porque o construtor estoura em ms<0;
-    ; esta API eh defensiva pra integrar com codigo que pode passar
-    ; valores ruins (services externos, hidratacao de INI etc).
+    ; Accepts any number (negatives become 0, floats truncate to int).
+    ; Does not use a Duration instance because the constructor throws on
+    ; ms<0; this API is defensive to integrate with code that may pass
+    ; bad values (external services, INI hydration, etc.).
     ; ============================================================
     static FormatMs(ms)
     {

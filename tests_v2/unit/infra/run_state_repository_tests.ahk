@@ -2,12 +2,12 @@
 ; RunStateRepository tests
 ; ============================================================
 ;
-; RunState <-> INI + arquivo TXT separado pra zone totals (perf).
+; RunState <-> INI + separate TXT file for zone totals (perf).
 ;
-; SECTION INI: [RunState] com RunId, StartedAt, Status, RunBaseMs,
+; INI SECTION: [RunState] with RunId, StartedAt, Status, RunBaseMs,
 ;              LoadingTotalMs.
-; TXT separado: `<iniBaseName>_zones.txt` no mesmo dir, formato
-;               key=value por linha, escrito atomicamente.
+; Separate TXT: `<iniBaseName>_zones.txt` in the same dir, format
+;               key=value per line, written atomically.
 
 class RunStateRepositoryTests extends TestCase
 {
@@ -17,7 +17,7 @@ class RunStateRepositoryTests extends TestCase
     }
 
     static Tests := [
-        ; --- Construtor ---
+        ; --- Constructor ---
         "constructor_throws_when_ini_not_inifile",
         "constructor_derives_zone_totals_path_with_suffix",
 
@@ -56,7 +56,7 @@ class RunStateRepositoryTests extends TestCase
     ]
 
     ; ============================================================
-    ; Construtor
+    ; Constructor
     ; ============================================================
 
     constructor_throws_when_ini_not_inifile()
@@ -67,13 +67,13 @@ class RunStateRepositoryTests extends TestCase
 
     constructor_derives_zone_totals_path_with_suffix()
     {
-        ; Dado um IniFile em "<dir>\name.ini", o zone totals fica em
+        ; Given an IniFile at "<dir>\name.ini", the zone totals go to
         ; "<dir>\name_zones.txt"
         tmpDir := Fixtures.TempDir()
         iniPath := tmpDir "\state.ini"
         mainIni := IniFile(iniPath)
         repo := RunStateRepository(mainIni)
-        ; Salva algo pra forcar criacao do _zones.txt
+        ; Save something to force creation of the _zones.txt
         repo.SaveZoneTotals(Map("Mud Burrow", 1000))
         Assert.True(FileExist(tmpDir "\state_zones.txt"))
     }
@@ -87,7 +87,7 @@ class RunStateRepositoryTests extends TestCase
         mainIni := IniFile(Fixtures.TempPath("ini"))
         repo := RunStateRepository(mainIni)
         state := repo.Load()
-        ; RunState.Empty() = runId vazio
+        ; RunState.Empty() = empty runId
         Assert.Equal("", state.runId)
     }
 
@@ -113,7 +113,7 @@ class RunStateRepositoryTests extends TestCase
     {
         path := Fixtures.TempPath("ini")
         mainIni := IniFile(path)
-        ; Sem Status escrito, mas com runId pra nao cair em Empty()
+        ; No Status written, but has runId so we don't fall into Empty()
         mainIni.Write("20260512_142345", "RunState", "RunId")
         repo := RunStateRepository(mainIni)
         state := repo.Load()
@@ -280,7 +280,7 @@ class RunStateRepositoryTests extends TestCase
         tmpDir := Fixtures.TempDir()
         iniPath := tmpDir "\state.ini"
         zonesPath := tmpDir "\state_zones.txt"
-        ; Linhas: valida, sem `=`, valor nao-numerico, vazia, valida
+        ; Lines: valid, no `=`, non-numeric value, empty, valid
         FileAppend("Zone1=100`nNoEquals`nZoneBad=notanumber`n`nZone2=200`n",
             zonesPath, "UTF-8")
         Fixtures.RegisterTempPath(zonesPath)
@@ -340,7 +340,7 @@ class RunStateRepositoryTests extends TestCase
 
         mainIni := IniFile(iniPath)
         repo := RunStateRepository(mainIni)
-        ; Nome com `=`, `\n`, `\r` — deve ser sanitizado
+        ; Name with `=`, `\n`, `\r` — should be sanitized
         repo.SaveZoneTotals(Map("Bad=Name`nWith`rChars", 500))
 
         content := Fixtures.FileReadAll(zonesPath)
@@ -386,7 +386,7 @@ class RunStateRepositoryTests extends TestCase
     {
         mainIni := IniFile(Fixtures.TempPath("ini"))
         repo := RunStateRepository(mainIni)
-        ; Sem arquivo - nao deve estourar
+        ; No file - must not throw
         repo.ClearZoneTotals()
         Assert.True(true)
     }

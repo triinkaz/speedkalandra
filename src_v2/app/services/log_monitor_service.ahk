@@ -1,22 +1,22 @@
 ﻿; ============================================================
-; LogMonitorService — tail loop em Client.txt + parsing + eventos brutos
+; LogMonitorService — tail loop on Client.txt + parsing + raw events
 ; ============================================================
 ;
-; Responsabilidade:
-;   - Manter posicao no arquivo Client.txt (tail loop)
-;   - Detectar/parsear linhas conhecidas do log do Path of Exile 2
-;   - Publicar EVENTOS BRUTOS no EventBus
+; Responsibility:
+;   - Maintain position in the Client.txt file (tail loop)
+;   - Detect/parse known lines from the Path of Exile 2 log
+;   - Publish RAW EVENTS to the EventBus
 ;
-; FILOSOFIA:
-; Service "burro" e focado em I/O. Nao toma decisoes. Quem decide
-; o que fazer (ex: tocar timer.Pause em Lost Focus, sync zone -> step)
-; eh:
-;   - O App composition root (Fase 5) liga eventos a comandos de outros
-;     services. Ex: bus.Subscribe(WindowFocusChanged, (data) =>
+; PHILOSOPHY:
+; "Dumb" service focused on I/O. Does not make decisions. Whoever
+; decides what to do (e.g. trigger timer.Pause on Lost Focus, sync
+; zone -> step) is:
+;   - The App composition root (Phase 5) wires events to commands
+;     of other services. E.g.: bus.Subscribe(WindowFocusChanged, (data) =>
 ;       data["state"] = "lost" ? timerService.Pause() : timerService.Resume())
-;   - O SyncEngine (Fase 5) tem logica de sync de rota (FindBestMatchingStep)
+;   - The SyncEngine (Phase 5) has route sync logic (FindBestMatchingStep)
 ;
-; Linhas reconhecidas:
+; Recognized lines:
 ;   1. "X (Class) is now level N"             -> Evt.CharacterLevelUp
 ;   2. "Generating level N area X with seed"  -> Evt.AreaLevelChanged
 ;   3. "[SCENE] Set Source [name]"            -> Evt.SceneEntered
@@ -24,21 +24,21 @@
 ;   5. "X has been slain."                    -> Evt.DeathDetected
 ;   6. "[WINDOW] Lost focus" / "Gained focus" -> Evt.WindowFocusChanged
 ;
-; OUT OF SCOPE (Fase 5 SyncEngine):
+; OUT OF SCOPE (Phase 5 SyncEngine):
 ;   - Step.completionRegex/engageRegex/bossStartRegex matching
-;     (esses sao logica de sync, nao log raw)
+;     (those are sync logic, not raw log)
 ;   - Boss fight timing
-;   - Auto-start na fala do Wounded Man (App composition root via
-;     subscribe a NpcDialogue ou similar)
+;   - Auto-start on the Wounded Man line (App composition root via
+;     subscribe to NpcDialogue or similar)
 ;
-; Construcao:
+; Construction:
 ;   monitor := LogMonitorService(clock, bus, log)
 ;   monitor.Configure(logFilePath)
 ;   monitor.Start(seedFromTail := true)
-;   ; depois, periodicamente:
+;   ; then, periodically:
 ;   SetTimer(() => monitor.Tick(), 250)
 ;
-; Para testes: pode chamar monitor.ProcessText(text) diretamente sem I/O.
+; For tests: can call monitor.ProcessText(text) directly without I/O.
 
 
 class LogMonitorService
@@ -51,26 +51,26 @@ class LogMonitorService
     _partialLine  := ""
     _isRunning    := false
     _lastReadMs   := 0
-    _characterName := ""   ; v17.15 (Bug #2): filtro pra DeathDetected
+    _characterName := ""   ; v17.15 (Bug #2): filter for DeathDetected
 
-    ; Tamanho do tail varrido em Start(seedFromTail=true)
+    ; Tail size swept in Start(seedFromTail=true)
     static SEED_BYTES := 65536
 
     __New(clock, bus, logService)
     {
         if !(IsObject(clock) && clock.HasMethod("NowMs"))
-            throw TypeError("LogMonitorService: 'clock' deve ter metodo NowMs()")
+            throw TypeError("LogMonitorService: 'clock' must have NowMs() method")
         if !(bus is EventBus)
-            throw TypeError("LogMonitorService: 'bus' deve ser EventBus")
+            throw TypeError("LogMonitorService: 'bus' must be EventBus")
         if !(IsObject(logService) && logService.HasMethod("Info"))
-            throw TypeError("LogMonitorService: 'logService' deve ter metodos Info/Warn/Error")
+            throw TypeError("LogMonitorService: 'logService' must have Info/Warn/Error methods")
         this._clock := clock
         this._bus   := bus
         this._log   := logService
     }
 
-    ; Define o caminho do Client.txt. Pode ser chamado antes ou depois
-    ; de Start (Start re-le o path).
+    ; Sets the path to Client.txt. May be called before or after Start
+    ; (Start re-reads the path).
     Configure(logFilePathStr)
     {
         this._logFilePath := logFilePathStr
@@ -79,15 +79,15 @@ class LogMonitorService
     ; ============================================================
     ; SetCharacterName (v17.15 - Bug #2)
     ;
-    ; Define o nome do player atual. Usado pra filtrar DeathDetected:
-    ; PoE2 loga "<Name> has been slain." tanto pra player quanto pra
-    ; bosses, então sem este filtro o deathCount inflava com kills.
+    ; Sets the current player's name. Used to filter DeathDetected:
+    ; PoE2 logs "<Name> has been slain." both for the player and for
+    ; bosses, so without this filter deathCount would inflate with kills.
     ;
-    ; Chamado pelo composition root:
-    ;   - No boot, apos instanciar logMonitor, com cfg.characterName.
-    ;   - Em CharacterLevelUp, com o name vindo do evento.
+    ; Called by the composition root:
+    ;   - On boot, after instantiating logMonitor, with cfg.characterName.
+    ;   - On CharacterLevelUp, with the name from the event.
     ;
-    ; Empty string = filtro desativado (nenhuma death é publicada).
+    ; Empty string = filter disabled (no death is published).
     ; ============================================================
     SetCharacterName(name)
     {
@@ -97,22 +97,24 @@ class LogMonitorService
     GetCharacterName() => this._characterName
 
     ; Start(seedFromTail := false)
-    ;   Posiciona o cursor no fim do arquivo. Se seedFromTail eh true,
-    ;   varre os ultimos SEED_BYTES bytes e publica os eventos mais
-    ;   recentes (ultimo char level, ultima area level, ultima scene).
-    ;   Util para sincronizar state quando o app inicia no meio de uma run.
+    ;   Positions the cursor at the end of the file. If seedFromTail
+    ;   is true, scans the last SEED_BYTES bytes and publishes the
+    ;   most recent events (last char level, last area level, last
+    ;   scene). Useful for syncing state when the app starts in the
+    ;   middle of a run.
     ;
-    ;   Retorna true se conseguiu, false se arquivo nao existe ou nao abriu.
+    ;   Returns true on success, false if the file does not exist
+    ;   or fails to open.
     Start(seedFromTail := false)
     {
         if (this._logFilePath = "")
         {
-            this._log.Warn("Log file path nao configurado", "LogMonitor")
+            this._log.Warn("Log file path not configured", "LogMonitor")
             return false
         }
         if !FileExist(this._logFilePath)
         {
-            this._log.Warn("Log file nao encontrado: " this._logFilePath, "LogMonitor")
+            this._log.Warn("Log file not found: " this._logFilePath, "LogMonitor")
             return false
         }
         try
@@ -121,12 +123,12 @@ class LogMonitorService
         }
         catch Error as e
         {
-            this._log.Error("Falha ao abrir log: " e.Message, "LogMonitor")
+            this._log.Error("Failed to open log: " e.Message, "LogMonitor")
             return false
         }
         if !IsObject(logFile)
         {
-            this._log.Error("FileOpen retornou nao-objeto", "LogMonitor")
+            this._log.Error("FileOpen returned non-object", "LogMonitor")
             return false
         }
         size := logFile.Length
@@ -156,11 +158,11 @@ class LogMonitorService
 
     GetLastReadMs() => this._lastReadMs
 
-    ; Tick — chamado periodicamente (ex: SetTimer). Le novo conteudo do
-    ; arquivo a partir de _lastPos e processa linha por linha.
+    ; Tick — called periodically (e.g. SetTimer). Reads new content
+    ; from the file starting at _lastPos and processes line by line.
     ;
-    ; No-op se nao esta running ou se nao ha conteudo novo.
-    ; Detecta truncate (size < lastPos) e reseta posicao para 0.
+    ; No-op if not running or if no new content. Detects truncate
+    ; (size < lastPos) and resets position to 0.
     Tick()
     {
         if !this._isRunning
@@ -182,7 +184,7 @@ class LogMonitorService
             return
 
         size := logFile.Length
-        ; File rotacionado/truncado
+        ; File rotated/truncated
         if (size < this._lastPos)
             this._lastPos := 0
         if (size = this._lastPos)
@@ -201,18 +203,18 @@ class LogMonitorService
             this._ProcessChunk(text)
     }
 
-    ; ProcessText(text) — interface publica para testes.
-    ; Permite simular um chunk do log sem I/O real.
+    ; ProcessText(text) — public interface for tests.
+    ; Allows simulating a log chunk without real I/O.
     ProcessText(text)
     {
         this._ProcessChunk(text)
     }
 
     ; ============================================================
-    ; Processamento (privados)
+    ; Processing (private)
     ; ============================================================
 
-    ; Quebra um chunk em linhas, lidando com linhas parciais entre chunks.
+    ; Splits a chunk into lines, handling partial lines between chunks.
     _ProcessChunk(textStr)
     {
         chunk := this._partialLine . textStr
@@ -230,19 +232,20 @@ class LogMonitorService
             this._ProcessLine(Trim(lineStr))
     }
 
-    ; Tenta extrair informacao de uma linha. Cada extractor eh tentado
-    ; em ordem; o primeiro que matchar publica o evento e retorna.
+    ; Tries to extract information from a line. Each extractor is
+    ; tried in order; the first one to match publishes the event and
+    ; returns.
     ;
-    ; Tambem publica Evt.LogLineRead com a linha bruta SEMPRE (mesmo
-    ; se algum extractor matchou). Esse evento eh consumido por
-    ; parsers especializados (BossFightTracker da Fase 5.3, etc).
+    ; Also publishes Evt.LogLineRead with the raw line ALWAYS (even
+    ; if some extractor matched). This event is consumed by
+    ; specialized parsers (BossFightTracker of Phase 5.3, etc.).
     _ProcessLine(lineStr)
     {
         if (lineStr = "")
             return
 
-        ; Broadcast da linha bruta antes de qualquer parsing especifico.
-        ; Subscribers (ex: BossFightTracker) decidem se a linha interessa.
+        ; Broadcast the raw line before any specific parsing.
+        ; Subscribers (e.g. BossFightTracker) decide if the line matters.
         this._bus.Publish(Events.LogLineRead, Map("line", lineStr))
 
         ; Character level up
@@ -273,18 +276,18 @@ class LogMonitorService
             this._bus.Publish(Events.SceneEntered, Map(
                 "sceneId", scene
             ))
-            ; v17.15 (Bug #21): publica ZoneChanged tambem pra cada SCENE.
-            ; PoE2 atual nao emite mais "You have entered" em todas as
-            ; transicoes de zona — apenas "[SCENE] Set Source". Republicar
-            ; como ZoneChanged garante que ZoneTrackingService e widgets de
-            ; status recebam a mudanca.
+            ; v17.15 (Bug #21): publishes ZoneChanged also for each SCENE.
+            ; Current PoE2 no longer emits "You have entered" on all zone
+            ; transitions — only "[SCENE] Set Source". Republishing as
+            ; ZoneChanged ensures that ZoneTrackingService and status
+            ; widgets receive the change.
             this._bus.Publish(Events.ZoneChanged, Map(
                 "zoneName", scene,
                 "sceneId",  scene
             ))
-            ; v17.15 (Bug #21): log de Scene/Zone published movido de
-            ; INFO pra DEBUG. Numa campanha completa o jogador entra em
-            ; 100+ zonas — em INFO virava spam no log file.
+            ; v17.15 (Bug #21): Scene/Zone published log moved from
+            ; INFO to DEBUG. In a full campaign the player enters
+            ; 100+ zones — at INFO it became spam in the log file.
             this._log.Debug("Scene/Zone published: " scene, "LogMonitor")
             return
         }
@@ -300,13 +303,13 @@ class LogMonitorService
             return
         }
 
-        ; Death (PLAYER ONLY desde v17.15 - Bug #2)
+        ; Death (PLAYER ONLY since v17.15 - Bug #2)
         ;
-        ; PoE2 loga "<Name> has been slain." pra player E pra bosses
-        ; (vide boss_catalog.ini com defeat_regex). Sem filtro, cada
-        ; boss kill inflava o deathCount da run. Filtra pelo nome do
-        ; personagem atual (hidratado de cfg + atualizado em
-        ; CharacterLevelUp).
+        ; PoE2 logs "<Name> has been slain." for the player AND for
+        ; bosses (see boss_catalog.ini with defeat_regex). Without a
+        ; filter, each boss kill inflated the run's deathCount.
+        ; Filters by the current character name (hydrated from cfg +
+        ; updated on CharacterLevelUp).
         death := this._ExtractDeath(lineStr)
         if (death != "")
         {
@@ -316,8 +319,8 @@ class LogMonitorService
                     "character", death
                 ))
             }
-            ; Se nao bate com o player, eh kill de boss/monstro —
-            ; ignora silenciosamente (caso comum no log).
+            ; If it doesn't match the player, it's a boss/monster kill —
+            ; silently ignore (common case in the log).
             return
         }
 
@@ -331,12 +334,12 @@ class LogMonitorService
             return
         }
 
-        ; Linha desconhecida — silencio (nao log, evita poluicao)
+        ; Unknown line — silence (no log, avoids pollution)
     }
 
-    ; Seed: varre texto inicial (tail do log no boot) e publica APENAS
-    ; o ultimo evento de cada tipo encontrado. Razao: o objetivo do seed
-    ; eh sincronizar state, nao reprocessar historia.
+    ; Seed: scans initial text (log tail on boot) and publishes ONLY
+    ; the last event of each type found. Reason: the goal of the seed
+    ; is to sync state, not to reprocess history.
     _SeedFromText(textStr)
     {
         lastCharName  := ""
@@ -381,9 +384,10 @@ class LogMonitorService
             this._bus.Publish(Events.SceneEntered, Map(
                 "sceneId", lastScene
             ))
-            ; v17.15 (Bug #20): mesma republicacao de ZoneChanged tambem no
-            ; seed inicial — essencial pra ZoneTrackingService comecar com
-            ; zona correta apos boot no meio de uma run.
+            ; v17.15 (Bug #20): same ZoneChanged republication also on
+            ; the initial seed — essential for ZoneTrackingService to
+            ; start with the correct zone after a boot in the middle
+            ; of a run.
             this._bus.Publish(Events.ZoneChanged, Map(
                 "zoneName", lastScene,
                 "sceneId",  lastScene
@@ -392,11 +396,11 @@ class LogMonitorService
     }
 
     ; ============================================================
-    ; Extractors — funcoes puras de regex
+    ; Extractors — pure regex functions
     ; ============================================================
 
-    ; Padrao: ":<NAME> (<CLASS>) is now level <N>"
-    ; Ex: ": Harvest (Warrior) is now level 42"
+    ; Pattern: ":<NAME> (<CLASS>) is now level <N>"
+    ; E.g.: ": Harvest (Warrior) is now level 42"
     _ExtractCharacterLevelUp(lineStr, &charName, &charClass, &charLevel)
     {
         charName  := ""
@@ -412,7 +416,7 @@ class LogMonitorService
         return false
     }
 
-    ; Padrao: "Generating level <N> area <CODE> with seed <S>"
+    ; Pattern: "Generating level <N> area <CODE> with seed <S>"
     _ExtractAreaLevel(lineStr, &areaLevel, &areaCode)
     {
         areaLevel := 0
@@ -426,16 +430,17 @@ class LogMonitorService
         return false
     }
 
-    ; Padrao: "[SCENE] Set Source [<sceneName>]"
-    ; Filtra:
+    ; Pattern: "[SCENE] Set Source [<sceneName>]"
+    ; Filters out:
     ;   - "(null)" / "(unknown)" : char select / loading
-    ;   - "Act N"                : marker de transicao entre atos,
-    ;                              eh cinematica/title card. Nao eh
-    ;                              zona real (jogador nao esta jogando
-    ;                              em "Act 1", esta em G1_town/etc.)
-    ;                              Eh emitido junto com transicoes
-    ;                              cross-act e poluiria sync engine se
-    ;                              tratasse como ZoneChanged.
+    ;   - "Act N"                : transition marker between acts,
+    ;                              this is cinematic/title card. Not
+    ;                              a real zone (the player isn't
+    ;                              playing in "Act 1", they're in
+    ;                              G1_town/etc.). It's emitted alongside
+    ;                              cross-act transitions and would
+    ;                              pollute the sync engine if treated
+    ;                              as ZoneChanged.
     _ExtractScene(lineStr)
     {
         if RegExMatch(lineStr, "\[SCENE\]\s+Set Source \[(.*?)\]", &m)
@@ -443,8 +448,8 @@ class LogMonitorService
             name := Trim(m[1])
             if (name = "" || name = "(null)" || name = "(unknown)")
                 return ""
-            ; Markers de transicao entre atos: "Act 1", "Act 2", ..., "Act 6".
-            ; Tambem variantes case-insensitive como "act 1".
+            ; Transition markers between acts: "Act 1", "Act 2", ..., "Act 6".
+            ; Also case-insensitive variants like "act 1".
             if RegExMatch(name, "i)^Act\s+\d+$")
                 return ""
             return name
@@ -452,7 +457,7 @@ class LogMonitorService
         return ""
     }
 
-    ; Padrao: "You have entered <ZONE>."
+    ; Pattern: "You have entered <ZONE>."
     _ExtractZoneEntered(lineStr)
     {
         if RegExMatch(lineStr, "i)You have entered\s+(.+?)[\.]?$", &m)
@@ -460,9 +465,9 @@ class LogMonitorService
         return ""
     }
 
-    ; Padroes:
-    ;   ":<NAME> has been slain."   (jogador, com prefixo de timestamp)
-    ;   "<NAME> has been slain."    (incluindo monstros, sem prefixo)
+    ; Patterns:
+    ;   ":<NAME> has been slain."   (player, with timestamp prefix)
+    ;   "<NAME> has been slain."    (including monsters, no prefix)
     _ExtractDeath(lineStr)
     {
         if RegExMatch(lineStr, "i):\s+(.+?)\s+has been slain\.", &m)
@@ -472,7 +477,7 @@ class LogMonitorService
         return ""
     }
 
-    ; Padrao: "[WINDOW] Lost focus" / "[WINDOW] Gained focus"
+    ; Pattern: "[WINDOW] Lost focus" / "[WINDOW] Gained focus"
     _ExtractFocus(lineStr)
     {
         if RegExMatch(lineStr, "i)\[WINDOW\]\s+Lost focus")

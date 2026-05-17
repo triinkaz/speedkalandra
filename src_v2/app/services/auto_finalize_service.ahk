@@ -1,25 +1,26 @@
 ; ============================================================
-; AutoFinalizeService - finalizacao automatica via regex de log (Onda 6)
+; AutoFinalizeService - automatic finalization via log regex (Wave 6)
 ; ============================================================
 ;
-; Subscribe Evt.LogLineRead e testa cada linha contra cfg.autoFinalizeRegex.
-; Match -> publica Cmd.FinalizeRunRequested (que RunService consome).
+; Subscribes to Evt.LogLineRead and tests each line against
+; cfg.autoFinalizeRegex. Match -> publishes Cmd.FinalizeRunRequested
+; (which RunService consumes).
 ;
-; FILOSOFIA:
-;   - Service simples, sem state alem de "ja disparou nesta run?"
-;   - Dedup por runId: dispara no maximo 1 vez por run, evita matches
-;     repetidos em logs duplicados.
-;   - Regex vazia -> service eh no-op (mas continua subscribed).
-;   - Resetar regex em runtime (settings change): proximo match vai
-;     funcionar imediatamente.
+; PHILOSOPHY:
+;   - Simple service, no state beyond "already fired in this run?"
+;   - Dedup by runId: fires at most once per run, avoids repeated
+;     matches in duplicated logs.
+;   - Empty regex -> service is a no-op (but stays subscribed).
+;   - Resetting the regex at runtime (settings change): next match
+;     will work immediately.
 ;
-; EVENTOS:
+; EVENTS:
 ;   Subscribe:  Evt.LogLineRead
-;   Subscribe:  Evt.RunStarted (reseta flag _hasFiredForCurrentRun)
-;   Subscribe:  Evt.RunReset / Cancelled / Completed (reseta flag)
-;   Publica:    Cmd.FinalizeRunRequested
+;   Subscribe:  Evt.RunStarted (resets the _hasFiredForCurrentRun flag)
+;   Subscribe:  Evt.RunReset / Cancelled / Completed (resets flag)
+;   Publishes:  Cmd.FinalizeRunRequested
 ;
-; CONSTRUCAO:
+; CONSTRUCTION:
 ;   svc := AutoFinalizeService(bus, cfg)
 
 class AutoFinalizeService
@@ -39,9 +40,9 @@ class AutoFinalizeService
     __New(bus, cfg)
     {
         if !(bus is EventBus)
-            throw TypeError("AutoFinalizeService: 'bus' deve ser EventBus")
+            throw TypeError("AutoFinalizeService: 'bus' must be EventBus")
         if !(cfg is AppSettings)
-            throw TypeError("AutoFinalizeService: 'cfg' deve ser AppSettings")
+            throw TypeError("AutoFinalizeService: 'cfg' must be AppSettings")
         this._bus := bus
         this._cfg := cfg
 
@@ -100,7 +101,7 @@ class AutoFinalizeService
         if this._hasFiredForCurrentRun
             return
 
-        ; Test regex; tolerante a regex invalida
+        ; Test regex; tolerant of invalid regex
         matched := false
         try
         {
@@ -109,7 +110,7 @@ class AutoFinalizeService
         }
         catch
         {
-            ; regex invalida -- silencia (proxima edicao do user corrige)
+            ; invalid regex -- silence (user's next edit will fix it)
             matched := false
         }
 

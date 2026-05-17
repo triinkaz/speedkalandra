@@ -1,11 +1,11 @@
 ; ============================================================
-; Events - nomes de eventos publicados por Services no EventBus
+; Events - event names published by Services on the EventBus
 ; ============================================================
 ;
-; Convencao: igual a Commands, sempre via constante.
+; Convention: same as Commands, always via a constant.
 ;
-; Cada Event representa FATO ("X aconteceu"). Multiplos subscribers
-; reagem (widget atualiza, repository persiste, logger registra, etc.).
+; Each Event represents a FACT ("X happened"). Multiple subscribers
+; react (widget updates, repository persists, logger records, etc.).
 
 class Events
 {
@@ -17,7 +17,7 @@ class Events
     static RunReset      := "Evt.RunReset"        ; data: {runId}
     static RunCancelled  := "Evt.RunCancelled"    ; data: {runId}
 
-    ; --- Timer (mecanica pura) ---
+    ; --- Timer (pure mechanics) ---
     static TimerStarted  := "Evt.TimerStarted"   ; data: {runMs}
     static TimerPaused   := "Evt.TimerPaused"    ; data: {runMs}
     static TimerResumed  := "Evt.TimerResumed"   ; data: {runMs}
@@ -25,7 +25,7 @@ class Events
     static TimerReset    := "Evt.TimerReset"     ; data: {scope: "all"}
     static TimerUndone   := "Evt.TimerUndone"    ; data: {runMs}
 
-    ; --- Game state (vindos do log monitor) ---
+    ; --- Game state (from the log monitor) ---
     static ZoneChanged       := "Evt.ZoneChanged"       ; data: {zoneName, sceneId}
     static AreaLevelChanged  := "Evt.AreaLevelChanged"  ; data: {areaLevel, areaCode}
     static CharacterLevelUp  := "Evt.CharacterLevelUp"  ; data: {character, class, level}
@@ -35,15 +35,15 @@ class Events
     static WindowFocusChanged := "Evt.WindowFocusChanged" ; data: {state} in {"lost", "gained"}
     static LogLineRead       := "Evt.LogLineRead"       ; data: {line}
 
-    ; --- Zone tracking (Onda 3) ---
-    ; Publicados pelo ZoneTrackingService apos ZoneChanged enriquecer
-    ; com metadata do ZonesCatalog (act, isTown).
+    ; --- Zone tracking (Wave 3) ---
+    ; Published by ZoneTrackingService after ZoneChanged is enriched
+    ; with metadata from ZonesCatalog (act, isTown).
     static ZoneEntered          := "Evt.ZoneEntered"          ; data: {zoneName, actIndex, isTown, enteredAt}
     static ZoneTimeAccumulated  := "Evt.ZoneTimeAccumulated"  ; data: {zoneName, durationMs, totalMs}
 
-    ; --- Loading detection (Fase 9.2) ---
-    ; Publicado por LoadingDetectionService quando uma medicao de loading
-    ; (de Generating level ate HUD voltar) eh fechada com sucesso.
+    ; --- Loading detection (Phase 9.2) ---
+    ; Published by LoadingDetectionService when a loading measurement
+    ; (from "Generating level" to HUD reappearance) is successfully closed.
     static LoadingMeasured := "Evt.LoadingMeasured"    ; data: {durationMs, fromZone, toZone, source, score, anchor}
 
     ; --- Tick (UI refresh trigger) ---
@@ -60,7 +60,7 @@ class Events
     static AppStarted  := "Evt.AppStarted"
     static AppStopping := "Evt.AppStopping"
 
-    ; --- Export/Import de runs (v0.1.0) ---
+    ; --- Run export/import (v0.1.0) ---
     static RunsExported := "Evt.RunsExported"  ; data: {path, count}
     static RunsImported := "Evt.RunsImported"  ; data: {path, imported, renamed, skipped}
 }

@@ -1,36 +1,38 @@
 ; ============================================================
-; RunService - ciclo de vida de runs (Onda 6, minimal)
+; RunService - run lifecycle (Wave 6, minimal)
 ; ============================================================
 ;
-; VERSAO POS-DEMOLICAO: gerencia state minimal (runId, startedAt,
-; status). Sem splits, sem deaths, sem step, sem campaign.
+; POST-DEMOLITION VERSION: manages minimal state (runId, startedAt,
+; status). No splits, no deaths, no step, no campaign.
 ;
-; Coordena com TimerService (mecanica) e RunStateRepository (persistencia).
+; Coordinates with TimerService (mechanics) and RunStateRepository
+; (persistence).
 ;
-; OPERACOES:
-;   NewRun()      : gera runId, zera timer, publica RunStarted
-;   FinalizeRun() : Stop timer, marca status=completed, publica RunCompleted
-;   CancelRun()   : Stop timer, marca status=cancelled, publica RunCancelled
-;   ResetRun()    : Reset timer, zera state, publica RunReset
-;   Hydrate(s)    : restaura state do disco (inclui auto-resume do timer)
+; OPERATIONS:
+;   NewRun()      : generates runId, clears timer, publishes RunStarted
+;   FinalizeRun() : Stop timer, marks status=completed, publishes RunCompleted
+;   CancelRun()   : Stop timer, marks status=cancelled, publishes RunCancelled
+;   ResetRun()    : Reset timer, clears state, publishes RunReset
+;   Hydrate(s)    : restores state from disk (includes timer auto-resume)
 ;
 ; HYDRATE / CRASH RECOVERY:
-;   Hydrate restaura state do RunState (memoria) E retoma o TimerService
-;   no estado correspondente:
-;     status=running -> timer fica running (GetRunMs continua crescendo)
-;     status=paused  -> timer fica paused (GetRunMs constante ate Toggle)
-;     outros         -> timer parado
+;   Hydrate restores the RunState (memory) AND resumes TimerService
+;   in the corresponding state:
+;     status=running -> timer stays running (GetRunMs keeps growing)
+;     status=paused  -> timer stays paused (GetRunMs constant until Toggle)
+;     others         -> timer stopped
 ;
-; PERSISTENCIA — DOIS CAMINHOS:
-;   - _Persist() (4 IniWrites): chamado em transicoes de lifecycle
-;     (NewRun/FinalizeRun/CancelRun). Salva todos os campos.
-;   - PersistTimer() (1 IniWrite): chamado pelo tick periodico (5s) do
-;     composition root. Salva SO o runBaseMs (campo que muda toda hora).
-;     Os outros 3 campos so mudam em transicoes — la o _Persist completo
-;     ja eh chamado. Otimizacao critica pra evitar lag no thread principal
-;     (com Save completo eram 4 IniWrites a cada 5s = lag perceptivel).
+; PERSISTENCE — TWO PATHS:
+;   - _Persist() (4 IniWrites): called on lifecycle transitions
+;     (NewRun/FinalizeRun/CancelRun). Saves all fields.
+;   - PersistTimer() (1 IniWrite): called by the composition root's
+;     periodic tick (5s). Saves ONLY runBaseMs (the field that changes
+;     every time). The other 3 fields only change on transitions —
+;     there the full _Persist is already called. Critical optimization
+;     to avoid lag on the main thread (with full Save it was 4 IniWrites
+;     every 5s = perceptible lag).
 ;
-; EVENTOS PUBLICADOS:
+; PUBLISHED EVENTS:
 ;   Evt.RunStarted    {runId, startedAt, profileId}
 ;   Evt.RunCompleted  {runId, durationMs}
 ;   Evt.RunCancelled  {runId}
@@ -42,14 +44,15 @@
 ;   Cmd.CancelRunRequested   -> CancelRun()
 ;   Cmd.ResetRunRequested    -> ResetRun()
 ;
-; CONSTRUCAO:
+; CONSTRUCTION:
 ;   service := RunService(clock, bus, timerSvc, stateRepo)
 ;
-; NOTA SOBRE NOMES DOS PARAMETROS:
-;   AHK v2 faz lookup case-insensitive de variaveis. Se nomeassemos
-;   o param `timerService`, ele colidiria com a classe `TimerService`
-;   no operando direito de `is`, e a checagem viraria `x is x`.
-;   Por isso `timerSvc` — case-insensitive-distinto de TimerService.
+; NOTE ON PARAMETER NAMES:
+;   AHK v2 does case-insensitive variable lookup. If we named the
+;   param `timerService`, it would collide with the `TimerService`
+;   class on the right side of `is`, and the check would become
+;   `x is x`. Hence `timerSvc` — case-insensitive-distinct from
+;   TimerService.
 
 
 class RunService
@@ -68,13 +71,13 @@ class RunService
     __New(clock, bus, timerSvc, stateRepo)
     {
         if !IsObject(clock) || !clock.HasMethod("NowMs")
-            throw TypeError("RunService: 'clock' deve implementar NowMs()")
+            throw TypeError("RunService: 'clock' must implement NowMs()")
         if !(bus is EventBus)
-            throw TypeError("RunService: 'bus' deve ser EventBus")
+            throw TypeError("RunService: 'bus' must be EventBus")
         if !(timerSvc is TimerService)
-            throw TypeError("RunService: 'timerSvc' deve ser TimerService")
+            throw TypeError("RunService: 'timerSvc' must be TimerService")
         if !(stateRepo is RunStateRepository)
-            throw TypeError("RunService: 'stateRepo' deve ser RunStateRepository")
+            throw TypeError("RunService: 'stateRepo' must be RunStateRepository")
 
         this._clock     := clock
         this._bus       := bus
@@ -120,23 +123,25 @@ class RunService
     Hydrate(stateObj)
     {
         if !(stateObj is RunState)
-            throw TypeError("RunService.Hydrate: 'stateObj' deve ser RunState")
+            throw TypeError("RunService.Hydrate: 'stateObj' must be RunState")
         this._state := stateObj
         this._timer.Hydrate(stateObj.runBaseMs, stateObj.status)
 
-        ; v17.14: se a run hidratada esta ativa (running/paused), publica
-        ; Evt.RunStarted pra sincronizar services dependentes. Sem isso:
-        ;   - RunStatsRecorder fica com _runId="" — e quando o user
-        ;     finaliza, RunHistoryRepository.Save retorna false sem log
-        ;     (runId vazio).
-        ;   - AutoStartService fica com _runActive=false — pode causar
-        ;     auto-start duplicado se a fala do Wounded Man aparecer.
-        ;   - ActCheckpointTracker fica com _currentAct=0 (recupera no
-        ;     proximo ZoneEntered, mas perde checkpoints da sessao
-        ;     anterior — esses ja eram em memoria pura, sem persistencia).
+        ; v17.14: if the hydrated run is active (running/paused),
+        ; publish Evt.RunStarted to sync dependent services. Without
+        ; this:
+        ;   - RunStatsRecorder stays with _runId="" — and when the
+        ;     user finalizes, RunHistoryRepository.Save returns false
+        ;     with no log (empty runId).
+        ;   - AutoStartService stays with _runActive=false — may cause
+        ;     duplicate auto-start if the Wounded Man line appears.
+        ;   - ActCheckpointTracker stays with _currentAct=0 (recovers
+        ;     on the next ZoneEntered, but loses checkpoints from the
+        ;     previous session — those were already pure-memory, no
+        ;     persistence).
         ;
-        ; Flag 'hydrated' permite handlers diferenciar de NewRun real
-        ; (ex: nao resetar XP area).
+        ; The 'hydrated' flag lets handlers differentiate from a real
+        ; NewRun (e.g. don't reset XP area).
         if stateObj.IsActive()
         {
             this._bus.Publish(Events.RunStarted, Map(
@@ -156,13 +161,13 @@ class RunService
     IsPaused()     => this._state.IsPaused()
     GetState()     => this._state
 
-    ; v17.14 — quando ha run ativa, NewRun agora chama ResetRun em vez
-    ; de CancelRun. CancelRun antes salvava no historico se runMs >= 3min,
-    ; o que causava saves indesejados quando o user soh queria reiniciar.
-    ; ResetRun descarta sem salvar. Workflow:
-    ;   - Quer salvar antes de reiniciar: FinalizeRun (Ctrl+Alt+F) +
-    ;     depois NewRun (Ctrl+Alt+N)
-    ;   - Quer descartar e reiniciar: NewRun direto (Ctrl+Alt+N)
+    ; v17.14 — when there's an active run, NewRun now calls ResetRun
+    ; instead of CancelRun. CancelRun used to save to history if
+    ; runMs >= 3min, which caused unwanted saves when the user just
+    ; wanted to restart. ResetRun discards without saving. Workflow:
+    ;   - Want to save before restarting: FinalizeRun (Ctrl+Alt+F) +
+    ;     then NewRun (Ctrl+Alt+N)
+    ;   - Want to discard and restart: NewRun directly (Ctrl+Alt+N)
     NewRun(profileId := "")
     {
         if this._state.IsActive()
@@ -190,7 +195,7 @@ class RunService
     {
         if !this._state.IsActive()
             return false
-        ; v0.1.0: `runId` local colide com classe `RunId` (#Warn). Usar currentRunId.
+        ; v0.1.0: local `runId` collides with the `RunId` class (#Warn). Use currentRunId.
         currentRunId := this._state.runId
         durationMs := this._timer.GetRunMs()
 
@@ -234,16 +239,16 @@ class RunService
     PersistTick() => this.PersistTimer()
 
     ; ============================================================
-    ; PersistTimer - persiste APENAS o runBaseMs (1 IniWrite)
+    ; PersistTimer - persists ONLY runBaseMs (1 IniWrite)
     ;
-    ; Chamado pelo timer periodico do composition root (a cada 5s).
-    ; Usa SaveRunBaseMs em vez de Save completo pra evitar 3 IniWrites
-    ; desnecessarios — os outros campos (runId, startedAt, status) so
-    ; mudam em transicoes (NewRun/Finalize/Cancel) onde _Persist
-    ; completo eh chamado.
+    ; Called by the composition root's periodic timer (every 5s).
+    ; Uses SaveRunBaseMs instead of a full Save to avoid 3 unnecessary
+    ; IniWrites — the other fields (runId, startedAt, status) only
+    ; change on transitions (NewRun/Finalize/Cancel) where the full
+    ; _Persist is called.
     ;
-    ; Otimizacao critica: antes era 4 IniWrites a cada 5s causando lag
-    ; perceptivel no thread principal (pause detection demorava 6s).
+    ; Critical optimization: before it was 4 IniWrites every 5s causing
+    ; perceptible lag on the main thread (pause detection took 6s).
     ; ============================================================
     PersistTimer()
     {
@@ -260,16 +265,16 @@ class RunService
 
     _GenerateRunId()
     {
-        ; v17.15 (Bug #3): yyyyMMdd_HHmmss + 3 digitos de ms pra evitar
-        ; collision quando duas runs comecam no mesmo segundo (ResetRun
-        ; rapido + NewRun, ou auto-start no mesmo tick que o user pressa N).
-        ; Sem isso, RunHistoryRepository.Save sobrescrevia o INI da primeira
-        ; run silenciosamente e PersonalBestRepository registrava BestRunId
-        ; errado.
+        ; v17.15 (Bug #3): yyyyMMdd_HHmmss + 3 ms digits to avoid
+        ; collision when two runs start in the same second (quick
+        ; ResetRun + NewRun, or auto-start on the same tick the user
+        ; presses N). Without this, RunHistoryRepository.Save silently
+        ; overwrote the first run's INI and PersonalBestRepository
+        ; recorded the wrong BestRunId.
         ;
-        ; Formato: "20260515_103045_873" (sempre 19 chars).
-        ; ListRunIds nao filtra por regex — usa SplitPath, entao formato
-        ; novo funciona transparentemente.
+        ; Format: "20260515_103045_873" (always 19 chars).
+        ; ListRunIds doesn't filter by regex — uses SplitPath, so the
+        ; new format works transparently.
         ms := Mod(A_TickCount, 1000)
         return FormatTime(A_Now, "yyyyMMdd_HHmmss") . "_" . Format("{:03d}", ms)
     }

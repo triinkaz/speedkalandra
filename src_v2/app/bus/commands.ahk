@@ -1,16 +1,16 @@
 ; ============================================================
-; Commands - nomes de comandos publicados pela UI no EventBus (Onda 6)
+; Commands - command names published by the UI on the EventBus (Wave 6)
 ; ============================================================
 ;
-; Convencao: passe pelo bus como string, MAS sempre via constante:
+; Convention: pass through the bus as a string, BUT always via a constant:
 ;   bus.Publish(Commands.PauseRequested)         OK
-;   bus.Publish("PauseRequested")                 NAO (typo silencioso)
+;   bus.Publish("PauseRequested")                 NO (silent typo)
 ;
-; Erro de typo em "Commands.PauseRequsted" estoura "undefined property"
-; em vez de virar evento que ninguem escuta.
+; A typo in "Commands.PauseRequsted" throws "undefined property"
+; instead of turning into an event nobody listens to.
 ;
-; Cada Command representa INTENCAO ("o usuario quer X"). Quem decide
-; se a acao acontece eh o Service (pode ignorar se inapropriado).
+; Each Command represents INTENT ("the user wants X"). The Service
+; decides whether the action happens (it may ignore if inappropriate).
 
 class Commands
 {
@@ -35,7 +35,7 @@ class Commands
     ; --- Personal Bests (v17.13) ---
     static ResetPersonalBestsRequested := "Cmd.ResetPersonalBestsRequested"
 
-    ; --- Export/Import de runs (v0.1.0) ---
+    ; --- Run export/import (v0.1.0) ---
     static ExportRunsRequested := "Cmd.ExportRunsRequested"
     static ImportRunsRequested := "Cmd.ImportRunsRequested"
 

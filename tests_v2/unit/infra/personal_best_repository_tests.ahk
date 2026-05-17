@@ -2,13 +2,13 @@
 ; PersonalBestRepository tests
 ; ============================================================
 ;
-; Persiste PBs em INI atomico:
+; Persists PBs in an atomic INI:
 ;   [Run]       BestMs, BestRunId
 ;   [RunByAct]  Act<N>Ms (regex match)
-;   [Zones]     <zoneName>=<ms> (zoneName sanitizado)
+;   [Zones]     <zoneName>=<ms> (zoneName sanitized)
 ;
-; Load retorna Map{runPbMs, runPbRunId, runPbByAct, zonePbs}.
-; Save serializa INI completo em memoria e escreve via AtomicWriter.
+; Load returns Map{runPbMs, runPbRunId, runPbByAct, zonePbs}.
+; Save serializes the full INI in memory and writes via AtomicWriter.
 
 class PersonalBestRepositoryTests extends TestCase
 {
@@ -18,10 +18,10 @@ class PersonalBestRepositoryTests extends TestCase
     }
 
     static Tests := [
-        ; --- Regression: encoding pra IniRead key-lookup ---
+        ; --- Regression: encoding for IniRead key-lookup ---
         "iniread_key_lookup_works_in_utf16_le_bom_but_not_utf8_bom",
 
-        ; --- Construtor ---
+        ; --- Constructor ---
         "constructor_throws_on_empty_path",
         "constructor_throws_on_whitespace_path",
         "get_path_returns_constructor_arg",
@@ -72,43 +72,43 @@ class PersonalBestRepositoryTests extends TestCase
     }
 
     ; ============================================================
-    ; Regression: encoding para IniRead key-lookup
+    ; Regression: encoding for IniRead key-lookup
     ; ============================================================
     ;
-    ; PITFALL (Wave 4 - 5 diags reduzidos a este unico regression):
-    ; IniRead key-lookup (`IniRead(path, section, key, default)`) em
-    ; AHK v2 SO funciona em arquivos UTF-16 LE BOM. Em UTF-8 BOM
-    ; sempre retorna o default, independente de line endings.
+    ; PITFALL (Wave 4 - 5 diags reduced to this single regression):
+    ; IniRead key-lookup (`IniRead(path, section, key, default)`) in
+    ; AHK v2 ONLY works on UTF-16 LE BOM files. On UTF-8 BOM it
+    ; always returns the default, regardless of line endings.
     ;
-    ; Section-reads (`IniRead(path, section)`, sem key) toleram ambos
-    ; encodings — por isso ReadSectionAsMap funciona, mas Read nao.
+    ; Section-reads (`IniRead(path, section)`, no key) tolerate both
+    ; encodings — that's why ReadSectionAsMap works, but Read doesn't.
     ;
-    ; Impacto no projeto:
-    ;   - PersonalBestRepository.Save passou de "UTF-8" -> "UTF-16".
-    ;   - Testes deste arquivo escrevem INIs com FileAppend "UTF-16".
-    ;   - R11 (TextEncoding.MigrateIniToUtf8) eh um bug latente no
-    ;     projeto: migra INIs principais pra UTF-8 BOM, quebrando
-    ;     todo IniRead key-lookup neles. Resolver separadamente.
+    ; Project impact:
+    ;   - PersonalBestRepository.Save changed from "UTF-8" -> "UTF-16".
+    ;   - This file's tests write INIs via FileAppend "UTF-16".
+    ;   - R11 (TextEncoding.MigrateIniToUtf8) is a latent project bug:
+    ;     migrates main INIs to UTF-8 BOM, breaking every IniRead
+    ;     key-lookup on them. Resolve separately.
 
     iniread_key_lookup_works_in_utf16_le_bom_but_not_utf8_bom()
     {
-        ; UTF-16 LE BOM: funciona
+        ; UTF-16 LE BOM: works
         utf16Path := Fixtures.TempPath("ini")
         FileAppend("[S]`r`nK=V`r`n", utf16Path, "UTF-16")
         utf16Ini := IniFile(utf16Path)
         Assert.Equal("V", utf16Ini.Read("S", "K", "DEFAULT"),
-            "UTF-16 LE BOM deve funcionar")
+            "UTF-16 LE BOM must work")
 
-        ; UTF-8 BOM: NAO funciona (retorna default)
+        ; UTF-8 BOM: does NOT work (returns default)
         utf8Path := Fixtures.TempPath("ini")
         FileAppend("[S]`r`nK=V`r`n", utf8Path, "UTF-8")
         utf8Ini := IniFile(utf8Path)
         Assert.Equal("DEFAULT", utf8Ini.Read("S", "K", "DEFAULT"),
-            "UTF-8 BOM retorna default - este eh o pitfall documentado")
+            "UTF-8 BOM returns default - this is the documented pitfall")
     }
 
     ; ============================================================
-    ; Construtor
+    ; Constructor
     ; ============================================================
 
     constructor_throws_on_empty_path()
@@ -151,7 +151,7 @@ class PersonalBestRepositoryTests extends TestCase
     load_parses_run_section()
     {
         path := Fixtures.TempPath("ini")
-        ; UTF-16 obrigatorio: IniRead key-lookup nao funciona em UTF-8 BOM.
+        ; UTF-16 required: IniRead key-lookup doesn't work on UTF-8 BOM.
         FileAppend("[Run]`r`nBestMs=410000`r`nBestRunId=20260512_142345`r`n",
             path, "UTF-16")
         repo := PersonalBestRepository(path)
@@ -181,7 +181,7 @@ class PersonalBestRepositoryTests extends TestCase
         repo := PersonalBestRepository(path)
         loaded := repo.Load()
 
-        Assert.Equal(1, loaded["runPbByAct"].Count, "Apenas Act1Ms deve parsear")
+        Assert.Equal(1, loaded["runPbByAct"].Count, "Only Act1Ms must parse")
         Assert.Equal(1000, loaded["runPbByAct"][1])
     }
 
@@ -313,7 +313,7 @@ class PersonalBestRepositoryTests extends TestCase
         ))
 
         content := Fixtures.FileReadAll(path)
-        ; Chars `=`, `[`, `]` foram removidos
+        ; Chars `=`, `[`, `]` were removed
         Assert.Contains("ZoneWithEquals=100",  content)
         Assert.Contains("Zonebracket=200",     content)
     }
@@ -347,7 +347,7 @@ class PersonalBestRepositoryTests extends TestCase
 
         loaded := repo.Load()
         Assert.Equal(2, loaded["runPbByAct"].Count,
-            "Apenas atos 1 e 2 sao validos (0 e -1 sao puladas)")
+            "Only acts 1 and 2 are valid (0 and -1 are skipped)")
         Assert.True(loaded["runPbByAct"].Has(1))
         Assert.True(loaded["runPbByAct"].Has(2))
     }

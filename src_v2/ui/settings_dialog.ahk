@@ -1,37 +1,37 @@
 ; ============================================================
-; SettingsDialog - janela de configuracoes (Onda 6, minimal)
+; SettingsDialog - settings window (Wave 6, minimal)
 ; ============================================================
 ;
-; Dialog minimalista alinhado com AppSettings novo. Permite editar:
+; Minimalist dialog aligned with the new AppSettings. Lets you edit:
 ;   - General: ProfileName, GamePatch, LogFile path
-;   - AutoStart: Regex (PoE2 eh localizado — user configura por idioma)
+;   - AutoStart: Regex (PoE2 is localized — user configures per language)
 ;   - AutoFinalize: Regex
-;   - VendorRegexes: 3 slots (max 50 chars cada) pra atalhos V1/V2/V3
+;   - VendorRegexes: 3 slots (max 50 chars each) for V1/V2/V3 shortcuts
 ;   - Rules: AutoPauseOnFocus, DeathPenaltyEnabled + Penalty seconds
-;   - Hotkeys (todas as actions registradas no cfg.hotkeys)
+;   - Hotkeys (all actions registered in cfg.hotkeys)
 ;
-;   v17.15 (Bug #15): removidas linhas de UI pra PanelKeys.
-;   v17.15.1: re-adicionada UI pra death penalty (descobriu-se que o
-;   plot consumia esses campos).
+;   v17.15 (Bug #15): removed UI lines for PanelKeys.
+;   v17.15.1: re-added UI for death penalty (it was discovered that
+;   the plot consumed these fields).
 ;
 ; SUBSCRIPTIONS:
 ;   Cmd.OpenSettingsRequested -> Open()
 ;
-; CONSTRUCAO:
+; CONSTRUCTION:
 ;   dialog := SettingsDialog(bus, settingsRepo, cfg, headless := false)
-;   ; bus.Publish(Commands.OpenSettingsRequested) abre
+;   ; bus.Publish(Commands.OpenSettingsRequested) opens it
 ;
-; NOTA SOBRE FONTES EM Gui.Add:
-;   AHK v2 NAO aceita "s<size>" ou "c<hex>" como options inline na
-;   string de Gui.Add("Edit", ...). Tamanho de fonte e cor sao
-;   configurados via g.SetFont(...) ANTES do Add, e o controle
-;   herda esses settings. Por isso o helper _AddEdit() seta a fonte
-;   antes de adicionar.
+; NOTE ON FONTS IN Gui.Add:
+;   AHK v2 does NOT accept "s<size>" or "c<hex>" as inline options in
+;   the Gui.Add("Edit", ...) string. Font size and color are
+;   configured via g.SetFont(...) BEFORE the Add, and the control
+;   inherits those settings. That's why the _AddEdit() helper sets
+;   the font before adding.
 ;
-;   Casos onde "c<hex>" inline SE aceita: Text, Link, Checkbox,
-;   Radio, Button, GroupBox, Slider, Tab. Mas "s<size>" inline
-;   nao funciona em nenhum controle. Para uniformidade, todos os
-;   inputs do dialog usam SetFont.
+;   Cases where inline "c<hex>" IS accepted: Text, Link, Checkbox,
+;   Radio, Button, GroupBox, Slider, Tab. But inline "s<size>" does
+;   not work on any control. For uniformity, all dialog inputs use
+;   SetFont.
 
 
 class SettingsDialog
@@ -46,16 +46,16 @@ class SettingsDialog
     _gui           := ""
     _ctrls         := ""    ; Map<key, GuiControl>
     _isOpen        := false
-    _hotkeyActions := ""    ; Array<actionName> ordenado
+    _hotkeyActions := ""    ; Array<actionName> ordered
 
     __New(bus, settingsRepo, cfg, headless := false)
     {
         if !(bus is EventBus)
-            throw TypeError("SettingsDialog: 'bus' deve ser EventBus")
+            throw TypeError("SettingsDialog: 'bus' must be EventBus")
         if !(settingsRepo is SettingsRepository)
-            throw TypeError("SettingsDialog: 'settingsRepo' deve ser SettingsRepository")
+            throw TypeError("SettingsDialog: 'settingsRepo' must be SettingsRepository")
         if !(cfg is AppSettings)
-            throw TypeError("SettingsDialog: 'cfg' deve ser AppSettings")
+            throw TypeError("SettingsDialog: 'cfg' must be AppSettings")
 
         this._bus          := bus
         this._settingsRepo := settingsRepo
@@ -120,10 +120,10 @@ class SettingsDialog
         this._ctrls["profileName"] := this._AddEdit(g, 180, y, 360, this._cfg.profileName)
         y += 26
 
-        ; v0.1.3: campo "Patch" removido do dialog. cfg.gamePatch ainda
-        ; existe internamente (default "Unknown") pra retrocompat com runs
-        ; antigas salvas no historico, mas o usuario nao precisa mais
-        ; manter manualmente.
+        ; v0.1.3: "Patch" field removed from the dialog. cfg.gamePatch
+        ; still exists internally (default "Unknown") for back-compat
+        ; with old runs saved in history, but the user no longer needs
+        ; to maintain it manually.
 
         this._Label(g, y, "PoE2 log (Client.txt)")
         this._ctrls["logFile"] := this._AddEdit(g, 180, y, 280, this._cfg.logFile)
@@ -131,9 +131,9 @@ class SettingsDialog
         btnBrowse.OnEvent("Click", (*) => this._OnBrowseLog())
         y += 32
 
-        ; v17.15 (Bug #15): linha de "Panel keys (csv)" removida.
-        ; PanelKeyService foi desconectado em v17.2 e o campo
-        ; panelOverlayKeys nao existe mais em AppSettings.
+        ; v17.15 (Bug #15): "Panel keys (csv)" line removed.
+        ; PanelKeyService was disconnected in v17.2 and the
+        ; panelOverlayKeys field no longer exists in AppSettings.
 
         ; ============ AutoStart ============
         this._SectionHeader(g, y, "AUTO-START (starts run when regex matches in log)")
@@ -149,9 +149,9 @@ class SettingsDialog
         this._ctrls["autoFinalizeRegex"] := this._AddEdit(g, 180, y, 360, this._cfg.autoFinalizeRegex)
         y += 32
 
-        ; ============ Vendor Regex Slots (Onda 8) ============
-        ; Edits limitados a 50 chars via "Limit50". Botoes V1/V2/V3 do
-        ; CompactLayoutWidget copiam cada slot pra clipboard com Ctrl+click.
+        ; ============ Vendor Regex Slots (Wave 8) ============
+        ; Edits limited to 50 chars via "Limit50". V1/V2/V3 buttons in
+        ; CompactLayoutWidget copy each slot to clipboard via Ctrl+click.
         this._SectionHeader(g, y, "VENDOR SHORTCUTS (clipboard via V1/V2/V3 in overlay, max 50 chars)")
         y += 22
         Loop 3
@@ -174,8 +174,8 @@ class SettingsDialog
             "x180 y" y (this._cfg.autoPauseOnFocus ? " Checked" : ""),
             "Pause when PoE2 loses focus")
         y += 24
-        ; v17.15.1: death penalty (re-adicionado apos #15 over-removal).
-        ; UI mostra segundos pra ser amigavel; convertido pra ms no save.
+        ; v17.15.1: death penalty (re-added after the #15 over-removal).
+        ; UI shows seconds to be friendly; converted to ms on save.
         this._ctrls["deathPenaltyEnabled"] := g.Add("Checkbox",
             "x180 y" y (this._cfg.deathPenaltyEnabled ? " Checked" : ""),
             "Apply death penalty in run plot")
@@ -189,14 +189,14 @@ class SettingsDialog
         this._SectionHeader(g, y, "HOTKEYS")
         y += 22
 
-        ; v0.1.0: hint sobre a UX de captura. Edit field eh ReadOnly,
-        ; usuario interage so via botoes (Capture + Clear).
+        ; v0.1.0: hint about the capture UX. The Edit field is ReadOnly;
+        ; the user only interacts via buttons (Capture + Clear).
         g.SetFont("s8 c" Theme.Color("muted"), Theme.FONT_UI)
         g.Add("Text", "x16 y" y " w520",
             "Click 'Capture' to record a key combo (Esc cancels). 'Clear' to unbind.")
         y += 18
 
-        ; Ordena actions alfabeticamente
+        ; Sort actions alphabetically
         this._hotkeyActions := []
         for action, _ in this._cfg.hotkeys
             this._hotkeyActions.Push(action)
@@ -205,20 +205,20 @@ class SettingsDialog
         for _, action in this._hotkeyActions
         {
             this._Label(g, y, action)
-            ; v0.1.0: Edit eh ReadOnly. Display em formato human ("Ctrl+Alt+F")
-            ; via HotkeyFormatter. Interacao so via botoes Capture/Clear.
-            ; _OnSave converte de volta pra AHK syntax ("^!f") na hora de
-            ; persistir.
+            ; v0.1.0: Edit is ReadOnly. Display in human format
+            ; ("Ctrl+Alt+F") via HotkeyFormatter. Interaction only via
+            ; Capture/Clear buttons. _OnSave converts back to AHK syntax
+            ; ("^!f") at persist time.
             displayVal := HotkeyFormatter.ToHuman(this._cfg.GetHotkey(action))
             this._ctrls["hk_" action] := this._AddEdit(g, 180, y, 200, displayVal, "ReadOnly")
 
-            ; Capture button: graba proximo combo via InputHook
+            ; Capture button: grabs the next combo via InputHook
             g.SetFont("s9 c" Theme.Color("text"), Theme.FONT_UI)
             btnCap := g.Add("Button", "x384 y" (y-1) " w60 h22", "Capture")
             btnCap.OnEvent("Click", this._MakeCaptureHandler(action))
             this._ctrls["btn_capture_" action] := btnCap
 
-            ; Clear button: desbinda a hotkey (limpa o edit)
+            ; Clear button: unbinds the hotkey (clears the edit)
             btnClr := g.Add("Button", "x448 y" (y-1) " w50 h22", "Clear")
             btnClr.OnEvent("Click", this._MakeClearHandler(action))
             this._ctrls["btn_clear_" action] := btnClr
@@ -227,7 +227,7 @@ class SettingsDialog
         }
         y += 12
 
-        ; ============ Botoes ============
+        ; ============ Buttons ============
         g.SetFont("s9 c" Theme.Color("text"), Theme.FONT_UI)
         btnSave := g.Add("Button", "x180 y" y " w120 h28", "Save")
         btnSave.OnEvent("Click", (*) => this._OnSave())
@@ -239,17 +239,17 @@ class SettingsDialog
     }
 
     ; ============================================================
-    ; _AddEdit - helper que seta fonte ANTES e adiciona Edit com
-    ;   options simples (sem opcoes de fonte inline, que AHK v2
-    ;   rejeita).
+    ; _AddEdit - helper that sets the font BEFORE and adds an Edit
+    ;   with simple options (no inline font options, which AHK v2
+    ;   rejects).
     ;
-    ;   extraOpts: opcoes adicionais validas pra Edit (ex: "Number",
-    ;     "ReadOnly", "Multi", "Password"). NUNCA passar s<n> ou c<hex>.
+    ;   extraOpts: additional options valid for Edit (e.g. "Number",
+    ;     "ReadOnly", "Multi", "Password"). NEVER pass s<n> or c<hex>.
     ;
-    ;   v0.1.3: altura fixa h22 pra evitar Edit auto-expandir em multi
-    ;   linhas quando o valor eh longo (caso do logFile com path full
-    ;   do Steam). Antes, o Edit do logFile crescia pra 3 linhas e
-    ;   sobrepunha visualmente o campo abaixo.
+    ;   v0.1.3: fixed height h22 to prevent the Edit from auto-expanding
+    ;   to multiple lines when the value is long (the logFile case with
+    ;   the full Steam path). Previously, the logFile Edit grew to 3
+    ;   lines and visually overlapped the field below.
     ; ============================================================
     _AddEdit(g, x, y, w, value, extraOpts := "")
     {
@@ -276,7 +276,7 @@ class SettingsDialog
     {
         try
         {
-            ; v0.1.1: `file` colide com builtin `File`. Usar `selectedFile`.
+            ; v0.1.1: `file` collides with the builtin `File`. Use `selectedFile`.
             selectedFile := FileSelect(1, this._cfg.logFile, "Select Client.txt", "Logs (*.txt)")
             if (selectedFile != "")
                 this._ctrls["logFile"].Value := selectedFile
@@ -287,13 +287,14 @@ class SettingsDialog
     {
         cfg := this._cfg
         cfg.profileName := this._ctrls["profileName"].Value
-        ; v0.1.3: gamePatch nao eh mais editavel no dialog. Mantem o valor
-        ; que ja estava em cfg (default "Unknown" em fresh install).
+        ; v0.1.3: gamePatch is no longer editable in the dialog. Keeps
+        ; the value that was already in cfg (default "Unknown" on fresh
+        ; install).
         cfg.logFile     := this._ctrls["logFile"].Value
         cfg.autoStartRegex    := this._ctrls["autoStartRegex"].Value
         cfg.autoFinalizeRegex := this._ctrls["autoFinalizeRegex"].Value
 
-        ; Vendor regex slots (Onda 8) — clamp defensivo a 50 chars
+        ; Vendor regex slots (Wave 8) — defensive clamp to 50 chars
         vrOut := ["", "", ""]
         Loop 3
         {
@@ -310,8 +311,9 @@ class SettingsDialog
 
         cfg.autoPauseOnFocus := this._ctrls["autoPauseOnFocus"].Value = 1
 
-        ; v17.15.1: death penalty re-adicionado. UI usa segundos, persiste
-        ; em ms. Defensivo: se input vazio/invalido cai pra 150s default.
+        ; v17.15.1: death penalty re-added. UI uses seconds, persists
+        ; in ms. Defensive: if input is empty/invalid, falls back to
+        ; the 150s default.
         cfg.deathPenaltyEnabled := this._ctrls["deathPenaltyEnabled"].Value = 1
         try
         {
@@ -322,9 +324,9 @@ class SettingsDialog
             cfg.deathPenaltyMs := 150000
 
         ; Hotkeys
-        ; v0.1.0: usuario digita formato human-readable ("Ctrl+Alt+F");
-        ; HotkeyFormatter.ToAhk converte pra syntax interno ("^!f") antes
-        ; de persistir. Tolerante a passthrough do formato antigo.
+        ; v0.1.0: user types human-readable format ("Ctrl+Alt+F");
+        ; HotkeyFormatter.ToAhk converts to internal syntax ("^!f")
+        ; before persisting. Tolerant of old-format passthrough.
         for _, action in this._hotkeyActions
         {
             ctrlKey := "hk_" action
@@ -340,7 +342,7 @@ class SettingsDialog
         this.Close()
     }
 
-    ; Bubble sort simples (lista pequena ~10 hotkeys)
+    ; Simple bubble sort (small list ~10 hotkeys)
     _SortArray(arr)
     {
         n := arr.Length
@@ -364,31 +366,31 @@ class SettingsDialog
     ; Hotkey CAPTURE mode (v0.1.0)
     ; ============================================================
     ;
-    ; Fluxo:
-    ;   1. User clica "Capture" ao lado de uma hotkey
-    ;   2. Botao muda label pra "Press..." e suprime input global
-    ;   3. User pressiona o combo (ex: Ctrl+Alt+G)
-    ;   4. InputHook OnKeyDown captura a key NAO-modifier; modifier
-    ;      state eh lido via GetKeyState no momento exato
-    ;   5. Edit eh atualizado com o combo em formato human-readable
+    ; Flow:
+    ;   1. User clicks "Capture" next to a hotkey
+    ;   2. Button label changes to "Press..." and global input is suppressed
+    ;   3. User presses the combo (e.g. Ctrl+Alt+G)
+    ;   4. InputHook OnKeyDown captures the NON-modifier key; modifier
+    ;      state is read via GetKeyState at the exact moment
+    ;   5. Edit is updated with the combo in human-readable format
     ;
-    ; CANCELAR:
-    ;   - Esc sozinho (sem modifier) cancela a captura
-    ;   - Esc+modifier (Ctrl+Esc, etc) eh bind valido
-    ;   - Timeout de 10s tambem cancela silenciosamente
+    ; CANCEL:
+    ;   - Esc alone (no modifier) cancels the capture
+    ;   - Esc+modifier (Ctrl+Esc, etc) is a valid bind
+    ;   - 10s timeout also cancels silently
     ;
-    ; _MakeCaptureHandler eh necessario pq fat-arrows em loop nao
-    ; capturam o valor da variavel de iteracao corretamente (closure
-    ; pega a ultima atribuicao). Wrapping num metodo cria escopo novo
-    ; por chamada, fixando o `action`.
+    ; _MakeCaptureHandler is necessary because fat-arrows in a loop
+    ; do not capture the iteration variable's value correctly (the
+    ; closure picks up the last assignment). Wrapping in a method
+    ; creates a fresh scope per call, fixing `action`.
     ; ============================================================
     _MakeCaptureHandler(action)
     {
         return (*) => this._OnCaptureHotkey(action)
     }
 
-    ; v0.1.0: handler do botao Clear. Limpa o edit; _OnSave persiste
-    ; como string vazia, desbindando a hotkey.
+    ; v0.1.0: Clear button handler. Clears the edit; _OnSave persists
+    ; as empty string, unbinding the hotkey.
     _MakeClearHandler(action)
     {
         return (*) => this._OnClearHotkey(action)
@@ -409,8 +411,8 @@ class SettingsDialog
         if !this._ctrls.Has(editKey) || !this._ctrls.Has(btnKey)
             return
 
-        ; v0.1.1: `edit` colide com builtin `Edit` (controle Gui).
-        ; `btn` tambem pode colidir (Button). Usar sufixos Ctrl.
+        ; v0.1.1: `edit` collides with the builtin `Edit` (Gui control).
+        ; `btn` may also collide (Button). Use Ctrl suffixes.
         editCtrl := this._ctrls[editKey]
         btnCtrl  := this._ctrls[btnKey]
 
@@ -418,13 +420,13 @@ class SettingsDialog
         try originalLabel := btnCtrl.Text
         try btnCtrl.Text := "Press..."
 
-        ; State capturado por referencia pelo OnKeyDown handler.
-        ; Object literal pra mutacao via referencia (Map serviria tambem).
+        ; State captured by reference by the OnKeyDown handler.
+        ; Object literal for mutation by reference (a Map would also work).
         state := { key: "", mods: "", cancelled: false }
 
         try
         {
-            ih := InputHook("T10")          ; 10s timeout, suprime input por default
+            ih := InputHook("T10")          ; 10s timeout, suppresses input by default
             ih.KeyOpt("{All}", "N")         ; notify on all key down
             ih.OnKeyDown := (hookObj, vk, sc) => this._HandleCaptureKey(hookObj, vk, sc, state)
             ih.Start()
@@ -432,27 +434,27 @@ class SettingsDialog
         }
         catch as ex
         {
-            OutputDebug("SettingsDialog._OnCaptureHotkey falhou: " ex.Message)
+            OutputDebug("SettingsDialog._OnCaptureHotkey failed: " ex.Message)
         }
 
-        ; Restaura botao (defensivo contra dialog fechado mid-capture)
+        ; Restore button (defensive against dialog closed mid-capture)
         try btnCtrl.Text := originalLabel
 
         if (state.cancelled || state.key = "")
             return
 
-        ; Monta hotkey AHK syntax e converte pra human pro display
+        ; Builds AHK-syntax hotkey and converts to human for display
         ahkKey := state.mods . state.key
         try editCtrl.Value := HotkeyFormatter.ToHuman(ahkKey)
     }
 
-    ; Callback do InputHook.OnKeyDown. Roda no thread do hook.
-    ; Atualiza `state` (passado por referencia) e chama ih.Stop quando
-    ; captura uma key valida.
+    ; InputHook.OnKeyDown callback. Runs on the hook thread.
+    ; Updates `state` (passed by reference) and calls ih.Stop when it
+    ; captures a valid key.
     _HandleCaptureKey(ih, vk, sc, state)
     {
-        ; Modifiers sozinhos NAO sao key valida — esperamos uma key
-        ; "real" enquanto modifiers estao segurados.
+        ; Modifiers alone are NOT a valid key — we expect a "real" key
+        ; while modifiers are held.
         ;   0x10 = Shift,   0xA0/A1 = LShift/RShift
         ;   0x11 = Ctrl,    0xA2/A3 = LCtrl/RCtrl
         ;   0x12 = Alt,     0xA4/A5 = LAlt/RAlt
@@ -463,8 +465,8 @@ class SettingsDialog
          || vk = 0x5B || vk = 0x5C)
             return
 
-        ; Esc PURO (sem modifier) cancela. Esc+modifier (Ctrl+Esc, etc)
-        ; eh bind valido — cai pro caminho normal abaixo.
+        ; PURE Esc (no modifier) cancels. Esc+modifier (Ctrl+Esc, etc)
+        ; is a valid bind — falls through to the normal path below.
         if (vk = 0x1B)
         {
             anyMod := GetKeyState("Ctrl", "P") || GetKeyState("Alt", "P")
@@ -478,9 +480,9 @@ class SettingsDialog
             }
         }
 
-        ; Captura nome da key + modifier state no instante exato.
-        ; "vkXXscYY" eh a forma mais robusta de obter o nome (diferencia
-        ; NumpadEnter vs Enter, etc).
+        ; Captures the key name + modifier state at the exact moment.
+        ; "vkXXscYY" is the most robust way to get the name
+        ; (distinguishes NumpadEnter vs Enter, etc).
         state.key := GetKeyName(Format("vk{:X}sc{:X}", vk, sc))
         state.mods := ""
         if GetKeyState("Ctrl", "P")

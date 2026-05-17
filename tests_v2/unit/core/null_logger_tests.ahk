@@ -2,13 +2,13 @@
 ; NullLogger tests
 ; ============================================================
 ;
-; NullLogger e' um stub no-op. Os testes garantem apenas que:
-;   - Todos os metodos de log retornam 0 sem efeitos colaterais
-;   - Counters sempre zero
-;   - Flush/ResetCounts nao estouram
+; NullLogger is a no-op stub. The tests only ensure that:
+;   - All log methods return 0 with no side effects
+;   - Counters are always zero
+;   - Flush/ResetCounts do not throw
 ;
-; Existe pra duck-typing com LogService e para uso em testes que
-; nao querem inspecionar log (a maioria deles).
+; It exists for duck-typing with LogService and for use in tests
+; that don't want to inspect the log (most of them).
 
 class NullLoggerTests extends TestCase
 {
@@ -49,14 +49,14 @@ class NullLoggerTests extends TestCase
 
     methods_accept_optional_context_arg()
     {
-        ; Sanity check de assinatura - se algum metodo nao aceitar
-        ; o 2o arg, isso estoura.
+        ; Signature sanity check - if any method doesn't accept the
+        ; 2nd arg, this throws.
         nullLog := NullLogger()
         nullLog.Debug("msg", "Ctx")
         nullLog.Info("msg",  "Ctx")
         nullLog.Warn("msg",  "Ctx")
         nullLog.Error("msg", "Ctx")
-        Assert.True(true)   ; chegou ate aqui
+        Assert.True(true)   ; reached here
     }
 }
 

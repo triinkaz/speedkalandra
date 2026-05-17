@@ -2,18 +2,18 @@
 ; LoadingTotalsServiceTests
 ; ============================================================
 ;
-; LoadingTotalsService eh reativo via bus, state minimal (_totalMs).
-;   - Subscribe LoadingMeasured -> acumula durationMs
+; LoadingTotalsService is reactive via bus, minimal state (_totalMs).
+;   - Subscribe LoadingMeasured -> accumulates durationMs
 ;   - Subscribe RunStarted/Reset/Cancelled/Completed -> Reset
-;   - Hydrate restaura state (defensivo contra invalidos)
-;   - Dispose unsubscribe idempotente
+;   - Hydrate restores state (defensive against invalid input)
+;   - Dispose is idempotent unsubscribe
 ;
-; Cobertura:
-;   - Construtor (validacao bus, defaults)
-;   - Acumulacao de LoadingMeasured
-;   - Reset em cada lifecycle event
-;   - Defensivos contra dados malformados
-;   - Hydrate (clamp negativo, fallback non-number)
+; Coverage:
+;   - Constructor (bus validation, defaults)
+;   - LoadingMeasured accumulation
+;   - Reset on each lifecycle event
+;   - Defensive against malformed data
+;   - Hydrate (negative clamp, non-number fallback)
 ;   - Dispose
 
 
@@ -36,24 +36,24 @@ class LoadingTotalsServiceTests extends TestCase
     }
 
     static Tests := [
-        ; --- Construtor ---
+        ; --- Constructor ---
         "constructor_throws_when_bus_not_event_bus",
         "constructor_starts_with_zero_total_ms",
         "constructor_subscribes_to_loading_measured",
         "constructor_subscribes_to_all_lifecycle_events",
 
-        ; --- Acumulacao ---
+        ; --- Accumulation ---
         "accumulates_single_loading_event",
         "sums_multiple_loading_events",
         "preserves_total_across_unrelated_events",
 
-        ; --- Reset em lifecycle ---
+        ; --- Reset on lifecycle ---
         "resets_on_run_started",
         "resets_on_run_reset",
         "resets_on_run_cancelled",
         "resets_on_run_completed",
 
-        ; --- Defensivos contra dados malformados ---
+        ; --- Defensive against malformed data ---
         "ignores_loading_measured_without_duration_ms_key",
         "ignores_loading_measured_with_non_number_duration",
         "ignores_loading_measured_with_zero_duration",
@@ -74,7 +74,7 @@ class LoadingTotalsServiceTests extends TestCase
     ]
 
     ; ============================================================
-    ; Construtor
+    ; Constructor
     ; ============================================================
 
     constructor_throws_when_bus_not_event_bus()
@@ -101,7 +101,7 @@ class LoadingTotalsServiceTests extends TestCase
     }
 
     ; ============================================================
-    ; Acumulacao
+    ; Accumulation
     ; ============================================================
 
     accumulates_single_loading_event()
@@ -121,14 +121,14 @@ class LoadingTotalsServiceTests extends TestCase
     preserves_total_across_unrelated_events()
     {
         this.bus.Publish(Events.LoadingMeasured, Map("durationMs", 1000))
-        ; Eventos nao-subscritos nao afetam state
+        ; Non-subscribed events don't affect state
         this.bus.Publish(Events.ZoneEntered, Map("zoneName", "Clearfell"))
         this.bus.Publish(Events.DeathDetected, Map("character", "Olaf"))
         Assert.Equal(1000, this.svc.GetTotalMs())
     }
 
     ; ============================================================
-    ; Reset em lifecycle
+    ; Reset on lifecycle
     ; ============================================================
 
     resets_on_run_started()
@@ -160,7 +160,7 @@ class LoadingTotalsServiceTests extends TestCase
     }
 
     ; ============================================================
-    ; Defensivos contra dados malformados
+    ; Defensive against malformed data
     ; ============================================================
 
     ignores_loading_measured_without_duration_ms_key()
@@ -189,7 +189,7 @@ class LoadingTotalsServiceTests extends TestCase
 
     ignores_loading_measured_with_non_object_data()
     {
-        ; data nao-objeto: defensivo no _OnLoadingMeasured
+        ; non-object data: defensive in _OnLoadingMeasured
         this.bus.Publish(Events.LoadingMeasured, "string data")
         Assert.Equal(0, this.svc.GetTotalMs())
     }
@@ -238,7 +238,7 @@ class LoadingTotalsServiceTests extends TestCase
     {
         this.svc.Dispose()
         Assert.Equal(0, this.bus.Subscribers(Events.LoadingMeasured))
-        ; Apos Dispose, eventos nao acumulam
+        ; After Dispose, events don't accumulate
         this.bus.Publish(Events.LoadingMeasured, Map("durationMs", 1000))
         Assert.Equal(0, this.svc.GetTotalMs())
     }
@@ -255,7 +255,7 @@ class LoadingTotalsServiceTests extends TestCase
     dispose_is_idempotent()
     {
         this.svc.Dispose()
-        ; Segundo Dispose nao deve estourar
+        ; Second Dispose must not throw
         this.svc.Dispose()
         Assert.Equal(0, this.bus.Subscribers(Events.LoadingMeasured))
     }

@@ -1,58 +1,58 @@
 ; ============================================================
-; LineChartRenderer - desenha line chart via GDI (Onda 7, v17.9)
+; LineChartRenderer - draws a line chart via GDI (Wave 7, v17.9)
 ; ============================================================
 ;
-; ESCOPO:
-;   Utility estatica que renderiza um line chart num bitmap GDI e
-;   retorna o HBITMAP pra ser atribuido a um Picture control do GUI.
+; SCOPE:
+;   Static utility that renders a line chart into a GDI bitmap and
+;   returns the HBITMAP to be assigned to a GUI Picture control.
 ;
-;   Usado pelo RunStatsPlotDialog pra mostrar evolucao das runs:
-;     - Eixo X horizontal: cada run uma posicao (sequencia cronologica)
-;     - Eixo Y vertical: tempo em ms
-;     - Cada serie (mapa, boss, categoria, etc) eh uma linha colorida
-;       conectando os pontos das runs onde aquele item aparece
+;   Used by RunStatsPlotDialog to show the evolution of runs:
+;     - Horizontal X axis: each run is a position (chronological sequence)
+;     - Vertical Y axis: time in ms
+;     - Each series (map, boss, category, etc.) is a colored line
+;       connecting the points of the runs where that item appears
 ;
 ; API:
 ;   LineChartRenderer.Render(gui, x, y, w, h, options) -> picCtrl
 ;
 ;   options := Map(
 ;       "series",     Array<Map{label, color, points:[{xIdx, yMs, present?}]}>,
-;       "xCount",     Integer (quantos pontos no eixo X),
-;       "yMaxMs",     Integer (escala maxima Y),
-;       "bgColor",    "RRGGBB" hex (background do chart),
-;       "stripeColors", Array["RRGGBB", "RRGGBB"] (faixas alternadas),
-;       "gridColor",  "RRGGBB" (linhas horizontais)
+;       "xCount",     Integer (how many points on the X axis),
+;       "yMaxMs",     Integer (maximum Y scale),
+;       "bgColor",    "RRGGBB" hex (chart background),
+;       "stripeColors", Array["RRGGBB", "RRGGBB"] (alternating stripes),
+;       "gridColor",  "RRGGBB" (horizontal lines)
 ;   )
 ;
-;   Pontos podem ter `present: false` (v17.13) pra indicar que aquela
-;   serie nao tem dados naquela run — a linha QUEBRA nesse ponto e
-;   recomeca no proximo ponto presente. Sem o `present`, default eh
-;   true (compat com chamadas anteriores).
+;   Points may have `present: false` (v17.13) to indicate that the
+;   series has no data at that run — the line BREAKS at that point
+;   and resumes at the next present point. Without `present`, default
+;   is true (compat with previous calls).
 ;
 ; GDI VS GDI+:
-;   Usa GDI classico (Gdi32.dll, User32.dll) por simplicidade. GDI+
-;   teria anti-aliasing mas requer Gdiplus.dll, COM init, e wrapper
-;   mais complexo. Pra line chart pequeno (300px alto), GDI eh
-;   suficiente — linhas ficam um pouco serrilhadas mas legivel.
+;   Uses classic GDI (Gdi32.dll, User32.dll) for simplicity. GDI+
+;   would offer anti-aliasing but requires Gdiplus.dll, COM init, and
+;   a more complex wrapper. For a small line chart (300px tall), GDI
+;   is enough — lines look a bit jagged but are readable.
 ;
-; OWNERSHIP DO HBITMAP:
-;   Quando atribuido via "HBITMAP:" para um Picture control, o AHK
-;   toma posse — quando o controle/gui eh destruido, o bitmap eh
-;   liberado automaticamente. NAO chamar DeleteObject manualmente.
+; HBITMAP OWNERSHIP:
+;   When assigned via "HBITMAP:" to a Picture control, AHK takes
+;   ownership — when the control/gui is destroyed, the bitmap is
+;   freed automatically. Do NOT call DeleteObject manually.
 ;
-; LIMITES:
-;   - xCount min: 1 (com 1 ponto, so renderiza pontos sem linha)
-;   - series.Length min: 0 (gráfico vazio mostra so o grid)
-;   - yMaxMs: se <=0, usa 1 pra evitar divisao por zero
+; LIMITS:
+;   - xCount min: 1 (with 1 point, only renders points without lines)
+;   - series.Length min: 0 (empty chart shows only the grid)
+;   - yMaxMs: if <=0, uses 1 to avoid division by zero
 
 
 class LineChartRenderer
 {
     ; ============================================================
-    ; Render - cria Picture control com line chart desenhado
+    ; Render - creates a Picture control with the drawn line chart
     ;
-    ; Retorna o Picture control criado. Hbitmap eh anexado a ele e
-    ; sera liberado quando o GUI for destruido.
+    ; Returns the created Picture control. The Hbitmap is attached
+    ; to it and will be freed when the GUI is destroyed.
     ; ============================================================
     static Render(gui, x, y, w, h, options)
     {
@@ -69,17 +69,17 @@ class LineChartRenderer
         if (yMaxMs <= 0)
             yMaxMs := 1
 
-        ; --- Cria DC e bitmap ---
+        ; --- Create DC and bitmap ---
         hdcScreen := DllCall("GetDC", "Ptr", 0, "Ptr")
         hdcMem := DllCall("CreateCompatibleDC", "Ptr", hdcScreen, "Ptr")
         hbm := DllCall("CreateCompatibleBitmap", "Ptr", hdcScreen, "Int", w, "Int", h, "Ptr")
         DllCall("ReleaseDC", "Ptr", 0, "Ptr", hdcScreen)
         oldObj := DllCall("SelectObject", "Ptr", hdcMem, "Ptr", hbm, "Ptr")
 
-        ; --- Background uniforme ---
+        ; --- Uniform background ---
         LineChartRenderer._FillRect(hdcMem, 0, 0, w, h, bgColor)
 
-        ; --- Faixas verticais alternadas (se mais de 1 ponto) ---
+        ; --- Alternating vertical stripes (if more than 1 point) ---
         if (xCount > 1)
         {
             dx := w / (xCount - 1)
@@ -94,7 +94,7 @@ class LineChartRenderer
             }
         }
 
-        ; --- Gridlines horizontais (5 linhas: 0%, 25%, 50%, 75%, 100%) ---
+        ; --- Horizontal gridlines (5 lines: 0%, 25%, 50%, 75%, 100%) ---
         nYTicks := 5
         j := 0
         while (j < nYTicks)
@@ -105,7 +105,7 @@ class LineChartRenderer
             j++
         }
 
-        ; --- Series (linhas coloridas) ---
+        ; --- Series (colored lines) ---
         if (xCount > 0)
         {
             for _, s in series
@@ -121,11 +121,11 @@ class LineChartRenderer
             }
         }
 
-        ; --- Cleanup DC ---
+        ; --- DC cleanup ---
         DllCall("SelectObject", "Ptr", hdcMem, "Ptr", oldObj)
         DllCall("DeleteDC", "Ptr", hdcMem)
 
-        ; --- Cria Picture control ---
+        ; --- Create Picture control ---
         pic := gui.Add("Picture",
             "x" x " y" y " w" w " h" h " Background" bgColor,
             "HBITMAP:" hbm)
@@ -133,9 +133,9 @@ class LineChartRenderer
     }
 
     ; ============================================================
-    ; _FillRect - preenche retangulo com cor solida
+    ; _FillRect - fills a rectangle with a solid color
     ;
-    ; Usa CreateSolidBrush + FillRect. RECT struct: 4 LONG ints
+    ; Uses CreateSolidBrush + FillRect. RECT struct: 4 LONG ints
     ; (left, top, right, bottom).
     ; ============================================================
     static _FillRect(hdc, x1, y1, x2, y2, hexColor)
@@ -148,7 +148,7 @@ class LineChartRenderer
     }
 
     ; ============================================================
-    ; _DrawHLine - linha horizontal 1px
+    ; _DrawHLine - 1px horizontal line
     ; ============================================================
     static _DrawHLine(hdc, x1, x2, y, hexColor, width)
     {
@@ -161,15 +161,15 @@ class LineChartRenderer
     }
 
     ; ============================================================
-    ; _DrawSeries - desenha uma serie de pontos conectados por linha
+    ; _DrawSeries - draws a series of points connected by a line
     ;
-    ; Tambem desenha pequenos circulos nos vertices pra destacar
-    ; os pontos individuais (4px diametro).
+    ; Also draws small circles at the vertices to highlight individual
+    ; points (4px diameter).
     ;
-    ; v17.13: Pontos com `present: false` sao SKIPADOS — a linha
-    ; quebra antes deles e recomeca no proximo ponto presente. Isso
-    ; permite series "Por ato" mostrar gap em runs que nao chegaram
-    ; ao ato em questao, em vez de cair pra y=0 enganosamente.
+    ; v17.13: Points with `present: false` are SKIPPED — the line
+    ; breaks before them and resumes at the next present point. This
+    ; lets "Per act" series show a gap in runs that didn't reach the
+    ; relevant act, instead of falsely dropping to y=0.
     ; ============================================================
     static _DrawSeries(hdc, w, h, points, xCount, yMaxMs, hexColor)
     {
@@ -178,13 +178,13 @@ class LineChartRenderer
 
         color := LineChartRenderer._HexToBgr(hexColor)
 
-        ; --- Linha conectando pontos (com suporte a gaps) ---
+        ; --- Line connecting points (with gap support) ---
         pen := DllCall("CreatePen", "Int", 0, "Int", 2, "UInt", color, "Ptr")
         prevPen := DllCall("SelectObject", "Ptr", hdc, "Ptr", pen, "Ptr")
 
-        ; State: penDown=true quando o cursor esta posicionado num
-        ; ponto presente (proxima linha conecta). penDown=false apos
-        ; um ponto ausente (proxima linha sera MoveTo, nao LineTo).
+        ; State: penDown=true when the cursor is positioned on a
+        ; present point (next line will connect). penDown=false after
+        ; an absent point (next line will be MoveTo, not LineTo).
         penDown := false
         for _, p in points
         {
@@ -193,8 +193,8 @@ class LineChartRenderer
             present := p.Has("present") ? !!p["present"] : true
             if !present
             {
-                ; Gap — quebra a linha atual. Nao desenha nada;
-                ; proximo ponto presente vai abrir nova linha com MoveTo.
+                ; Gap — breaks the current line. Doesn't draw anything;
+                ; the next present point will open a new line with MoveTo.
                 penDown := false
                 continue
             }
@@ -219,9 +219,9 @@ class LineChartRenderer
         DllCall("SelectObject", "Ptr", hdc, "Ptr", prevPen)
         DllCall("DeleteObject", "Ptr", pen)
 
-        ; --- Circulos nos vertices (4px diametro) ---
-        ; Pra desenhar Ellipse preenchido, precisa de brush.
-        ; Mesma logica de present: skipa pontos ausentes.
+        ; --- Circles on vertices (4px diameter) ---
+        ; To draw a filled Ellipse, a brush is needed. Same present
+        ; logic: skip absent points.
         br := DllCall("CreateSolidBrush", "UInt", color, "Ptr")
         penDot := DllCall("CreatePen", "Int", 0, "Int", 1, "UInt", color, "Ptr")
         prevBr := DllCall("SelectObject", "Ptr", hdc, "Ptr", br, "Ptr")
@@ -255,7 +255,7 @@ class LineChartRenderer
     {
         if (xCount <= 1)
             return w // 2
-        ; Margem de 8px pra cada lado pra pontos nao ficarem na borda
+        ; 8px margin on each side so points don't sit on the edge
         usableW := w - 16
         return 8 + Round((xIdx / (xCount - 1)) * usableW)
     }
@@ -264,17 +264,17 @@ class LineChartRenderer
     {
         if (yMaxMs <= 0)
             return h - 1
-        ; Margem de 6px topo e fundo pra pontos nao ficarem na borda
+        ; 6px margin top and bottom so points don't sit on the edge
         usableH := h - 12
         py := 6 + (usableH - Round((yMs / yMaxMs) * usableH))
         return py
     }
 
     ; ============================================================
-    ; _HexToBgr - converte "RRGGBB" hex para COLORREF (BGR)
+    ; _HexToBgr - converts "RRGGBB" hex into COLORREF (BGR)
     ;
-    ; GDI usa formato 0x00BBGGRR (BGR, com alpha=0 implicito).
-    ; Theme.Color e SegmentDefinitions sao hex RGB padrao "RRGGBB".
+    ; GDI uses the 0x00BBGGRR format (BGR, with implicit alpha=0).
+    ; Theme.Color and SegmentDefinitions are standard hex RGB "RRGGBB".
     ; ============================================================
     static _HexToBgr(hex)
     {

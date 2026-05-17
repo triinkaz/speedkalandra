@@ -2,12 +2,12 @@
 ; ThemeTests
 ; ============================================================
 ;
-; Theme: paleta de cores e tamanhos. Static-only, sem state.
+; Theme: color palette and sizes. Static-only, no state.
 ;
-; - Color(name) retorna hex sem '#', strict (throws ValueError em typo)
+; - Color(name) returns hex without '#', strict (throws ValueError on typo)
 ; - HasColor / ListColors helpers
-; - InputBg / InputFont strings prontas pra Edit/DropDown em dialogs
-; - Size(scale, baseSize) arredonda pra inteiro, minimo 1
+; - InputBg / InputFont ready-made strings for Edit/DropDown in dialogs
+; - Size(scale, baseSize) rounds to integer, minimum 1
 
 
 class ThemeTests extends TestCase
@@ -67,7 +67,7 @@ class ThemeTests extends TestCase
 
     color_returns_hex_for_legacy_aliases()
     {
-        ; Aliases legacy ainda funcionam (backwards-compat)
+        ; Legacy aliases still work (backwards-compat)
         Assert.Equal("E8E2D6", Theme.Color("text"))
         Assert.Equal("15181B", Theme.Color("headerBg"))
         Assert.Equal("60A5FA", Theme.Color("blue"))
@@ -85,9 +85,9 @@ class ThemeTests extends TestCase
 
     color_returns_hex_without_hash()
     {
-        ; Convencao AHK Gui: cores sem '#'
+        ; AHK Gui convention: colors without '#'
         result := Theme.Color("accent")
-        Assert.False(InStr(result, "#"), "Cor nao tem '#'")
+        Assert.False(InStr(result, "#"), "Color has no '#'")
         Assert.Equal(6, StrLen(result), "6 hex chars")
     }
 
@@ -114,7 +114,7 @@ class ThemeTests extends TestCase
     list_colors_includes_kalandra_names()
     {
         names := Theme.ListColors()
-        ; Pelo menos as paletas principais
+        ; At least the main palettes
         foundAccent := false
         foundSurface := false
         for idx, n in names
@@ -143,7 +143,7 @@ class ThemeTests extends TestCase
     list_colors_returns_array()
     {
         Assert.True(Theme.ListColors() is Array)
-        Assert.True(Theme.ListColors().Length > 10, "Paleta tem pelo menos 10 cores")
+        Assert.True(Theme.ListColors().Length > 10, "Palette has at least 10 colors")
     }
 
     ; ============================================================
@@ -198,7 +198,7 @@ class ThemeTests extends TestCase
 
     size_minimum_is_1()
     {
-        ; Mesmo com scale muito pequeno, nunca retorna 0
+        ; Even with very small scale, never returns 0
         Assert.Equal(1, Theme.Size(0.01, 10))
         Assert.Equal(1, Theme.Size(0.5, 1))
     }
@@ -230,8 +230,8 @@ class ThemeTests extends TestCase
         ; 18 * 0.722 = 12.996 -> 13
         Assert.Equal(13, Theme.Size(0.722, 18))
         ; 10 * 0.55 = 5.5 -> 6 (banker's rounding could give 6)
-        Assert.True(Theme.Size(0.55, 10) >= 5, "Pelo menos 5")
-        Assert.True(Theme.Size(0.55, 10) <= 6, "No maximo 6")
+        Assert.True(Theme.Size(0.55, 10) >= 5, "At least 5")
+        Assert.True(Theme.Size(0.55, 10) <= 6, "At most 6")
     }
 }
 

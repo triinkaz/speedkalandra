@@ -1,33 +1,34 @@
 ; ============================================================
-; ImportPreviewDialog - dialog de preview/confirmacao de import (v0.1.0)
+; ImportPreviewDialog - import preview/confirmation dialog (v0.1.0)
 ; ============================================================
 ;
-; Aberto pelo handler de Cmd.ImportRunsRequested em app.ahk apos
-; o RunImportService.Preview ter sucesso. Mostra:
+; Opened by the Cmd.ImportRunsRequested handler in app.ahk after
+; RunImportService.Preview succeeds. Shows:
 ;   - File path (basename)
 ;   - Meta (exported at, by, anonymized, has PBs)
 ;   - Summary (total, new, identical, rename)
-;   - Warnings (se houver)
-;   - 3 radios pra PB strategy (keep default, rebuild, replace)
+;   - Warnings (if any)
+;   - 3 radios for PB strategy (keep default, rebuild, replace)
 ;   - Cancel / Import
 ;
-; FLUXO:
+; FLOW:
 ;   1. RunHistoryDialog -> "Import..." button -> FileSelect ->
 ;      bus.Publish(Cmd.ImportRunsRequested, {path})
-;   2. app.ahk._OnImportRunsRequested chama RunImportService.Preview
-;   3. Se preview ok -> this.OpenWithPreview(preview)
-;   4. User configura strategy + click Import
-;   5. _OnImport chama RunImportService.Execute
-;   6. MsgBox com resultado + this.Close()
-;   7. RunHistoryDialog escuta Evt.RunsImported pra refresh da lista
+;   2. app.ahk._OnImportRunsRequested calls RunImportService.Preview
+;   3. If preview ok -> this.OpenWithPreview(preview)
+;   4. User configures strategy + clicks Import
+;   5. _OnImport calls RunImportService.Execute
+;   6. MsgBox with result + this.Close()
+;   7. RunHistoryDialog listens to Evt.RunsImported to refresh the list
 ;
 ; PB STRATEGY UX:
-;   - "keep" (default): no-op, mais seguro
-;   - "rebuild": reconstroi PBs do historico atual (inclui imports)
-;   - "replace": substitui PBs locais pelos do arquivo. DISABLED se
-;     o arquivo nao tem PBs. Confirmacao extra antes de executar.
+;   - "keep" (default): no-op, safest
+;   - "rebuild": rebuilds PBs from current history (includes imports)
+;   - "replace": replaces local PBs with the ones from the file.
+;     DISABLED if the file has no PBs. Extra confirmation before
+;     executing.
 ;
-; CONSTRUCAO:
+; CONSTRUCTION:
 ;   dialog := ImportPreviewDialog(bus, importService, headless)
 
 
@@ -48,9 +49,9 @@ class ImportPreviewDialog
     __New(bus, importService, headless := false)
     {
         if !(bus is EventBus)
-            throw TypeError("ImportPreviewDialog: 'bus' deve ser EventBus")
+            throw TypeError("ImportPreviewDialog: 'bus' must be EventBus")
         if !(importService is RunImportService)
-            throw TypeError("ImportPreviewDialog: 'importService' deve ser RunImportService")
+            throw TypeError("ImportPreviewDialog: 'importService' must be RunImportService")
 
         this._bus           := bus
         this._importService := importService
@@ -59,9 +60,9 @@ class ImportPreviewDialog
     }
 
     ; ============================================================
-    ; OpenWithPreview(preview) - abre o dialog com dados do preview
+    ; OpenWithPreview(preview) - opens the dialog with preview data
     ;
-    ; Espera Map de RunImportService.Preview com success=true.
+    ; Expects a Map from RunImportService.Preview with success=true.
     ; ============================================================
     OpenWithPreview(preview)
     {
@@ -91,7 +92,7 @@ class ImportPreviewDialog
     }
 
     ; ============================================================
-    ; Internos
+    ; Internals
     ; ============================================================
 
     _BuildGui()
@@ -145,10 +146,10 @@ class ImportPreviewDialog
         g.Add("Text", "x32 y180 w528", "Identical (will skip): " sum["identical"])
         g.Add("Text", "x32 y198 w528", "Conflicts (will rename _imported): " sum["rename"])
 
-        ; --- Warnings (se houver) ---
-        ; v0.1.0 Fase 5: cap em 5 visiveis pra evitar overflow do dialog
-        ; quando o arquivo tem muitos warnings. Resumo final mostra
-        ; quantos ficaram de fora.
+        ; --- Warnings (if any) ---
+        ; v0.1.0 Phase 5: cap at 5 visible to avoid dialog overflow when
+        ; the file has many warnings. Final summary shows how many were
+        ; left out.
         wY := 224
         if prev["warnings"].Length > 0
         {
@@ -209,7 +210,7 @@ class ImportPreviewDialog
         btnCancel := g.Add("Button", "x340 y" btnY " w90 h30", "Cancel")
         btnCancel.OnEvent("Click", (*) => this.Close())
 
-        ; Import desabilita se nada a fazer
+        ; Import is disabled if there's nothing to do
         canImport := (sum["new"] + sum["rename"]) > 0
         importOpts := "x440 y" btnY " w104 h30 Default"
         if !canImport
@@ -227,7 +228,7 @@ class ImportPreviewDialog
     {
         strategy := this._DeterminePbStrategy()
 
-        ; Warning extra pra "replace" (destrutivo)
+        ; Extra warning for "replace" (destructive)
         if (strategy = "replace")
         {
             answer := ""
@@ -264,7 +265,7 @@ class ImportPreviewDialog
         this.Close()
     }
 
-    ; Le os 3 radios e retorna a strategy escolhida.
+    ; Reads the 3 radios and returns the chosen strategy.
     _DeterminePbStrategy()
     {
         try

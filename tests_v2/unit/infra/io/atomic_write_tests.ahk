@@ -3,12 +3,12 @@
 ; ============================================================
 ;
 ; AtomicWriter.WriteAll(path, content, encoding := "UTF-8")
-;   - Cria diretorio se necessario
-;   - Escreve em <path>.tmp e depois FileMove pra <path>
-;   - Sobrescreve destino existente
-;   - Cleanup defensivo: deleta .tmp orfao antes de escrever
-;   - Aceita content vazio (cria arquivo vazio)
-;   - Encoding default UTF-8, mas aceita UTF-16 e outros
+;   - Creates the directory if necessary
+;   - Writes to <path>.tmp and then FileMoves to <path>
+;   - Overwrites an existing destination
+;   - Defensive cleanup: deletes an orphan .tmp before writing
+;   - Accepts empty content (creates an empty file)
+;   - Default encoding UTF-8, but accepts UTF-16 and others
 
 class AtomicWriterTests extends TestCase
 {
@@ -49,7 +49,7 @@ class AtomicWriterTests extends TestCase
         path := Fixtures.TempPath("txt")
         AtomicWriter.WriteAll(path, "anything")
         Assert.False(FileExist(path ".tmp"),
-            ".tmp deve ter sido renomeado pra path final")
+            ".tmp should have been renamed to the final path")
     }
 
     write_all_accepts_empty_content()
@@ -57,9 +57,9 @@ class AtomicWriterTests extends TestCase
         path := Fixtures.TempPath("txt")
         AtomicWriter.WriteAll(path, "")
         Assert.True(FileExist(path))
-        ; FileAppend("") com UTF-8 cria arquivo com BOM (3 bytes)
+        ; FileAppend("") with UTF-8 creates a file with BOM (3 bytes)
         Assert.True(FileGetSize(path) <= 3,
-            "Arquivo vazio so tem BOM (0-3 bytes)")
+            "Empty file only contains BOM (0-3 bytes)")
     }
 
     write_all_creates_parent_directory_if_missing()
@@ -87,16 +87,16 @@ class AtomicWriterTests extends TestCase
         tmpPath := path ".tmp"
         Fixtures.RegisterTempPath(tmpPath)
 
-        ; Simula .tmp orfao de execucao anterior crashada
+        ; Simulates an orphan .tmp from a previously crashed execution
         FileAppend("ORPHAN_RESIDUE", tmpPath, "UTF-8")
         Assert.True(FileExist(tmpPath))
 
         AtomicWriter.WriteAll(path, "fresh content")
 
-        ; Conteudo final deve ser apenas "fresh content"
-        ; (sem residuo do orfao appendado)
+        ; Final content must be just "fresh content"
+        ; (without orphan-appended residue)
         Assert.Equal("fresh content", Fixtures.FileReadAll(path))
-        Assert.False(FileExist(tmpPath), ".tmp foi consumido pelo FileMove")
+        Assert.False(FileExist(tmpPath), ".tmp was consumed by FileMove")
     }
 
     write_all_respects_utf16_encoding()
@@ -104,11 +104,11 @@ class AtomicWriterTests extends TestCase
         path := Fixtures.TempPath("txt")
         AtomicWriter.WriteAll(path, "utf-16 content", "UTF-16")
 
-        ; Le como UTF-16 e compara
+        ; Reads as UTF-16 and compares
         content := FileRead(path, "UTF-16")
         Assert.Equal("utf-16 content", content)
 
-        ; Verifica BOM UTF-16 LE (FF FE) nos primeiros 2 bytes
+        ; Verifies the UTF-16 LE BOM (FF FE) in the first 2 bytes
         raw := FileRead(path, "RAW")
         Assert.Equal(0xFF, NumGet(raw, 0, "UChar"))
         Assert.Equal(0xFE, NumGet(raw, 1, "UChar"))

@@ -2,19 +2,19 @@
 ; FocusAutoPauseServiceTests
 ; ============================================================
 ;
-; Service hibrido (v0.1.1): subscribe a Evt.WindowFocusChanged (caminho
-; rapido via Client.txt do PoE2) E Evt.Tick (polling backup a 300ms via
-; WinActive). Ambos os caminhos disparam o mesmo handler
-; _OnWindowFocusChanged que eh idempotente.
+; Hybrid service (v0.1.1): subscribes to Evt.WindowFocusChanged
+; (fast path via PoE2's Client.txt) AND Evt.Tick (backup polling
+; at 300ms via WinActive). Both paths fire the same handler
+; _OnWindowFocusChanged which is idempotent.
 ;
-; ESTRATEGIA DE TEST: subclasse stub override `_IsGameActive` com flag
-; in-memory. Isso evita dependencia de janela real do PoE2 nos testes,
-; mantendo o codigo de produção intacto.
+; TEST STRATEGY: stub subclass overrides `_IsGameActive` with an
+; in-memory flag. This avoids dependency on a real PoE2 window in
+; the tests while keeping production code intact.
 
 
 class _FocusAutoPauseStubService extends FocusAutoPauseService
 {
-    _stubGameActive := true   ; default: jogo ativo
+    _stubGameActive := true   ; default: game active
 
     SetStubGameActive(isActive)
     {
@@ -54,7 +54,7 @@ class FocusAutoPauseServiceTests extends TestCase
     }
 
     static Tests := [
-        ; --- Construtor ---
+        ; --- Constructor ---
         "constructor_throws_when_bus_not_event_bus",
         "constructor_throws_when_timer_svc_not_timer_service",
         "constructor_throws_when_cfg_not_app_settings",
@@ -98,13 +98,13 @@ class FocusAutoPauseServiceTests extends TestCase
         "tick_no_op_when_setting_disabled",
         "tick_no_op_when_service_stopped",
 
-        ; --- Idempotencia: log+polling combinado ---
+        ; --- Idempotence: log+polling combined ---
         "log_and_polling_combined_idempotent_for_loss",
         "log_and_polling_combined_idempotent_for_gain"
     ]
 
     ; ============================================================
-    ; Construtor
+    ; Constructor
     ; ============================================================
 
     constructor_throws_when_bus_not_event_bus()
@@ -130,7 +130,7 @@ class FocusAutoPauseServiceTests extends TestCase
 
     constructor_does_not_subscribe_until_start()
     {
-        ; Sem Start(), nada subscribed
+        ; Without Start(), nothing is subscribed
         Assert.Equal(0, this.bus.Subscribers(Events.WindowFocusChanged))
         Assert.Equal(0, this.bus.Subscribers(Events.Tick))
     }
@@ -186,7 +186,7 @@ class FocusAutoPauseServiceTests extends TestCase
 
     stop_is_idempotent()
     {
-        this.svc.Stop()   ; sem Start antes
+        this.svc.Stop()   ; no Start before
         this.svc.Stop()
         Assert.False(this.svc.IsEnabled())
     }
@@ -223,21 +223,21 @@ class FocusAutoPauseServiceTests extends TestCase
 
     lost_focus_no_op_when_timer_stopped()
     {
-        ; Timer parado: lost focus nao deve fazer nada
+        ; Timer stopped: lost focus must do nothing
         this.svc.Start()
         this.bus.Publish(Events.WindowFocusChanged, Map("state", "lost"))
         Assert.False(this.svc.WasPausedByFocus(),
-            "Timer parado: nao seta flag pausedByFocus")
+            "Timer stopped: must not set the pausedByFocus flag")
     }
 
     lost_focus_no_op_when_timer_paused()
     {
         this.timerSvc.Start()
-        this.timerSvc.Pause()   ; user pausou manualmente
+        this.timerSvc.Pause()   ; user paused manually
         this.svc.Start()
         this.bus.Publish(Events.WindowFocusChanged, Map("state", "lost"))
         Assert.False(this.svc.WasPausedByFocus(),
-            "Timer ja pausado pelo user: nao reivindica pausa")
+            "Timer already paused by the user: must not claim the pause")
     }
 
     lost_focus_no_op_when_setting_disabled()
@@ -247,13 +247,13 @@ class FocusAutoPauseServiceTests extends TestCase
         this.svc.Start()
         this.bus.Publish(Events.WindowFocusChanged, Map("state", "lost"))
         Assert.True(this.timerSvc.IsRunning(),
-            "Setting desabilitada: timer continua rodando")
+            "Setting disabled: timer keeps running")
     }
 
     lost_focus_no_op_when_service_stopped()
     {
         this.timerSvc.Start()
-        ; service nunca foi Start-ado
+        ; service never Start-ed
         this.bus.Publish(Events.WindowFocusChanged, Map("state", "lost"))
         Assert.True(this.timerSvc.IsRunning())
     }
@@ -285,7 +285,7 @@ class FocusAutoPauseServiceTests extends TestCase
     {
         this.timerSvc.Start()
         this.svc.Start()
-        ; Sem lost focus antes — gained sozinho nao deve fazer nada
+        ; No lost focus before — gained alone must do nothing
         this.bus.Publish(Events.WindowFocusChanged, Map("state", "gained"))
         Assert.True(this.timerSvc.IsRunning())
     }
@@ -294,7 +294,7 @@ class FocusAutoPauseServiceTests extends TestCase
     {
         this.timerSvc.Start()
         this.svc.Start()
-        ; Timer rodando, gained: continua rodando
+        ; Timer running, gained: keep running
         this.bus.Publish(Events.WindowFocusChanged, Map("state", "gained"))
         Assert.True(this.timerSvc.IsRunning())
     }
@@ -303,15 +303,15 @@ class FocusAutoPauseServiceTests extends TestCase
     {
         this.timerSvc.Start()
         this.svc.Start()
-        ; lost focus pausa
+        ; lost focus pauses
         this.bus.Publish(Events.WindowFocusChanged, Map("state", "lost"))
         Assert.True(this.svc.WasPausedByFocus())
-        ; User pausa/resume manualmente DURANTE o alt-tab — flag fica pendurada
-        ; ate gained ou Stop(). O importante eh: se user faz Resume manual,
-        ; o gained subsequente nao quebra estado. (Cenario:
-        ;   lost -> auto-pause -> user vai pra wiki -> volta -> user da resume
-        ;   manual antes do gained chegar -> gained event resume um timer
-        ;   ja running, no-op.)
+        ; User pauses/resumes manually DURING alt-tab — flag hangs
+        ; around until gained or Stop(). What matters: if user does
+        ; a manual Resume, the subsequent gained doesn't break state.
+        ; (Scenario: lost -> auto-pause -> user goes to wiki -> comes
+        ; back -> user does manual resume before gained arrives ->
+        ; gained event resumes an already running timer, no-op.)
         this.timerSvc.Resume()
         this.bus.Publish(Events.WindowFocusChanged, Map("state", "gained"))
         Assert.True(this.timerSvc.IsRunning())
@@ -354,15 +354,15 @@ class FocusAutoPauseServiceTests extends TestCase
     tick_detects_focus_loss_via_polling()
     {
         this.timerSvc.Start()
-        ; Setup: jogo comeca ativo
+        ; Setup: game starts active
         this.svc.SetStubGameActive(true)
-        this.svc.Start()   ; snapshot inicial = true
-        ; Simulando: jogo perdeu foco (user alt-tab)
+        this.svc.Start()   ; initial snapshot = true
+        ; Simulating: game lost focus (user alt-tab)
         this.svc.SetStubGameActive(false)
-        ; Tick polling deteca
+        ; Tick polling detects
         this.bus.Publish(Events.Tick, Map("now", 10500))
         Assert.True(this.timerSvc.IsPaused(),
-            "Polling detectou perda de foco e pausou")
+            "Polling detected focus loss and paused")
         Assert.True(this.svc.WasPausedByFocus())
     }
 
@@ -370,15 +370,15 @@ class FocusAutoPauseServiceTests extends TestCase
     {
         this.timerSvc.Start()
         this.svc.SetStubGameActive(false)
-        this.svc.Start()   ; snapshot inicial = false
-        ; Pretende que timer foi pausado por foco (via lost path)
+        this.svc.Start()   ; initial snapshot = false
+        ; Pretend timer was paused by focus (via lost path)
         this.bus.Publish(Events.WindowFocusChanged, Map("state", "lost"))
-        ; Mas timer ja estava running antes... vamos forcar via lost focus.
-        ; Cenario completo: foco perdido -> pausou via log path, agora ganha foco
+        ; But timer was already running before... let's force it via lost focus.
+        ; Full scenario: lost focus -> paused via log path, now gains focus
         this.svc.SetStubGameActive(true)
         this.bus.Publish(Events.Tick, Map("now", 11000))
         Assert.True(this.timerSvc.IsRunning(),
-            "Polling detectou ganho de foco e resumiu")
+            "Polling detected focus gain and resumed")
     }
 
     tick_no_op_when_no_state_change()
@@ -386,7 +386,7 @@ class FocusAutoPauseServiceTests extends TestCase
         this.timerSvc.Start()
         this.svc.SetStubGameActive(true)
         this.svc.Start()
-        ; Sem mudanca, Tick eh no-op
+        ; No change, Tick is a no-op
         this.bus.Publish(Events.Tick, Map("now", 10500))
         Assert.True(this.timerSvc.IsRunning())
         Assert.False(this.svc.WasPausedByFocus())
@@ -398,7 +398,7 @@ class FocusAutoPauseServiceTests extends TestCase
         this.timerSvc.Start()
         this.svc.SetStubGameActive(true)
         this.svc.Start()
-        ; Setting off: Tick nao faz nada
+        ; Setting off: Tick does nothing
         this.svc.SetStubGameActive(false)
         this.bus.Publish(Events.Tick, Map("now", 10500))
         Assert.True(this.timerSvc.IsRunning())
@@ -407,32 +407,32 @@ class FocusAutoPauseServiceTests extends TestCase
     tick_no_op_when_service_stopped()
     {
         this.timerSvc.Start()
-        ; Service nunca foi Start
+        ; Service never Start-ed
         this.bus.Publish(Events.Tick, Map("now", 10500))
         Assert.True(this.timerSvc.IsRunning())
     }
 
     ; ============================================================
-    ; Idempotencia (log+polling combinado)
+    ; Idempotence (log+polling combined)
     ; ============================================================
 
     log_and_polling_combined_idempotent_for_loss()
     {
-        ; v0.1.1: ambos os caminhos chamam mesmo handler.
-        ; Log dispara primeiro -> Polling detecta mesma transicao -> no-op
+        ; v0.1.1: both paths call the same handler.
+        ; Log fires first -> Polling detects same transition -> no-op
         this.timerSvc.Start()
         this.svc.SetStubGameActive(true)
         this.svc.Start()
 
-        ; Log dispara perda de foco (caminho rapido)
+        ; Log fires focus loss (fast path)
         this.bus.Publish(Events.WindowFocusChanged, Map("state", "lost"))
         Assert.True(this.timerSvc.IsPaused())
 
-        ; Polling deteca mesma perda — deve ser no-op (timer ja pausado)
+        ; Polling detects same loss — must be a no-op (timer already paused)
         this.svc.SetStubGameActive(false)
         this.bus.Publish(Events.Tick, Map("now", 11000))
         Assert.True(this.timerSvc.IsPaused(),
-            "Pause de timer ja pausado eh no-op (idempotente)")
+            "Pause on already paused timer is no-op (idempotent)")
     }
 
     log_and_polling_combined_idempotent_for_gain()
@@ -451,7 +451,7 @@ class FocusAutoPauseServiceTests extends TestCase
         this.bus.Publish(Events.WindowFocusChanged, Map("state", "gained"))
         Assert.True(this.timerSvc.IsRunning())
 
-        ; Tick subsequente com mesmo state — no-op (timer ja running)
+        ; Subsequent Tick with same state — no-op (timer already running)
         this.bus.Publish(Events.Tick, Map("now", 12000))
         Assert.True(this.timerSvc.IsRunning())
     }

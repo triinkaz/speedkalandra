@@ -1,10 +1,10 @@
 ; ============================================================
-; HotkeyService - registra hotkeys globais (Onda 6)
+; HotkeyService - registers global hotkeys (Wave 6)
 ; ============================================================
 ;
-; VERSAO POS-DEMOLICAO: simplificado pra 8 actions.
+; POST-DEMOLITION VERSION: simplified to 8 actions.
 ;
-; ACTIONS SUPORTADAS:
+; SUPPORTED ACTIONS:
 ;   StartPause       -> Cmd.TimerToggleRequested
 ;   NewRun           -> Cmd.NewRunRequested
 ;   ResetRun         -> Cmd.ResetRunRequested
@@ -20,9 +20,9 @@
 ;   service.Start()
 ;   service.Stop()
 ;
-; CONSTRUCAO:
+; CONSTRUCTION:
 ;   - bus       : EventBus
-;   - headless  : bool, default false. Em testes passa true.
+;   - headless  : bool, default false. Tests pass true.
 
 class HotkeyService
 {
@@ -38,22 +38,24 @@ class HotkeyService
         "PlotRunStats",    Commands.OpenRunStatsPlotRequested
     )
 
-    ; Actions que ABREM DIALOG (mudam foco da janela ativa). v17.14.
+    ; Actions that OPEN DIALOGS (change the active window focus). v17.14.
     ;
-    ; Hotkeys com modifier (^!s, ^!p) que mudam foco sao o cenario
-    ; classico do bug "stuck modifier" do AHK: o user pressiona
-    ; Ctrl+Alt+S, o dialog abre, foco muda, e quando o user solta
-    ; o Ctrl/Alt, o jogo nao recebe o keyup porque ja perdeu o foco.
-    ; Resultado: jogo acha que Ctrl/Alt continua pressionado.
+    ; Hotkeys with modifiers (^!s, ^!p) that change focus are the
+    ; classic AHK "stuck modifier" bug scenario: the user presses
+    ; Ctrl+Alt+S, the dialog opens, focus changes, and when the user
+    ; releases Ctrl/Alt, the game does not receive the keyup because
+    ; it has lost focus. Result: the game thinks Ctrl/Alt are still
+    ; held down.
     ;
-    ; Mitigacao: imediatamente antes de publicar o command que abre o
-    ; dialog, fazer Send "{Blind}{Ctrl up}{Alt up}{Shift up}". O
-    ; {Blind} garante que o AHK nao reverte o up mesmo se o user
-    ; ainda esta fisicamente segurando. O jogo recebe keyup limpo.
+    ; Mitigation: right before publishing the command that opens the
+    ; dialog, do Send "{Blind}{Ctrl up}{Alt up}{Shift up}". The
+    ; {Blind} ensures AHK doesn't revert the up even if the user is
+    ; still physically holding. The game gets a clean keyup.
     ;
-    ; NAO inclui hotkeys frequentes como StartPause (^3): essas nao
-    ; mudam foco e fazer cleanup quebraria combos do jogo (ex: usuario
-    ; que segura Ctrl entre Ctrl+3 e outro shortcut do PoE2).
+    ; Does NOT include frequent hotkeys like StartPause (^3): those
+    ; don't change focus and doing cleanup would break game combos
+    ; (e.g. a user holding Ctrl between Ctrl+3 and another PoE2
+    ; shortcut).
     static FocusChangingActions := Map(
         "Settings",     true,
         "PlotRunStats", true
@@ -68,7 +70,7 @@ class HotkeyService
     __New(bus, headless := false)
     {
         if !(bus is EventBus)
-            throw TypeError("HotkeyService: 'bus' deve ser EventBus")
+            throw TypeError("HotkeyService: 'bus' must be EventBus")
         this._bus      := bus
         this._headless := !!headless
         this._hotkeys  := Map()
@@ -78,7 +80,7 @@ class HotkeyService
     Hydrate(hotkeysMap)
     {
         if !(hotkeysMap is Map)
-            throw TypeError("HotkeyService.Hydrate: 'hotkeysMap' deve ser Map")
+            throw TypeError("HotkeyService.Hydrate: 'hotkeysMap' must be Map")
         this._hotkeys := Map()
         for actionName, keyBind in hotkeysMap
             this._hotkeys[actionName] := String(keyBind)
@@ -101,11 +103,11 @@ class HotkeyService
                 try
                 {
                     Hotkey(keyBind, handler, "On")
-                    OutputDebug("[HotkeyService] Registrado: " actionName " -> " keyBind)
+                    OutputDebug("[HotkeyService] Registered: " actionName " -> " keyBind)
                 }
                 catch as err
                 {
-                    OutputDebug("[HotkeyService] FALHA ao registrar " actionName " -> " keyBind ": " err.Message)
+                    OutputDebug("[HotkeyService] FAILED to register " actionName " -> " keyBind ": " err.Message)
                     continue
                 }
             }
@@ -158,16 +160,17 @@ class HotkeyService
         return (*) => this._FireHotkey(commandName, actionName, isFocusChanging)
     }
 
-    ; Disparador interno da hotkey (v17.14).
-    ; Faz cleanup de modifier APENAS pra hotkeys que mudam foco
-    ; (Settings, PlotRunStats). Detalhes em FocusChangingActions acima.
+    ; Internal hotkey firing (v17.14).
+    ; Does modifier cleanup ONLY for hotkeys that change focus
+    ; (Settings, PlotRunStats). Details in FocusChangingActions above.
     _FireHotkey(commandName, actionName, isFocusChanging)
     {
         if isFocusChanging
         {
-            ; Defensive Send: previne stuck modifier bug do AHK quando
-            ; a hotkey muda foco da janela ativa. {Blind} evita o
-            ; auto-revert do AHK mesmo se user esta fisicamente segurando.
+            ; Defensive Send: prevents AHK's stuck modifier bug when
+            ; the hotkey changes the active window's focus. {Blind}
+            ; avoids AHK's auto-revert even if the user is physically
+            ; still holding.
             try Send "{Blind}{Ctrl up}{Alt up}{Shift up}{LWin up}{RWin up}"
         }
         this._bus.Publish(commandName, Map(

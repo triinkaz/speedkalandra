@@ -1,84 +1,84 @@
 ; ============================================================
-; WidgetBase — classe base de todos os widgets do overlay
+; WidgetBase — base class for all overlay widgets
 ; ============================================================
 ;
-; Responsabilidades:
+; Responsibilities:
 ;   - Lifecycle: Show/Hide/ReRender/Destroy.
-;   - Helpers compartilhados: _BuildHeader (barra título + X decorativo).
-;   - Mutators de posição/escala/visibilidade que persistem via callback.
+;   - Shared helpers: _BuildHeader (title bar + decorative X).
+;   - Position/scale/visibility mutators that persist via callback.
 ;
-; NÃO faz nesta fase (vem em sub-fases futuras):
-;   - Drag/resize via mouse (planejado p/ pós-Fase 6 ou WidgetManager).
-;   - Close button click handler (X é decorativo agora).
+; NOT done in this phase (coming in future sub-phases):
+;   - Drag/resize via mouse (planned for post-Phase 6 or WidgetManager).
+;   - Close button click handler (X is decorative now).
 ;   - Hover-hide transparency.
 ;
-; Filosofia:
-;   - Cada widget concreto extends WidgetBase e implementa _BuildGui()
-;     que preenche this._gui com controles e seta this._w / this._h.
-;   - WidgetBase nao conhece TimerService/RunService/etc. Subclasses
-;     recebem refs por construtor. WidgetBase só sabe sobre tema,
-;     posição, e ciclo de vida da Gui.
+; Philosophy:
+;   - Each concrete widget extends WidgetBase and implements _BuildGui()
+;     which populates this._gui with controls and sets this._w / this._h.
+;   - WidgetBase doesn't know about TimerService/RunService/etc.
+;     Subclasses receive refs via constructor. WidgetBase only knows
+;     about theme, position, and Gui lifecycle.
 ;
-; Construção:
+; Construction:
 ;   class TimerWidget extends WidgetBase
 ;   {
 ;       __New(bus, position, onPersist, timerService, analytics)
 ;       {
-;           super.__New("timer", "Timer (Run/Etapa)", bus, position, onPersist)
+;           super.__New("timer", "Timer (Run/Step)", bus, position, onPersist)
 ;           this._timer := timerService
-;           ; ... outras deps
+;           ; ... other deps
 ;       }
-;       _BuildGui() { ... cria controles ..., seta this._w, this._h }
+;       _BuildGui() { ... create controls ..., set this._w, this._h }
 ;   }
 ;
 ;   widget := TimerWidget(bus, position, () => settingsRepo.Save(cfg), timer, analytics)
 ;   widget.Show()
 ;
-; Sobre 'position':
-;   É uma referência mutável para uma OverlayPosition (parte de
-;   AppSettings.overlay.widgets["timer"]). WidgetBase muta inline
-;   campos (visible, scale, leftPct, topPct, centered) e chama
-;   onPersist() depois — composition root injeta callback que chama
-;   settingsRepo.Save(appSettings).
+; About 'position':
+;   It's a mutable reference to an OverlayPosition (part of
+;   AppSettings.overlay.widgets["timer"]). WidgetBase mutates
+;   fields inline (visible, scale, leftPct, topPct, centered) and
+;   then calls onPersist() — the composition root injects a callback
+;   that calls settingsRepo.Save(appSettings).
 
 
 class WidgetBase
 {
-    ; --- Identidade ---
+    ; --- Identity ---
     id   := ""    ; "timer", "zone", etc.
-    name := ""    ; "Timer (Run/Etapa)" — display name
+    name := ""    ; "Timer (Run/Step)" — display name
 
-    ; --- Dependências ---
-    _bus       := ""    ; EventBus (subclasses subscrevem nele)
-    _position  := ""    ; OverlayPosition (mutável, compartilhada com AppSettings)
-    _onPersist := ""    ; callable opcional ou "" (chamado após mutações)
+    ; --- Dependencies ---
+    _bus       := ""    ; EventBus (subclasses subscribe to it)
+    _position  := ""    ; OverlayPosition (mutable, shared with AppSettings)
+    _onPersist := ""    ; optional callable or "" (called after mutations)
 
-    ; --- Estado de render ---
-    _gui    := ""        ; Gui ou ""
-    _ctrls  := Map()     ; Map<key, GuiControl> populado por _BuildGui
-    _w      := 0         ; largura calculada por _BuildGui
-    _h      := 0         ; altura calculada por _BuildGui
+    ; --- Render state ---
+    _gui    := ""        ; Gui or ""
+    _ctrls  := Map()     ; Map<key, GuiControl> populated by _BuildGui
+    _w      := 0         ; width calculated by _BuildGui
+    _h      := 0         ; height calculated by _BuildGui
 
-    ; --- Mode-driven visibility (Fase 9.7) ---
-    ; Flag NAO persistente, controlada por OverlayModeApplier conforme
-    ; o modo atual (NORMAL/COMPACT/MICRO). Show() exige tanto
-    ; _position.visible (preferencia do usuario, persistida) quanto
-    ; _modeVisible (filtro temporario por modo) = true.
+    ; --- Mode-driven visibility (Phase 9.7) ---
+    ; NON-persistent flag, controlled by OverlayModeApplier according
+    ; to the current mode (NORMAL/COMPACT/MICRO). Show() requires both
+    ; _position.visible (user preference, persisted) and _modeVisible
+    ; (temporary mode filter) = true.
     _modeVisible := true
 
     __New(idStr, nameStr, bus, position, onPersist := "")
     {
         if (idStr = "")
-            throw ValueError("WidgetBase: 'idStr' nao pode ser vazio")
+            throw ValueError("WidgetBase: 'idStr' cannot be empty")
         if (nameStr = "")
-            throw ValueError("WidgetBase: 'nameStr' nao pode ser vazio")
+            throw ValueError("WidgetBase: 'nameStr' cannot be empty")
         if !(bus is EventBus)
-            throw TypeError("WidgetBase: 'bus' deve ser EventBus")
+            throw TypeError("WidgetBase: 'bus' must be EventBus")
         if !(position is OverlayPosition)
-            throw TypeError("WidgetBase: 'position' deve ser OverlayPosition")
-        ; onPersist pode ser "" (sem persistência) ou callable
+            throw TypeError("WidgetBase: 'position' must be OverlayPosition")
+        ; onPersist can be "" (no persistence) or callable
         if (onPersist != "" && !IsObject(onPersist))
-            throw TypeError("WidgetBase: 'onPersist' deve ser callable ou string vazia")
+            throw TypeError("WidgetBase: 'onPersist' must be callable or empty string")
 
         this.id        := idStr
         this.name      := nameStr
@@ -86,10 +86,10 @@ class WidgetBase
         this._position := position
         this._onPersist := onPersist
 
-        ; Item 1 (overlay refinement): subscreve mudancas de Ctrl pra
-        ; mostrar/esconder borda de destaque (feedback visual de
-        ; "agora esta clicavel/arrastavel"). Tolerante a Show ainda
-        ; nao chamado — _SetCtrlHighlightVisible eh no-op se ctrls vazios.
+        ; Item 1 (overlay refinement): subscribes to Ctrl state changes
+        ; to show/hide highlight border (visual feedback of "now
+        ; clickable/draggable"). Tolerant of Show not yet called —
+        ; _SetCtrlHighlightVisible is a no-op if ctrls is empty.
         this._bus.Subscribe(Events.CtrlStateChanged, (data) => this._OnCtrlStateChanged(data))
     }
 
@@ -97,9 +97,9 @@ class WidgetBase
     ; Queries
     ; ============================================================
 
-    IsVisible()  => this._position.visible        ; preferencia do usuario
-    IsRendered() => this._gui != ""                ; realmente renderizado na tela
-    IsModeVisible() => this._modeVisible           ; filtro de modo (Fase 9.7)
+    IsVisible()  => this._position.visible        ; user preference
+    IsRendered() => this._gui != ""                ; actually rendered on screen
+    IsModeVisible() => this._modeVisible           ; mode filter (Phase 9.7)
     GetPosition() => this._position
     GetScale()    => this._position.scale
     GetSize()     => Map("w", this._w, "h", this._h)
@@ -108,10 +108,10 @@ class WidgetBase
     ; Lifecycle
     ; ============================================================
 
-    ; Cria a Gui e mostra na tela. No-op se:
-    ;   - position.visible = false (widget marcado como invisível)
-    ;   - _modeVisible = false (modo atual esconde esse widget) [Fase 9.7]
-    ;   - já está renderizado
+    ; Creates the Gui and shows it on screen. No-op if:
+    ;   - position.visible = false (widget marked as invisible)
+    ;   - _modeVisible = false (current mode hides this widget) [Phase 9.7]
+    ;   - already rendered
     Show()
     {
         if !this._position.visible
@@ -121,22 +121,23 @@ class WidgetBase
         if this._gui
             return
 
-        ; Item 2 (click-through fix v2): LAYERED + TRANSPARENT setados
-        ; APOS criacao da Gui via WinSetTransparent + WinSetExStyle.
+        ; Item 2 (click-through fix v2): LAYERED + TRANSPARENT set
+        ; AFTER Gui creation via WinSetTransparent + WinSetExStyle.
         ;
-        ; Por que nao no flag de criacao da Gui? Em AHK v2, criar a Gui
-        ; com `+E0x80020` (LAYERED + TRANSPARENT) faz a janela nascer
-        ; com LAYERED mas sem LWA_ALPHA configurado. WinSetTransparent
-        ; chamado depois nao sempre seta alpha corretamente — widget
-        ; fica invisivel (alpha=0).
+        ; Why not in the Gui creation flag? In AHK v2, creating the
+        ; Gui with `+E0x80020` (LAYERED + TRANSPARENT) makes the
+        ; window be born with LAYERED but without LWA_ALPHA configured.
+        ; WinSetTransparent called later doesn't always set alpha
+        ; correctly — widget ends up invisible (alpha=0).
         ;
-        ; Approach correto: Gui nasce normal (so NOACTIVATE), depois
-        ; WinSetTransparent(255) ADICIONA LAYERED + alpha=255 via
-        ; SetLayeredWindowAttributes (que AHK gerencia). Depois
-        ; WinSetExStyle("+0x20") adiciona TRANSPARENT.
+        ; Correct approach: the Gui is born normal (only NOACTIVATE),
+        ; then WinSetTransparent(255) ADDS LAYERED + alpha=255 via
+        ; SetLayeredWindowAttributes (which AHK manages). Then
+        ; WinSetExStyle("+0x20") adds TRANSPARENT.
         ;
-        ; Toggle DINAMICO do bit TRANSPARENT pelo OverlayInteractionService
-        ; quando Ctrl flipa: sem Ctrl click passa, com Ctrl widget interativo.
+        ; DYNAMIC toggle of the TRANSPARENT bit by OverlayInteractionService
+        ; when Ctrl flips: without Ctrl click passes through, with
+        ; Ctrl the widget is interactive.
         wg := Gui("+ToolWindow +AlwaysOnTop -Caption +E0x08000000")
         wg.BackColor := Theme.Color("bg")
         wg.MarginX := 0
@@ -146,19 +147,19 @@ class WidgetBase
         this._w := 0
         this._h := 0
 
-        ; Subclass preenche controles e seta this._w / this._h
+        ; Subclass fills in controls and sets this._w / this._h
         this._BuildGui()
 
         if (this._w <= 0 || this._h <= 0)
-            throw Error("WidgetBase.Show: '" this.id "'._BuildGui nao setou _w/_h corretamente")
+            throw Error("WidgetBase.Show: '" this.id "'._BuildGui did not set _w/_h correctly")
 
-        ; Item 1: cria 4 Progress controls como borda de destaque
-        ; (hidden inicialmente). Mostradas/escondidas via
-        ; Evt.CtrlStateChanged. Adicionadas APOS _BuildGui pra ficarem
-        ; no topo da z-order (renderizadas sobre o conteudo).
+        ; Item 1: creates 4 Progress controls as the highlight border
+        ; (hidden initially). Shown/hidden via Evt.CtrlStateChanged.
+        ; Added AFTER _BuildGui so they are at the top of the z-order
+        ; (rendered over the content).
         this._BuildCtrlHighlight()
 
-        ; Calcula posição na tela
+        ; Calculate position on screen
         monW := A_ScreenWidth
         monH := A_ScreenHeight
         if this._position.centered
@@ -169,18 +170,18 @@ class WidgetBase
 
         wg.Show("NoActivate X" posX " Y" posY " W" this._w " H" this._h)
 
-        ; Item 2 (apos Show): WinSetTransparent ADICIONA LAYERED + alpha=255
-        ; (totalmente opaco) via SetLayeredWindowAttributes. Mais confiavel
-        ; que setar LAYERED na Gui flag.
+        ; Item 2 (after Show): WinSetTransparent ADDS LAYERED + alpha=255
+        ; (fully opaque) via SetLayeredWindowAttributes. More reliable
+        ; than setting LAYERED via Gui flag.
         try WinSetTransparent(255, "ahk_id " wg.Hwnd)
-        ; Item 2: WS_EX_TRANSPARENT (0x20) adiciona click-through cross-process.
-        ; OverlayInteractionService toggles esse bit quando Ctrl flipa.
+        ; Item 2: WS_EX_TRANSPARENT (0x20) adds cross-process click-through.
+        ; OverlayInteractionService toggles this bit when Ctrl flips.
         try WinSetExStyle("+0x20", "ahk_id " wg.Hwnd)
 
-        ; Smoke fix Turno 2: registra Hwnd no OverlayInteractionService
-        ; pra ter click-through (default) + Ctrl drag (interativo).
-        ; Singleton estatico setado pelo composition root no Start().
-        ; Em headless ou se service nao subiu, e' no-op silencioso.
+        ; Smoke fix Turn 2: registers the Hwnd with OverlayInteractionService
+        ; for click-through (default) + Ctrl drag (interactive).
+        ; Static singleton set by the composition root in Start(). In
+        ; headless or if the service didn't come up, silent no-op.
         if (OverlayInteractionService.Instance != "")
             OverlayInteractionService.Instance.RegisterHwnd(
                 this._gui.Hwnd,
@@ -188,14 +189,13 @@ class WidgetBase
             )
     }
 
-    ; Destroi a Gui se visível. Idempotente.
+    ; Destroys the Gui if visible. Idempotent.
     Hide()
     {
         if !this._gui
             return
-        ; Smoke fix Turno 2: desregistra do OverlayInteractionService
-        ; ANTES de Destroy() pra evitar que callback de drag entre
-        ; com Hwnd zumbi.
+        ; Smoke fix Turn 2: unregisters from OverlayInteractionService
+        ; BEFORE Destroy() to avoid drag callback receiving a zombie Hwnd.
         if (OverlayInteractionService.Instance != "")
         {
             try OverlayInteractionService.Instance.UnregisterHwnd(this._gui.Hwnd)
@@ -207,9 +207,9 @@ class WidgetBase
         this._h := 0
     }
 
-    ; Re-cria a Gui (útil após mudança de scale).
-    ; Se posição.visible = false ou !_modeVisible, apenas garante que
-    ; não há Gui (Show() interno faz a checagem).
+    ; Re-creates the Gui (useful after a scale change).
+    ; If position.visible = false or !_modeVisible, just ensures
+    ; there's no Gui (internal Show() does the check).
     ReRender()
     {
         if this._gui
@@ -218,14 +218,14 @@ class WidgetBase
             this.Show()
     }
 
-    ; Alias semântico para limpeza final.
+    ; Semantic alias for final cleanup.
     Destroy() => this.Hide()
 
     ; ============================================================
-    ; Mutators (chamados pelo WidgetManager ou pelo composition root)
+    ; Mutators (called by WidgetManager or the composition root)
     ; ============================================================
 
-    ; Liga/desliga visibilidade. Persiste e mostra/esconde a Gui.
+    ; Toggles visibility. Persists and shows/hides the Gui.
     SetVisible(value)
     {
         newVal := !!value
@@ -239,13 +239,14 @@ class WidgetBase
             this.Hide()
     }
 
-    ; Liga/desliga visibilidade temporaria por modo (Fase 9.7).
-    ; NAO persiste — eh filtro do modo atual aplicado pelo
-    ; OverlayModeApplier ao receber Evt.OverlayModeChanged.
+    ; Toggles temporary mode-driven visibility (Phase 9.7). Does NOT
+    ; persist — it's the current-mode filter applied by
+    ; OverlayModeApplier on Evt.OverlayModeChanged.
     ;
-    ; - Mostrar (true): chama Show() que ainda checa _position.visible;
-    ;   se usuario desabilitou o widget, fica oculto mesmo com modo true.
-    ; - Esconder (false): chama Hide() incondicional.
+    ; - Show (true): calls Show() which still checks _position.visible;
+    ;   if the user disabled the widget, it stays hidden even with
+    ;   mode true.
+    ; - Hide (false): calls Hide() unconditionally.
     SetModeVisible(value)
     {
         newVal := !!value
@@ -258,40 +259,40 @@ class WidgetBase
             this.Hide()
     }
 
-    ; Troca a referencia da OverlayPosition usada pelo widget (Fase 9.10).
-    ; NAO persiste — eh apenas swap pra apontar pro layout do modo atual
-    ; (OverlayModeApplier consulta OverlayLayout.GetPositionForMode e
-    ; passa o resultado aqui antes de SetModeVisible).
+    ; Swaps the OverlayPosition reference used by the widget (Phase 9.10).
+    ; Does NOT persist — it's just a swap to point to the current mode's
+    ; layout (OverlayModeApplier queries OverlayLayout.GetPositionForMode
+    ; and passes the result here before SetModeVisible).
     ;
-    ; Comportamento:
-    ;   - Se newPos == _position atual: no-op silencioso
-    ;   - Se renderizado, faz Hide() + Show() pra refletir nova posicao/scale
-    ;   - Validacao de tipo: TypeError se nao for OverlayPosition
+    ; Behavior:
+    ;   - If newPos == current _position: silent no-op
+    ;   - If rendered, does Hide() + Show() to reflect new position/scale
+    ;   - Type validation: TypeError if not OverlayPosition
     ;
-    ; Notavel: NAO chama _Persist(). Os arquivos do INI sao escritos
-    ; via SetVisible/SetScale/SetPosition que mexem em this._position
-    ; — e a referencia atual aponta pro layout do modo. Drag/resize
-    ; do usuario vai persistir no modo ativo (que eh o comportamento
-    ; desejado do design ambicioso).
+    ; Notable: does NOT call _Persist(). INI files are written via
+    ; SetVisible/SetScale/SetPosition which touch this._position —
+    ; and the current reference points to the mode's layout. User
+    ; drag/resize will persist in the active mode (which is the
+    ; ambitious design's desired behavior).
     SetActivePosition(newPos)
     {
         if !(newPos is OverlayPosition)
-            throw TypeError("WidgetBase.SetActivePosition: 'newPos' deve ser OverlayPosition")
+            throw TypeError("WidgetBase.SetActivePosition: 'newPos' must be OverlayPosition")
         if (this._position == newPos)
             return
         this._position := newPos
-        ; Re-renderiza com a nova posicao se estava visivel.
-        ; ReRender soh remostra se _position.visible && _modeVisible.
+        ; Re-renders with the new position if it was visible.
+        ; ReRender only re-shows if _position.visible && _modeVisible.
         if this._gui
             this.ReRender()
     }
 
-    ; Muda escala. Clamp em [0.5, 3.0] (mesmo range do OverlayPosition).
-    ; Re-renderiza se atualmente visível.
+    ; Changes scale. Clamps to [0.5, 3.0] (same range as OverlayPosition).
+    ; Re-renders if currently visible.
     SetScale(value)
     {
         if (!IsNumber(value) || value <= 0)
-            throw ValueError("WidgetBase.SetScale: scale deve ser número positivo")
+            throw ValueError("WidgetBase.SetScale: scale must be a positive number")
         if (value < 0.5)
             value := 0.5
         if (value > 3.0)
@@ -303,12 +304,13 @@ class WidgetBase
         this.ReRender()
     }
 
-    ; Muda posicao percentual. Clamp em [0, 95] (alinhado com OverlayPosition.MAX_PCT_SAFE
-    ; pra evitar widget off-screen). centered=true ignora left.
+    ; Changes percentage position. Clamps to [0, 95] (aligned with
+    ; OverlayPosition.MAX_PCT_SAFE to avoid off-screen widgets).
+    ; centered=true ignores left.
     SetPosition(leftPct, topPct, centered := false)
     {
         if (!IsNumber(leftPct) || !IsNumber(topPct))
-            throw TypeError("WidgetBase.SetPosition: leftPct/topPct devem ser numero")
+            throw TypeError("WidgetBase.SetPosition: leftPct/topPct must be numbers")
         if (leftPct < 0)
             leftPct := 0
         if (leftPct > 95)
@@ -328,34 +330,35 @@ class WidgetBase
     ; Subclass overrides
     ; ============================================================
 
-    ; Template method: subclasses preenchem this._gui com controles
-    ; (usando this._gui.Add(...) e helpers como _BuildHeader) e
-    ; setam this._w / this._h (largura/altura totais do widget).
+    ; Template method: subclasses fill this._gui with controls (using
+    ; this._gui.Add(...) and helpers like _BuildHeader) and set
+    ; this._w / this._h (total widget width/height).
     _BuildGui()
     {
-        throw Error("WidgetBase._BuildGui deve ser overridden por subclasse")
+        throw Error("WidgetBase._BuildGui must be overridden by subclass")
     }
 
     ; ============================================================
-    ; Helpers protegidos (subclass usa em _BuildGui)
+    ; Protected helpers (subclass uses these in _BuildGui)
     ; ============================================================
 
-    ; Cria header padronizado: accent stripe (3px) + barra de titulo
-    ; com titulo a esquerda e botao X (decorativo) a direita.
-    ; Retorna headerH (altura TOTAL: stripe + barra de titulo).
+    ; Creates a standard header: accent stripe (3px) + title bar with
+    ; title on the left and a (decorative) X button on the right.
+    ; Returns headerH (TOTAL height: stripe + title bar).
     ;
-    ; A accent stripe (3px laranja queimado) eh assinatura visual do
-    ; tema Kalandra (espelhada do CompactLayoutWidget). Da identidade
-    ; visual coerente entre widgets soltos e layout containers.
+    ; The accent stripe (3px burnt orange) is the visual signature of
+    ; the Kalandra theme (mirrored from CompactLayoutWidget). Gives
+    ; consistent visual identity between loose widgets and layout
+    ; containers.
     ;
     ; Args:
-    ;   title    : string mostrada uppercase (ex: "Timer")
-    ;   contentW : largura total do widget (px)
+    ;   title    : string shown uppercase (e.g. "Timer")
+    ;   contentW : total widget width (px)
     ;
-    ; Adiciona em this._ctrls:
-    ;   "accent" -> Progress control da stripe (decorativa, value=100)
-    ;   "header" -> Text control da barra
-    ;   "close"  -> Text control do X
+    ; Adds to this._ctrls:
+    ;   "accent" -> Progress control of the stripe (decorative, value=100)
+    ;   "header" -> Text control of the bar
+    ;   "close"  -> Text control of the X
     _BuildHeader(title, contentW)
     {
         s       := this._position.scale
@@ -368,7 +371,7 @@ class WidgetBase
 
         wg := this._gui
 
-        ; Accent stripe (3px laranja, full width, decorativa).
+        ; Accent stripe (3px orange, full width, decorative).
         accent := wg.Add(
             "Progress",
             "x0 y0 w" contentW " h" stripeH
@@ -377,7 +380,7 @@ class WidgetBase
         )
         this._ctrls["accent"] := accent
 
-        ; Barra de titulo (logo abaixo da stripe).
+        ; Title bar (right below the stripe).
         wg.SetFont("s" tSz " c" Theme.Color("subtle") " bold", Theme.FONT_UI)
         hdr := wg.Add(
             "Text",
@@ -398,13 +401,14 @@ class WidgetBase
         return stripeH + titleH
     }
 
-    ; Atualiza texto de um control existente. Tolerante:
-    ;   - No-op se !rendered
-    ;   - No-op se ctrl não existe
-    ;   - Try-catch ao redor da escrita (controle pode ter sido destruído entre check e set)
+    ; Updates the text of an existing control. Tolerant:
+    ;   - No-op if !rendered
+    ;   - No-op if ctrl doesn't exist
+    ;   - Try-catch around the write (control may have been destroyed
+    ;     between check and set)
     ;
-    ; Usado por handlers de Tick/event para atualizar valores sem checar
-    ; nada manualmente em cada chamada.
+    ; Used by Tick/event handlers to update values without manually
+    ; checking anything on each call.
     _TrySetText(ctrlKey, text)
     {
         if !this._gui
@@ -414,8 +418,8 @@ class WidgetBase
         try this._ctrls[ctrlKey].Text := text
     }
 
-    ; Atualiza cor da fonte de um control. Tolerante (mesma semântica).
-    ;   colorName: nome válido em Theme.Color (ex: "green", "amber")
+    ; Updates a control's font color. Tolerant (same semantics).
+    ;   colorName: valid name in Theme.Color (e.g. "green", "amber")
     _TrySetFontColor(ctrlKey, colorName)
     {
         if !this._gui
@@ -426,31 +430,30 @@ class WidgetBase
     }
 
     ; ============================================================
-    ; Ctrl highlight border (Item 1) — feedback visual de Ctrl ativo
+    ; Ctrl highlight border (Item 1) — visual feedback of Ctrl active
     ; ============================================================
     ;
-    ; Cria 4 Progress controls de 3px na cor accent ('D8492F' laranja),
-    ; um em cada borda (top/bottom/left/right). Hidden por default.
-    ; Tornados visiveis quando OverlayInteractionService publica
-    ; Evt.CtrlStateChanged { active: true } e re-escondidos quando
+    ; Creates 4 Progress controls of 3px in accent color ('D8492F' orange),
+    ; one on each border (top/bottom/left/right). Hidden by default.
+    ; Made visible when OverlayInteractionService publishes
+    ; Evt.CtrlStateChanged { active: true } and re-hidden when
     ; active=false.
     ;
-    ; Por que Progress e nao Picture/Border? Progress aceita cor de
-    ; foreground (`c`) e background (`Background`) com value=100, e
-    ; renderiza como retangulo solido. Mesmo padrao usado pelo
-    ; LayoutWidgetBase._BuildAccentStripe. Disabled garante que cliques
-    ; passem pelos controles abaixo (importante pra interacao normal
-    ; quando highlight esta ligado).
+    ; Why Progress and not Picture/Border? Progress accepts foreground
+    ; color (`c`) and background (`Background`) with value=100, and
+    ; renders as a solid rectangle. Same pattern used by
+    ; LayoutWidgetBase._BuildAccentStripe. Disabled ensures that
+    ; clicks pass through to the controls below (important for
+    ; normal interaction when the highlight is on).
     ;
-    ; Z-order: chamado APOS _BuildGui no Show(), entao renderiza
-    ; SOBRE o conteudo do widget. As bordas top/bottom/left/right
-    ; cobrem 3px do conteudo do widget — pra widgets com header
-    ; (accent stripe ja existente em y=0..3) o overlap eh visualmente
-    ; consistente (mesma cor).
+    ; Z-order: called AFTER _BuildGui in Show(), so renders OVER the
+    ; widget content. The top/bottom/left/right borders cover 3px of
+    ; the widget's content — for widgets with header (accent stripe
+    ; already at y=0..3) the overlap is visually consistent (same color).
     ;
-    ; Sync inicial: se OverlayInteractionService.Instance esta up e
-    ; Ctrl ja esta pressionado quando widget eh mostrado, mostra
-    ; highlight imediatamente (em vez de esperar proximo flip do poll).
+    ; Initial sync: if OverlayInteractionService.Instance is up and
+    ; Ctrl is already pressed when the widget is shown, shows the
+    ; highlight immediately (instead of waiting for the next poll flip).
     ; ============================================================
 
     static _CTRL_HIGHLIGHT_KEYS := ["__ctrlHl_top", "__ctrlHl_bot", "__ctrlHl_lef", "__ctrlHl_rig"]
@@ -469,9 +472,9 @@ class WidgetBase
         w       := this._w
         h       := this._h
 
-        ; Hidden Disabled = invisivel inicial, click-through (cliques
-        ; passam pros controles abaixo). +0x4000000 = WS_EX_TRANSPARENT
-        ; nao aplicavel a controles, usamos so Disabled.
+        ; Hidden Disabled = initially invisible, click-through (clicks
+        ; pass through to controls below). +0x4000000 = WS_EX_TRANSPARENT
+        ; not applicable to controls, we use only Disabled.
         opts := " Hidden Disabled c" accent " Background" accent
 
         top := wg.Add("Progress", "x0 y0 w" w " h" bw . opts, 100)
@@ -484,7 +487,7 @@ class WidgetBase
         this._ctrls["__ctrlHl_lef"] := lef
         this._ctrls["__ctrlHl_rig"] := rig
 
-        ; Sync inicial: se Ctrl ja esta segurado no momento do Show.
+        ; Initial sync: if Ctrl is already held at the time of Show.
         try
         {
             if (OverlayInteractionService.Instance != ""
@@ -493,8 +496,8 @@ class WidgetBase
         }
     }
 
-    ; Liga/desliga as 4 bordas. No-op se controles nao existem (widget
-    ; nao renderizado, ou _BuildCtrlHighlight ainda nao chamado).
+    ; Toggles the 4 borders. No-op if controls don't exist (widget
+    ; not rendered, or _BuildCtrlHighlight not yet called).
     _SetCtrlHighlightVisible(visible)
     {
         if !this._gui
@@ -508,7 +511,7 @@ class WidgetBase
         }
     }
 
-    ; Handler do Evt.CtrlStateChanged. Tolerante a payload malformado.
+    ; Evt.CtrlStateChanged handler. Tolerant of malformed payload.
     _OnCtrlStateChanged(data)
     {
         if !IsObject(data)
@@ -519,13 +522,14 @@ class WidgetBase
     }
 
     ; ============================================================
-    ; Helpers privados
+    ; Private helpers
     ; ============================================================
 
-    ; Smoke fix Turno 2: callback chamado pelo OverlayInteractionService
-    ; quando user termina drag (LButton up). Lê posicao real da Gui via
-    ; WinGetPos, converte pra percentual em relação à tela e persiste
-    ; em this._position. Define centered=false (user moveu manualmente).
+    ; Smoke fix Turn 2: callback called by OverlayInteractionService
+    ; when the user finishes a drag (LButton up). Reads the Gui's real
+    ; position via WinGetPos, converts to percentage relative to the
+    ; screen, and persists into this._position. Sets centered=false
+    ; (user moved manually).
     _UpdatePositionFromGui()
     {
         if !this._gui
@@ -545,8 +549,8 @@ class WidgetBase
         }
     }
 
-    ; Chama onPersist se foi configurado.
-    ; Tolerante a falhas: se persistência falhar, não derruba o widget.
+    ; Calls onPersist if it was configured.
+    ; Tolerant of failures: if persistence fails, doesn't take down the widget.
     _Persist()
     {
         if !IsObject(this._onPersist)

@@ -1,25 +1,26 @@
 ; ============================================================
-; TestRunner - orquestra execucao dos testes registrados
+; TestRunner - orchestrates execution of the registered tests
 ; ============================================================
 ;
-; Para cada classe em TestRegistry.Classes:
-;   Para cada metodo em cls.Tests:
-;     1. Instancia cls() do zero
-;     2. Chama instance.Setup() se existir
-;     3. Chama instance.<metodo>()
-;     4. Chama instance.Teardown() se existir (sempre, mesmo apos throw)
-;     5. Classifica resultado:
+; For each class in TestRegistry.Classes:
+;   For each method in cls.Tests:
+;     1. Instantiate cls() fresh
+;     2. Call instance.Setup() if it exists
+;     3. Call instance.<method>()
+;     4. Call instance.Teardown() if it exists (always, even after throw)
+;     5. Classify the result:
 ;          throw AssertionFailed     -> failed
-;          throw qualquer outro      -> errored
-;          sem throw                 -> passed
+;          throw anything else       -> errored
+;          no throw                  -> passed
 ;
-; Filtro por argv:
+; argv filter:
 ;   AutoHotkey64.exe run_tests.ahk EventBus
-;   roda apenas testes cuja "ClassName::method" contenha "EventBus".
-;   Util pra iteracao rapida durante desenvolvimento.
+;   only runs tests whose "ClassName::method" contains "EventBus".
+;   Useful for fast iteration during development.
 ;
-; Estrategia "fail-fast" NAO eh adotada por padrao: o runner termina
-; toda a suite e reporta no fim. Falha em um teste nao para o resto.
+; A "fail-fast" strategy is NOT adopted by default: the runner finishes
+; the whole suite and reports at the end. A failed test does not stop
+; the rest.
 
 class TestRunner
 {
@@ -98,13 +99,13 @@ class TestRunner
             return { kind: "error", err: e }
         }
 
-        ; Teste em si
+        ; The test itself
         testOutcome := ""
         try
         {
             if (!instance.HasMethod(methodName))
                 throw MethodError("TestCase '" cls.Prototype.__Class
-                    "' nao tem metodo '" methodName "' (mas esta listado em static Tests)")
+                    "' has no method '" methodName "' (but it's listed in static Tests)")
 
             instance.%methodName%()
             testOutcome := { kind: "pass" }
@@ -117,7 +118,7 @@ class TestRunner
                 testOutcome := { kind: "error", err: e }
         }
 
-        ; Teardown sempre (mesmo apos falha) - best effort, swallowed
+        ; Teardown always (even after failure) - best effort, swallowed
         TestRunner._SafeTeardown(instance)
 
         return testOutcome
@@ -132,7 +133,7 @@ class TestRunner
         }
         catch
         {
-            ; silencioso - teardown que falha nao deve mascarar o erro do teste
+            ; silent - a failing teardown must not mask the test's error
         }
     }
 }

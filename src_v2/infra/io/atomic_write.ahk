@@ -1,63 +1,63 @@
 ﻿; ============================================================
-; AtomicWriter — escrita resiliente de arquivos (refactor R10)
+; AtomicWriter — resilient file writing (refactor R10)
 ; ============================================================
 ;
-; Pattern classico Unix/Windows para minimizar risco de corrupcao
-; quando o app crasha ou o sistema desliga no meio de um Save:
+; Classic Unix/Windows pattern to minimize corruption risk when
+; the app crashes or the system shuts down in the middle of a Save:
 ;
-;   1. Escreve o conteudo em <path>.tmp
-;   2. FileMove <path>.tmp -> <path> (substitui se path existir)
+;   1. Write content to <path>.tmp
+;   2. FileMove <path>.tmp -> <path> (replaces path if it exists)
 ;
-; NOTA SOBRE ATOMICIDADE (v17.15 - Bug #27, correcao da doc):
+; NOTE ON ATOMICITY (v17.15 - Bug #27, doc fix):
 ;
-;   Esta doc anteriormente afirmava que FileMove no NTFS eh
-;   "totalmente atomico". ISSO NAO EH VERDADE no Windows.
+;   This doc previously claimed that FileMove on NTFS is
+;   "fully atomic". THAT IS NOT TRUE on Windows.
 ;
-;   FileMove do AHK chama MoveFileEx com MOVEFILE_REPLACE_EXISTING.
-;   Quando o destino existe, a implementacao do Windows faz
-;   essencialmente "delete dst + rename src". Existe uma janela
-;   curta de inconsistencia entre essas duas operacoes.
+;   AHK's FileMove calls MoveFileEx with MOVEFILE_REPLACE_EXISTING.
+;   When the destination exists, the Windows implementation
+;   essentially does "delete dst + rename src". There is a short
+;   window of inconsistency between those two operations.
 ;
-;   Pra atomicidade REAL em Windows precisa de ReplaceFileW ou
-;   MoveFileTransacted (este ultimo deprecated). Nenhum dos dois
-;   eh exposto pelo FileMove do AHK.
+;   For TRUE atomicity on Windows you need ReplaceFileW or
+;   MoveFileTransacted (the latter is deprecated). Neither of
+;   them is exposed by AHK's FileMove.
 ;
-;   RISCO ACEITO: a janela de inconsistencia eh muito curta
-;   (~1ms) e nosso uso eh single-threaded, sem concorrencia
-;   externa. Pra um app desktop com saves esporadicos (run state,
-;   PBs, settings), o risco eh aceitavel. Mesmo crashando dentro
-;   da janela, o .tmp sobrevive com o conteudo novo — cleanup
-;   manual eh possivel.
+;   ACCEPTED RISK: the inconsistency window is very short (~1ms)
+;   and our usage is single-threaded, without external concurrency.
+;   For a desktop app with sporadic saves (run state, PBs,
+;   settings), the risk is acceptable. Even if a crash happens
+;   inside the window, the .tmp survives with the new content —
+;   manual cleanup is possible.
 ;
-; PROBLEMA QUE RESOLVE (mesmo sem ser totalmente atomico):
+; PROBLEM IT SOLVES (even without being fully atomic):
 ;
-;   Antes do R10, varios saves faziam:
+;   Before R10, several saves did:
 ;       try FileDelete(path)
 ;       FileAppend(json, path, "UTF-8")
 ;
-;   Se crash ENTRE FileDelete e FileAppend, o arquivo eh perdido
-;   permanentemente. AtomicWriter elimina ESSA classe de bug —
-;   o destino so eh tocado no momento do FileMove.
+;   If a crash happened BETWEEN FileDelete and FileAppend, the file
+;   was permanently lost. AtomicWriter eliminates THAT class of bug —
+;   the destination is only touched at the moment of FileMove.
 ;
-; ORFAOS:
+; ORPHANS:
 ;
-;   Se .tmp orfao existir de execucao anterior crashada,
-;   FileAppend cria fresh (sem append a residuo) porque o .tmp
-;   eh deletado primeiro. Logica defensiva: garante limpeza
-;   antes de cada escrita.
+;   If an orphan .tmp exists from a previously crashed execution,
+;   FileAppend creates fresh (no append to leftovers) because the
+;   .tmp is deleted first. Defensive logic: guarantees cleanup
+;   before every write.
 ;
-; LIMITES:
+; LIMITS:
 ;
-;   - Windows/NTFS: "quasi-atomico" (janela curta). Ok pra uso
-;     single-thread em desktop.
-;   - FAT32/exFAT: comportamento similar mas com mais variancia.
-;     Risco aceito — usuarios em FAT32 sao ~0% do publico-alvo.
-;   - Path em rede: latencia + falhas de rede aumentam a janela
-;     de risco. Crash no meio pode deixar .tmp orfao na origem.
+;   - Windows/NTFS: "quasi-atomic" (short window). OK for single-thread
+;     desktop usage.
+;   - FAT32/exFAT: similar behavior but with more variance.
+;     Accepted risk — FAT32 users are ~0% of the target audience.
+;   - Network paths: latency + network failures widen the risk window.
+;     A crash midway can leave an orphan .tmp on the source.
 ;
-; USO:
+; USAGE:
 ;
-;   AtomicWriter.WriteAll(path, "conteudo completo")
+;   AtomicWriter.WriteAll(path, "complete content")
 ;   AtomicWriter.WriteAll(path, jsonStr, "UTF-8")
 ;   AtomicWriter.WriteAll(path, csvBuffer, "UTF-8")
 
@@ -67,44 +67,44 @@ class AtomicWriter
     ; ------------------------------------------------------------
     ; WriteAll(path, content, encoding := "UTF-8")
     ;
-    ; Escreve content em path de forma atomica via .tmp + FileMove.
-    ; Sobrescreve path se ja existe. Cria diretorio se nao existir.
+    ; Writes content to path atomically via .tmp + FileMove.
+    ; Overwrites path if it already exists. Creates directory if missing.
     ;
     ; Args:
-    ;   path     : caminho final (ex: "C:\...\step_summary.csv")
-    ;   content  : string (UTF-8 padrao). Pode ser vazia (cria arquivo vazio).
+    ;   path     : final path (e.g. "C:\...\step_summary.csv")
+    ;   content  : string (UTF-8 default). May be empty (creates empty file).
     ;   encoding : "UTF-8" (default), "UTF-16", "CP1252", etc.
-    ;              Mesmos valores aceitos por FileAppend do AHK v2.
+    ;              Same values accepted by AHK v2's FileAppend.
     ;
-    ; Throws: OSError se FileAppend ou FileMove falhar (disco cheio,
-    ;         permission denied, path invalido).
+    ; Throws: OSError if FileAppend or FileMove fails (disk full,
+    ;         permission denied, invalid path).
     ; ------------------------------------------------------------
     static WriteAll(path, content, encoding := "UTF-8")
     {
         if (Trim(String(path)) = "")
-            throw ValueError("AtomicWriter.WriteAll: 'path' obrigatorio")
+            throw ValueError("AtomicWriter.WriteAll: 'path' is required")
 
-        ; Garante diretorio (FileAppend nao cria sozinho)
+        ; Ensure directory (FileAppend does not create it on its own)
         SplitPath(path, , &dir)
         if (dir != "" && !DirExist(dir))
             DirCreate(dir)
 
         tmpPath := path ".tmp"
 
-        ; Cleanup defensivo: se ha .tmp orfao de execucao anterior
-        ; crashada, deleta antes pra evitar append em residuo.
+        ; Defensive cleanup: if there is an orphan .tmp from a previously
+        ; crashed execution, delete it first to avoid appending to leftovers.
         if FileExist(tmpPath)
         {
             try FileDelete(tmpPath)
         }
 
-        ; Escreve conteudo inteiro em .tmp
+        ; Write the entire content to .tmp
         FileAppend(content, tmpPath, encoding)
 
-        ; FileMove com overwrite=true substitui o destino se existir.
-        ; Implementacao Windows (MoveFileEx + MOVEFILE_REPLACE_EXISTING)
-        ; faz delete-then-rename, com janela curta de inconsistencia.
-        ; Ok pro uso single-thread do app. Vide LIMITES no docstring.
+        ; FileMove with overwrite=true replaces the destination if it exists.
+        ; Windows implementation (MoveFileEx + MOVEFILE_REPLACE_EXISTING)
+        ; does delete-then-rename, with a short window of inconsistency.
+        ; OK for the app's single-thread usage. See LIMITS in the docstring.
         FileMove(tmpPath, path, true)
     }
 }

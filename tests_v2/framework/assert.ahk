@@ -1,26 +1,26 @@
 ; ============================================================
-; Assert - asserções para os testes do SpeedKalandra
+; Assert - assertions for the SpeedKalandra tests
 ; ============================================================
 ;
-; Toda asserção falha estourando AssertionFailed (extends Error).
-; O TestRunner diferencia AssertionFailed (fail) de outros throws (errored).
+; Every failed assertion throws AssertionFailed (extends Error).
+; The TestRunner distinguishes AssertionFailed (fail) from other throws (errored).
 ;
-; API publica:
+; Public API:
 ;   Assert.True(actual, message := "")
 ;   Assert.False(actual, message := "")
-;   Assert.Equal(expected, actual, message := "")        comparacao profunda
+;   Assert.Equal(expected, actual, message := "")        deep comparison
 ;   Assert.NotEqual(expected, actual, message := "")
 ;   Assert.Near(expected, actual, tolerance, message := "")
-;   Assert.Contains(needle, haystack, message := "")     string ou array
-;   Assert.IsType(expectedClass, actual, message := "")  usa `is`
+;   Assert.Contains(needle, haystack, message := "")     string or array
+;   Assert.IsType(expectedClass, actual, message := "")  uses `is`
 ;   Assert.Throws(expectedClass, fn, message := "")
 ;   Assert.Fail(message)
 ;
-; Equal faz deep compare para Array e Map. Para outros objetos,
-; cai em comparacao por referencia (==).
+; Equal does deep compare for Array and Map. For other objects,
+; falls back to reference comparison (==).
 ;
-; Convencao de mensagem: Assert.Equal(esperado, observado, "contexto")
-; — primeiro argumento eh sempre o esperado, segundo o observado.
+; Message convention: Assert.Equal(expected, observed, "context")
+; — the first argument is always the expected one, the second is observed.
 
 class AssertionFailed extends Error
 {
@@ -37,14 +37,14 @@ class Assert
     {
         if (actual)
             return
-        Assert._Throw("Esperava true, veio " Assert._Repr(actual), message)
+        Assert._Throw("Expected true, got " Assert._Repr(actual), message)
     }
 
     static False(actual, message := "")
     {
         if (!actual)
             return
-        Assert._Throw("Esperava false, veio " Assert._Repr(actual), message)
+        Assert._Throw("Expected false, got " Assert._Repr(actual), message)
     }
 
     static Equal(expected, actual, message := "")
@@ -52,7 +52,7 @@ class Assert
         if (Assert._DeepEqual(expected, actual))
             return
         Assert._Throw(
-            "Esperava " Assert._Repr(expected) ", veio " Assert._Repr(actual),
+            "Expected " Assert._Repr(expected) ", got " Assert._Repr(actual),
             message
         )
     }
@@ -62,7 +62,7 @@ class Assert
         if (!Assert._DeepEqual(expected, actual))
             return
         Assert._Throw(
-            "Esperava != " Assert._Repr(expected) ", mas eh igual",
+            "Expected != " Assert._Repr(expected) ", but it's equal",
             message
         )
     }
@@ -70,19 +70,19 @@ class Assert
     static Near(expected, actual, tolerance, message := "")
     {
         if (!IsNumber(expected) || !IsNumber(actual) || !IsNumber(tolerance))
-            Assert._Throw("Near exige numeros, veio expected=" Type(expected) " actual=" Type(actual), message)
+            Assert._Throw("Near requires numbers, got expected=" Type(expected) " actual=" Type(actual), message)
         diff := Abs(expected - actual)
         if (diff <= tolerance)
             return
         Assert._Throw(
-            "Esperava " expected " +- " tolerance ", veio " actual " (delta " diff ")",
+            "Expected " expected " +- " tolerance ", got " actual " (delta " diff ")",
             message
         )
     }
 
     static Contains(needle, haystack, message := "")
     {
-        ; haystack pode ser string (InStr) ou array (linear search)
+        ; haystack can be a string (InStr) or an array (linear search)
         if (haystack is Array)
         {
             for _, item in haystack
@@ -91,7 +91,7 @@ class Assert
                     return
             }
             Assert._Throw(
-                "Array nao contem " Assert._Repr(needle) ": " Assert._Repr(haystack),
+                "Array does not contain " Assert._Repr(needle) ": " Assert._Repr(haystack),
                 message
             )
         }
@@ -100,13 +100,13 @@ class Assert
             if (InStr(haystack, needle))
                 return
             Assert._Throw(
-                "String nao contem " Assert._Repr(needle) ": " Assert._Repr(haystack),
+                "String does not contain " Assert._Repr(needle) ": " Assert._Repr(haystack),
                 message
             )
         }
         else
         {
-            Assert._Throw("Contains nao suporta haystack do tipo " Type(haystack), message)
+            Assert._Throw("Contains does not support haystack of type " Type(haystack), message)
         }
     }
 
@@ -116,19 +116,19 @@ class Assert
             return
         actualType := IsObject(actual) ? Type(actual) : Type(actual)
         Assert._Throw(
-            "Esperava instancia de " expectedClass.Prototype.__Class ", veio " actualType,
+            "Expected instance of " expectedClass.Prototype.__Class ", got " actualType,
             message
         )
     }
 
     static Throws(expectedClass, fn, message := "")
     {
-        ; BoundFunc e Closure sao subclasses de Func em AHK v2, entao
-        ; `fn is Func` cobre os tres casos comuns. Outros callables
-        ; (Class constructors, objetos com __Call) devem ser wrappeados
-        ; numa arrow funcao antes de serem passados aqui.
+        ; BoundFunc and Closure are subclasses of Func in AHK v2, so
+        ; `fn is Func` covers the three common cases. Other callables
+        ; (Class constructors, objects with __Call) should be wrapped
+        ; in an arrow function before being passed here.
         if (!IsObject(fn) || !(fn is Func))
-            Assert._Throw("Throws exige callable (Func/Closure/BoundFunc), veio " Type(fn), message)
+            Assert._Throw("Throws requires callable (Func/Closure/BoundFunc), got " Type(fn), message)
         try
         {
             fn()
@@ -138,13 +138,13 @@ class Assert
             if (e is expectedClass)
                 return
             Assert._Throw(
-                "Esperava throw de " expectedClass.Prototype.__Class
-                . ", veio " Type(e) ": " e.Message,
+                "Expected throw of " expectedClass.Prototype.__Class
+                . ", got " Type(e) ": " e.Message,
                 message
             )
         }
         Assert._Throw(
-            "Esperava throw de " expectedClass.Prototype.__Class ", nao houve throw",
+            "Expected throw of " expectedClass.Prototype.__Class ", no throw occurred",
             message
         )
     }
@@ -168,11 +168,11 @@ class Assert
 
     static _DeepEqual(a, b)
     {
-        ; Primitivos: ambos nao-objeto
+        ; Primitives: both non-object
         if (!IsObject(a) && !IsObject(b))
             return a == b
 
-        ; Misto: objeto vs primitivo
+        ; Mixed: object vs primitive
         if (!IsObject(a) || !IsObject(b))
             return false
 
@@ -204,10 +204,10 @@ class Assert
             return true
         }
 
-        ; Tipos diferentes (Array vs Map etc) ou objetos custom
-        ; Para objetos custom, comparamos por referencia.
-        ; Asserts que comparem objetos custom devem usar getters
-        ; ou propriedades em vez de comparar a instancia inteira.
+        ; Different types (Array vs Map etc) or custom objects.
+        ; For custom objects, we compare by reference. Asserts that
+        ; compare custom objects should use getters or properties
+        ; instead of comparing the whole instance.
         return a == b
     }
 

@@ -2,75 +2,77 @@
 ; OverlayInteractionService — Ctrl-drag + Ctrl-wheel resize + click-through
 ; ============================================================
 ;
-; Comportamento:
-;   - Sem Ctrl: cliques no overlay PASSAM DIRETO pra janela atras
-;     (PoE2 recebe o click). Overlay nao bloqueia interacao com o jogo.
-;   - Com Ctrl: overlay vira interativo.
-;       * Click esquerdo numa Gui registrada inicia drag (move janela inteira).
-;       * Roda do mouse sobre Gui registrada dispara onResize callback
-;         (widget muda scale, escala tudo dentro).
+; Behavior:
+;   - Without Ctrl: clicks on the overlay PASS THROUGH to the window
+;     behind (PoE2 receives the click). The overlay does not block
+;     game interaction.
+;   - With Ctrl: the overlay becomes interactive.
+;       * Left click on a registered Gui starts a drag (moves the
+;         whole window).
+;       * Mouse wheel over a registered Gui fires the onResize
+;         callback (widget changes scale, scales everything inside).
 ;
 ; APPROACH (Item 2):
-;   Usa WS_EX_LAYERED + WS_EX_TRANSPARENT setados na criacao do widget
-;   (WidgetBase.Show / LayoutWidgetBase.Show). Esse approach funciona
-;   CROSS-PROCESS — Windows roteia mouse messages pra janela abaixo
-;   diretamente, ignorando processos.
+;   Uses WS_EX_LAYERED + WS_EX_TRANSPARENT set on widget creation
+;   (WidgetBase.Show / LayoutWidgetBase.Show). This approach works
+;   CROSS-PROCESS — Windows routes mouse messages directly to the
+;   window below, ignoring processes.
 ;
-;   Toggle dinamico: quando Ctrl flipa, este service adiciona/remove
-;   o bit WS_EX_TRANSPARENT em cada Hwnd registrado:
-;     - Sem Ctrl: TRANSPARENT on  -> click-through (PoE2 recebe)
-;     - Com Ctrl: TRANSPARENT off -> widget interativo (drag/wheel funciona)
+;   Dynamic toggle: when Ctrl flips, this service adds/removes the
+;   WS_EX_TRANSPARENT bit on each registered Hwnd:
+;     - Without Ctrl: TRANSPARENT on  -> click-through (PoE2 receives)
+;     - With Ctrl: TRANSPARENT off -> interactive widget (drag/wheel works)
 ;
-; FILOSOFIA:
-;   - Singleton estatico (OverlayInteractionService.Instance) pra que
-;     WidgetBase.Show()/LayoutWidgetBase.Show() registrem Hwnds.
-;   - Drag manual via SetTimer 16ms (igual legado).
-;   - Polling de Ctrl (50ms) atualiza _ctrlDown e dispara toggle do
-;     bit TRANSPARENT em todos hwnds + publica Evt.CtrlStateChanged.
-;   - Wheel: OnMessage WM_MOUSEWHEEL extrai delta (signed high word de
-;     wParam), converte em "steps" (delta/120), chama onResize callback.
+; PHILOSOPHY:
+;   - Static singleton (OverlayInteractionService.Instance) so that
+;     WidgetBase.Show()/LayoutWidgetBase.Show() can register Hwnds.
+;   - Manual drag via SetTimer 16ms (same as legacy).
+;   - Ctrl polling (50ms) updates _ctrlDown and triggers toggling the
+;     TRANSPARENT bit on all hwnds + publishes Evt.CtrlStateChanged.
+;   - Wheel: OnMessage WM_MOUSEWHEEL extracts delta (signed high word
+;     of wParam), converts to "steps" (delta/120), calls onResize.
 ;
-; CONSTRUCAO:
+; CONSTRUCTION:
 ;   svc := OverlayInteractionService(bus, headless := false)
-;   svc.Start()    ; instala SetTimer poll + OnMessage hooks
+;   svc.Start()    ; installs SetTimer poll + OnMessage hooks
 ;   svc.RegisterHwnd(myGui.Hwnd, () => mySaveCb(), (steps) => myResizeCb(steps))
 ;   svc.UnregisterHwnd(myGui.Hwnd)
 ;   svc.Stop()
 ;
 ; HEADLESS:
-;   headless=true: nao instala SetTimer/OnMessage real. Tests OK.
+;   headless=true: does not install a real SetTimer/OnMessage. Tests OK.
 
 class OverlayInteractionService
 {
     static Instance := ""
 
-    ; Polling de Ctrl: 50ms (~20Hz) eh suficiente.
+    ; Ctrl polling: 50ms (~20Hz) is enough.
     static POLL_MS := 50
 
-    ; Drag tick: 16ms (~60fps) pra movimento suave.
+    ; Drag tick: 16ms (~60fps) for smooth movement.
     static DRAG_TICK_MS := 16
 
-    ; WS_EX_TRANSPARENT bit, usado pra toggle de click-through (Item 2).
+    ; WS_EX_TRANSPARENT bit, used for click-through toggle (Item 2).
     static WS_EX_TRANSPARENT := 0x20
 
-    ; Opacity dinamica vinculada a HOVER do mouse (v17.14):
-    ;   - Default (sem hover, sem Ctrl):       overlay 100% visivel
-    ;   - Mouse hover sobre o overlay:         overlay ~10% (revela jogo embaixo)
-    ;     -> permite ver/clicar items do jogo cobertos pelo overlay
-    ;        sem precisar mover ou esconder o widget
-    ;   - Ctrl pressionado:                    overlay 100% (override de hover)
-    ;     -> garante visibilidade total durante drag/resize/click em V1/V2/V3
+    ; Dynamic opacity tied to mouse HOVER (v17.14):
+    ;   - Default (no hover, no Ctrl):       overlay 100% visible
+    ;   - Mouse hovers over the overlay:     overlay ~10% (reveals game beneath)
+    ;     -> lets the user see/click on game items hidden by the
+    ;        overlay without having to move or hide the widget
+    ;   - Ctrl pressed:                      overlay 100% (hover override)
+    ;     -> guarantees full visibility during drag/resize/click on V1/V2/V3
     ;
-    ; Polling de hover roda no mesmo SetTimer do polling de Ctrl (50ms).
-    ; Hit-test eh feito manualmente comparando MouseGetPos com WinGetPos
-    ; de cada widget registrado — isso funciona mesmo com click-through ON
-    ; (porque WinGetPos/MouseGetPos operam em coordenadas de tela, nao em
-    ; hit-test de mouse messages).
+    ; Hover polling runs in the same SetTimer as the Ctrl polling (50ms).
+    ; Hit-test is done manually by comparing MouseGetPos with WinGetPos
+    ; for each registered widget — this works even with click-through ON
+    ; (because WinGetPos/MouseGetPos operate on screen coordinates, not
+    ; on mouse-message hit-test).
     ;
-    ; Tweaking: OPACITY_DIMMED eh em escala 0-255 (alpha do WinSetTransparent).
-    ;   25  = ~10% (escolha atual, bem sutil)
-    ;   51  = ~20% (mais legivel mas ainda discreto)
-    ;   76  = ~30% (visivel)
+    ; Tweaking: OPACITY_DIMMED is on a 0-255 scale (WinSetTransparent alpha).
+    ;   25  = ~10% (current choice, very subtle)
+    ;   51  = ~20% (more readable but still discreet)
+    ;   76  = ~30% (visible)
     ;   128 = ~50%
     static OPACITY_DIMMED := 25
     static OPACITY_FULL   := 255
@@ -85,7 +87,7 @@ class OverlayInteractionService
 
     ; State
     _ctrlDown    := false
-    _hoveredHwnd := 0      ; hwnd atualmente sob o cursor (0 = nenhum). v17.14
+    _hoveredHwnd := 0      ; hwnd currently under the cursor (0 = none). v17.14
     ; Array<Map<"hwnd"|"onDragEnd"|"onResize">>
     _widgets   := ""
 
@@ -97,17 +99,17 @@ class OverlayInteractionService
     _dragStartWinY     := 0
     _dragTickFn        := ""
 
-    ; Polling Ctrl state (BoundFunc estavel)
+    ; Ctrl polling state (stable BoundFunc)
     _pollFn := ""
 
-    ; OnMessage handlers (BoundFunc estaveis)
+    ; OnMessage handlers (stable BoundFunc)
     _onLButtonDownFn := ""
     _onMouseWheelFn  := ""
 
     __New(bus, headless := false)
     {
         if !(bus is EventBus)
-            throw TypeError("OverlayInteractionService: 'bus' deve ser EventBus")
+            throw TypeError("OverlayInteractionService: 'bus' must be EventBus")
         this._bus      := bus
         this._headless := !!headless
         this._widgets  := []
@@ -132,17 +134,17 @@ class OverlayInteractionService
         if this._headless
             return
 
-        ; Polling de Ctrl
+        ; Ctrl polling
         SetTimer(this._pollFn, OverlayInteractionService.POLL_MS)
 
-        ; OnMessage WM_LBUTTONDOWN (0x201) — captura cliques quando Ctrl pressed,
-        ; pra iniciar drag. So chega quando widget tem WS_EX_TRANSPARENT off
-        ; (i.e., Ctrl pressed faz o service remover TRANSPARENT, widget recebe
-        ; clicks normalmente).
+        ; OnMessage WM_LBUTTONDOWN (0x201) — captures clicks when Ctrl
+        ; is pressed, to start drag. Only arrives when the widget has
+        ; WS_EX_TRANSPARENT off (i.e. Ctrl pressed makes the service
+        ; remove TRANSPARENT, the widget receives clicks normally).
         OnMessage(OverlayInteractionService.WM_LBUTTONDOWN, this._onLButtonDownFn)
 
-        ; OnMessage WM_MOUSEWHEEL (0x20A) — captura wheel quando Ctrl pressed,
-        ; pra disparar resize. Mesmo gating de TRANSPARENT.
+        ; OnMessage WM_MOUSEWHEEL (0x20A) — captures wheel when Ctrl
+        ; pressed, to fire resize. Same TRANSPARENT gating.
         OnMessage(OverlayInteractionService.WM_MOUSEWHEEL, this._onMouseWheelFn)
 
         OutputDebug("OverlayInteractionService: Start() OK")
@@ -154,7 +156,7 @@ class OverlayInteractionService
             return
         this._enabled := false
 
-        ; Para drag em andamento se houver
+        ; Stop any drag in progress
         this._dragHwnd := 0
         try SetTimer(this._dragTickFn, 0)
 
@@ -172,10 +174,11 @@ class OverlayInteractionService
     ; ============================================================
     ; Public API: Register/Unregister
     ;
-    ;   onDragEnd : callable() ou "" — disparado quando user solta LButton
-    ;               apos drag (use pra persistir nova posicao do widget)
-    ;   onResize  : callable(steps) ou "" — disparado em Ctrl+wheel
-    ;               (steps = +1 wheel pra cima, -1 pra baixo, etc)
+    ;   onDragEnd : callable() or "" — fired when the user releases
+    ;               LButton after a drag (use this to persist the new
+    ;               widget position)
+    ;   onResize  : callable(steps) or "" — fired on Ctrl+wheel
+    ;               (steps = +1 wheel up, -1 down, etc.)
     ; ============================================================
 
     RegisterHwnd(hwnd, onDragEnd := "", onResize := "")
@@ -194,10 +197,11 @@ class OverlayInteractionService
         ))
         OutputDebug("OverlayInteractionService: RegisterHwnd " hwnd " (total=" this._widgets.Length ")")
 
-        ; Aplica estado visual atual (click-through + opacity) no hwnd
-        ; recem-registrado. Antes (Item 2) so aplicava quando Ctrl ja
-        ; estava pressionado; agora aplica sempre pra que o overlay nasca
-        ; com opacity dimmed corretamente quando Ctrl esta solto (default).
+        ; Apply current visual state (click-through + opacity) to the
+        ; freshly registered hwnd. Previously (Item 2) it only applied
+        ; when Ctrl was already pressed; now it always applies so the
+        ; overlay is born with the correct dimmed opacity when Ctrl is
+        ; released (the default).
         this._ApplyVisualState(hwnd)
     }
 
@@ -222,7 +226,7 @@ class OverlayInteractionService
     }
 
     ; ============================================================
-    ; Polling state (Ctrl + hover) — 50ms
+    ; State polling (Ctrl + hover) — 50ms
     ; ============================================================
 
     _Poll()
@@ -234,23 +238,24 @@ class OverlayInteractionService
     ; ============================================================
     ; _UpdateHoverState (v17.14)
     ;
-    ; Detecta qual widget esta sob o cursor (se algum) e atualiza
-    ; _hoveredHwnd. Disparado a cada poll (50ms).
+    ; Detects which widget (if any) is under the cursor and updates
+    ; _hoveredHwnd. Fired on every poll (50ms).
     ;
-    ; Hit-test manual via comparacao de coordenadas — funciona mesmo
-    ; com click-through ativo (porque WinGetPos/MouseGetPos operam em
-    ; geometria de tela, nao em hit-test de mouse messages).
+    ; Manual hit-test via coordinate comparison — works even with
+    ; click-through active (because WinGetPos/MouseGetPos operate on
+    ; screen geometry, not on mouse-message hit-test).
     ;
-    ; Se Ctrl esta pressionado, hover eh IGNORADO (Ctrl override garante
-    ; 100% opacity pra leitura/drag/resize sem distração).
+    ; If Ctrl is pressed, hover is IGNORED (the Ctrl override
+    ; guarantees 100% opacity for reading/drag/resize without
+    ; distraction).
     ; ============================================================
     _UpdateHoverState()
     {
         if this._ctrlDown
         {
-            ; Ctrl override: forca hover off pra que opacity nao seja
-            ; dimmada por engano. Se _hoveredHwnd estava setado, limpa
-            ; (proximo ApplyVisualState volta opacity pra full).
+            ; Ctrl override: force hover off so opacity is not dimmed
+            ; by mistake. If _hoveredHwnd was set, clear it (the next
+            ; ApplyVisualState restores opacity to full).
             this._SetHoveredHwnd(0)
             return
         }
@@ -277,8 +282,8 @@ class OverlayInteractionService
         this._SetHoveredHwnd(hoveredHwnd)
     }
 
-    ; Atualiza _hoveredHwnd e reaplica visual state nos widgets afetados.
-    ; Idempotente: se hwnd nao mudou, no-op.
+    ; Updates _hoveredHwnd and reapplies visual state on affected widgets.
+    ; Idempotent: if hwnd didn't change, no-op.
     _SetHoveredHwnd(hwnd)
     {
         if (hwnd = this._hoveredHwnd)
@@ -287,17 +292,17 @@ class OverlayInteractionService
         prev := this._hoveredHwnd
         this._hoveredHwnd := hwnd
 
-        ; Restaura opacity do widget anterior (saiu do hover)
+        ; Restore the previous widget's opacity (left hover)
         if (prev != 0)
             this._ApplyVisualState(prev)
 
-        ; Aplica dim no widget novo (entrou em hover)
+        ; Dim the new widget (entered hover)
         if (hwnd != 0)
             this._ApplyVisualState(hwnd)
     }
 
     ; ============================================================
-    ; SetCtrlState(isDown) — atualiza estado Ctrl e publica evento
+    ; SetCtrlState(isDown) — updates the Ctrl state and publishes event
     ; ============================================================
     SetCtrlState(isDown)
     {
@@ -307,8 +312,8 @@ class OverlayInteractionService
         this._ctrlDown := newVal
         OutputDebug("OverlayInteractionService: ctrlDown=" (newVal ? "true" : "false"))
 
-        ; Item 2 + v17.14: toggle WS_EX_TRANSPARENT E opacity em todos hwnds
-        ; registrados (sincronizado com state de Ctrl).
+        ; Item 2 + v17.14: toggle WS_EX_TRANSPARENT AND opacity on all
+        ; registered hwnds (synced with Ctrl state).
         this._ApplyVisualStateToAll()
 
         try this._bus.Publish(Events.CtrlStateChanged, Map("active", newVal))
@@ -317,16 +322,16 @@ class OverlayInteractionService
 
     ; ============================================================
     ; Visual state: click-through (WS_EX_TRANSPARENT) + opacity
-    ; (v17.14) — calcula state combinando Ctrl + hover:
+    ; (v17.14) — computes state combining Ctrl + hover:
     ;
     ;   Ctrl=on:                          click-through OFF, opacity FULL
-    ;     -> widget interativo (drag/wheel/V1V2V3), visibilidade total
+    ;     -> interactive widget (drag/wheel/V1V2V3), full visibility
     ;
-    ;   Ctrl=off + hover sobre widget:    click-through ON,  opacity DIMMED
-    ;     -> mouse passou em cima — reveal jogo embaixo
+    ;   Ctrl=off + hover over widget:     click-through ON,  opacity DIMMED
+    ;     -> mouse passed over — reveal game beneath
     ;
-    ;   Ctrl=off + sem hover (default):   click-through ON,  opacity FULL
-    ;     -> widget visivel mas clicks passam pro jogo
+    ;   Ctrl=off + no hover (default):    click-through ON,  opacity FULL
+    ;     -> visible widget but clicks pass through to the game
     ; ============================================================
 
     _ApplyVisualState(hwnd)
@@ -334,11 +339,11 @@ class OverlayInteractionService
         transparent := !this._ctrlDown
         hovered     := !this._ctrlDown && this._hoveredHwnd = hwnd
 
-        ; Click-through bit (depende SO de Ctrl)
+        ; Click-through bit (depends ONLY on Ctrl)
         op := transparent ? "+0x20" : "-0x20"
         try WinSetExStyle(op, "ahk_id " hwnd)
 
-        ; Opacity (alpha): dimmed se hover (e sem Ctrl), full caso contrario
+        ; Opacity (alpha): dimmed if hovered (and no Ctrl), full otherwise
         alpha := hovered
             ? OverlayInteractionService.OPACITY_DIMMED
             : OverlayInteractionService.OPACITY_FULL
@@ -352,12 +357,12 @@ class OverlayInteractionService
     }
 
     ; ============================================================
-    ; OnMessage WM_LBUTTONDOWN — drag manual
+    ; OnMessage WM_LBUTTONDOWN — manual drag
     ; ============================================================
 
     _OnLButtonDown(wParam, lParam, msg, hwnd)
     {
-        ; So inicia drag se Ctrl pressionado E a Gui esta registrada.
+        ; Only start drag if Ctrl is pressed AND the Gui is registered.
         if !this._ctrlDown
             return
         if !this._IsRegistered(hwnd)
@@ -377,23 +382,24 @@ class OverlayInteractionService
         }
         try SetTimer(this._dragTickFn, OverlayInteractionService.DRAG_TICK_MS)
 
-        ; return 0 = suprime click pra que botoes nao ativem durante drag.
+        ; return 0 = suppress the click so buttons don't activate during drag.
         return 0
     }
 
     ; ============================================================
     ; OnMessage WM_MOUSEWHEEL — resize via Ctrl+wheel
     ;
-    ;   Estrutura do wParam (Win32):
+    ;   wParam structure (Win32):
     ;     high word (bits 16..31) = wheel delta (SIGNED int16)
-    ;     low word  (bits 0..15)  = key flags (MK_CONTROL etc)
+    ;     low word  (bits 0..15)  = key flags (MK_CONTROL etc.)
     ;
-    ;   delta tipico: +120 (wheel pra cima) ou -120 (pra baixo).
-    ;   Convertemos em "steps" dividindo por 120 e arredondando.
+    ;   Typical delta: +120 (wheel up) or -120 (down).
+    ;   We convert to "steps" by dividing by 120 and rounding.
     ;
-    ;   Gating: precisa de Ctrl pressionado E hwnd registrado E onResize
-    ;   callback definida no register. Caso contrario, ignora silenciosamente
-    ;   (deixa a wheel propagar normalmente, ex: scroll de ListView).
+    ;   Gating: requires Ctrl pressed AND a registered hwnd AND an
+    ;   onResize callback defined on register. Otherwise ignored
+    ;   silently (lets the wheel propagate normally, e.g. ListView
+    ;   scroll).
     ; ============================================================
     _OnMouseWheel(wParam, lParam, msg, hwnd)
     {
@@ -402,21 +408,21 @@ class OverlayInteractionService
         if !this._IsRegistered(hwnd)
             return
 
-        ; Extrai delta (signed 16-bit) do high word de wParam.
-        ; wParam eh unsigned 64-bit; precisamos converter o high word
-        ; em signed pra distinguir up (positivo) de down (negativo).
+        ; Extract delta (signed 16-bit) from the high word of wParam.
+        ; wParam is unsigned 64-bit; we need to convert the high word
+        ; to signed to distinguish up (positive) from down (negative).
         rawDelta := (wParam >> 16) & 0xFFFF
-        if (rawDelta & 0x8000)    ; bit de sinal
+        if (rawDelta & 0x8000)    ; sign bit
             rawDelta -= 0x10000
         if (rawDelta = 0)
             return
 
-        ; Steps: tipicamente ±1 por click de roda.
+        ; Steps: typically ±1 per wheel click.
         steps := Round(rawDelta / 120)
         if (steps = 0)
             steps := rawDelta > 0 ? 1 : -1
 
-        ; Procura callback do widget.
+        ; Look up the widget's callback.
         for w in this._widgets
         {
             if (w["hwnd"] != hwnd)
@@ -427,7 +433,7 @@ class OverlayInteractionService
                 try cb.Call(steps)
                 OutputDebug("OverlayInteractionService: wheel resize hwnd=" hwnd " steps=" steps)
             }
-            return 0    ; suprime — evita scroll inadvertido pro processo de baixo
+            return 0    ; suppress — avoids inadvertent scroll going to the underlying process
         }
     }
 
@@ -442,7 +448,7 @@ class OverlayInteractionService
     }
 
     ; ============================================================
-    ; Drag tick (16ms = ~60fps, igual legado)
+    ; Drag tick (16ms = ~60fps, same as legacy)
     ; ============================================================
 
     _DragTick()

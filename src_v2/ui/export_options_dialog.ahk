@@ -1,18 +1,18 @@
 ; ============================================================
-; ExportOptionsDialog - dialog de opcoes do export (v0.1.0)
+; ExportOptionsDialog - export options dialog (v0.1.0)
 ; ============================================================
 ;
-; Aberto quando user clica "Export selected" ou "Export all" no
-; RunHistoryDialog. Mostra preview da operacao + opcoes (anonymize,
-; includePbs) + path picker.
+; Opened when the user clicks "Export selected" or "Export all" in
+; RunHistoryDialog. Shows a preview of the operation + options
+; (anonymize, includePbs) + path picker.
 ;
-; FLUXO:
-;   1. RunHistoryDialog publica Cmd.ExportRunsRequested com runIds[]
-;   2. app.ahk handler abre este dialog: Open(runIds)
-;   3. User configura opcoes + path
-;   4. Click "Export" -> chama RunExportService.Export
-;   5. Mostra MsgBox com resultado (count + path do arquivo gerado)
-;   6. Fecha
+; FLOW:
+;   1. RunHistoryDialog publishes Cmd.ExportRunsRequested with runIds[]
+;   2. app.ahk handler opens this dialog: Open(runIds)
+;   3. User configures options + path
+;   4. Click "Export" -> calls RunExportService.Export
+;   5. Shows a MsgBox with the result (count + path of generated file)
+;   6. Closes
 ;
 ; LAYOUT:
 ;   +---------------------------------------------+
@@ -31,10 +31,10 @@
 ;   +---------------------------------------------+
 ;
 ; SUBSCRIPTIONS:
-;   Nenhuma. Aberto explicitamente via Open(runIds) pelo handler de
-;   Cmd.ExportRunsRequested no app.ahk.
+;   None. Opened explicitly via Open(runIds) by the
+;   Cmd.ExportRunsRequested handler in app.ahk.
 ;
-; CONSTRUCAO:
+; CONSTRUCTION:
 ;   dialog := ExportOptionsDialog(bus, exportService, headless)
 
 
@@ -55,9 +55,9 @@ class ExportOptionsDialog
     __New(bus, exportService, headless := false)
     {
         if !(bus is EventBus)
-            throw TypeError("ExportOptionsDialog: 'bus' deve ser EventBus")
+            throw TypeError("ExportOptionsDialog: 'bus' must be EventBus")
         if !(exportService is RunExportService)
-            throw TypeError("ExportOptionsDialog: 'exportService' deve ser RunExportService")
+            throw TypeError("ExportOptionsDialog: 'exportService' must be RunExportService")
 
         this._bus           := bus
         this._exportService := exportService
@@ -67,9 +67,9 @@ class ExportOptionsDialog
     }
 
     ; ============================================================
-    ; Open(runIds) - abre o dialog com a lista de runs a exportar
+    ; Open(runIds) - opens the dialog with the list of runs to export
     ;
-    ; runIds: Array<string>. Se vazio ou nao-array, no-op com log.
+    ; runIds: Array<string>. If empty or non-array, no-op with log.
     ; ============================================================
     Open(runIds)
     {
@@ -101,7 +101,7 @@ class ExportOptionsDialog
     }
 
     ; ============================================================
-    ; Internos
+    ; Internals
     ; ============================================================
 
     _BuildGui()
@@ -162,7 +162,7 @@ class ExportOptionsDialog
 
     _OnBrowse()
     {
-        ; Garante que a pasta default existe antes do FileSelect
+        ; Ensure the default folder exists before FileSelect
         RunExportService.EnsureExportDir()
 
         currentPath := this._ctrls["path"].Value
@@ -177,7 +177,7 @@ class ExportOptionsDialog
         }
         catch as ex
         {
-            OutputDebug("ExportOptionsDialog._OnBrowse falhou: " ex.Message)
+            OutputDebug("ExportOptionsDialog._OnBrowse failed: " ex.Message)
         }
     }
 
@@ -191,11 +191,11 @@ class ExportOptionsDialog
             return
         }
 
-        ; Garante extensao .json
+        ; Ensure .json extension
         if !RegExMatch(path, "i)\.json$")
             path .= ".json"
 
-        ; Confirma sobrescrita se arquivo existe
+        ; Confirms overwrite if the file exists
         if FileExist(path)
         {
             result := ""
@@ -236,7 +236,7 @@ class ExportOptionsDialog
             for _, e in result["errors"]
                 msg .= "`n  - " e
             try SpeedKalandraMsgBox(msg, "Export failed", "IconX")
-            ; Nao fecha o dialog \u2014 user pode tentar de novo com outras opcoes
+            ; Doesn't close the dialog — user can retry with different options
         }
     }
 }

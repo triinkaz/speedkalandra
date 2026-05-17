@@ -1,50 +1,52 @@
 ; ============================================================
-; FocusAutoPauseService — pausa automatica por foco (event-driven)
+; FocusAutoPauseService — automatic pause on focus loss (event-driven)
 ; ============================================================
 ;
-; Pausa o timer automaticamente quando PoE2 perde foco (alt-tab pra
-; wiki, browser, discord, etc.) e retoma quando ganha foco de volta.
+; Automatically pauses the timer when PoE2 loses focus (alt-tab to
+; the wiki, browser, discord, etc.) and resumes when it gains focus
+; back.
 ;
-; ARQUITETURA (v0.1.1 — hybrid log+polling):
-;   PRIMARY: Service consome Evt.WindowFocusChanged publicado pelo
-;   LogMonitorService quando ele parsa "[WINDOW] Lost focus" /
-;   "[WINDOW] Gained focus" no Client.txt do PoE2. Resposta instantanea
-;   quando o log funciona.
+; ARCHITECTURE (v0.1.1 — hybrid log+polling):
+;   PRIMARY: Service consumes Evt.WindowFocusChanged published by
+;   LogMonitorService when it parses "[WINDOW] Lost focus" /
+;   "[WINDOW] Gained focus" in PoE2's Client.txt. Instant response
+;   when the log works.
 ;
-;   BACKUP (v0.1.1 fix Bug Lechtansi): subscreve tambem a Evt.Tick e
-;   polleia WinActive a cada ~300ms. PoE2 EA atual NAO emite "Gained
-;   focus" no log de forma confiavel — sem o polling, o timer ficava
-;   pausado indefinidamente quando o usuario voltava pro jogo.
+;   BACKUP (v0.1.1 fix Bug Lechtansi): also subscribes to Evt.Tick
+;   and polls WinActive every ~300ms. Current PoE2 EA does NOT
+;   reliably emit "Gained focus" in the log — without the polling,
+;   the timer stayed paused indefinitely when the user came back
+;   to the game.
 ;
-;   Ambos os caminhos chamam o MESMO handler (_OnWindowFocusChanged)
-;   que eh idempotente (Pause em paused = no-op, Resume em running =
-;   no-op). Log fires fast, polling catches up dentro de ~300ms.
+;   Both paths call the SAME handler (_OnWindowFocusChanged) which
+;   is idempotent (Pause when paused = no-op, Resume when running =
+;   no-op). The log fires fast, polling catches up within ~300ms.
 ;
-; SUBSTRING MATCH BUG (resolvido por ahk_exe):
-;   Versao anterior usava polling com WinActive("Path of Exile 2"). Em
-;   AHK v2 o TitleMatchMode default eh substring — janelas com "Path of
-;   Exile 2" no titulo (browser com wiki, Discord #path-of-exile-2)
-;   causavam falso positivo. Solucao agora: WinActive("ahk_exe XXX.exe")
-;   eh match exato por nome do executavel.
+; SUBSTRING MATCH BUG (resolved via ahk_exe):
+;   The previous version used polling with WinActive("Path of Exile 2").
+;   In AHK v2, the default TitleMatchMode is substring — windows with
+;   "Path of Exile 2" in the title (browser with wiki, Discord
+;   #path-of-exile-2) caused false positives. Solution now:
+;   WinActive("ahk_exe XXX.exe") is exact match by executable name.
 ;
-; Comportamento:
-;   - Se settings.autoPauseOnFocus = false: noop (handler nao age)
-;   - Lost focus + timer RODANDO: pause + flag pausedByFocus
-;   - Gained focus + pausedByFocus: resume + zera flag
-;   - Se usuario fizer pause/resume manual entre os dois, a flag
-;     pausedByFocus eh preservada/respeitada (nao re-resume o que
-;     usuario manualmente pausou)
+; Behavior:
+;   - If settings.autoPauseOnFocus = false: noop (handler does nothing)
+;   - Lost focus + timer RUNNING: pause + pausedByFocus flag
+;   - Gained focus + pausedByFocus: resume + clears flag
+;   - If the user pauses/resumes manually between the two, the
+;     pausedByFocus flag is preserved/respected (does not re-resume
+;     what the user manually paused)
 ;
-; Construcao:
+; Construction:
 ;   service := FocusAutoPauseService(bus, timerService, appSettings)
-;   service.Start()    ; subscribe ao Evt.WindowFocusChanged + Tick
-;   service.Stop()     ; unsubscribe ambos
+;   service.Start()    ; subscribe to Evt.WindowFocusChanged + Tick
+;   service.Stop()     ; unsubscribe both
 ;
-; Para testes:
+; For tests:
 ;   service := FocusAutoPauseService(bus, timer, settings)
 ;   service.Start()
 ;   bus.Publish(Events.WindowFocusChanged, Map("state", "lost"))
-;   ; ... verifica timer.IsPaused() etc
+;   ; ... check timer.IsPaused() etc.
 
 
 class FocusAutoPauseService
@@ -55,7 +57,7 @@ class FocusAutoPauseService
 
     _enabled        := false
     _pausedByFocus  := false
-    _lastGameActive := true   ; v0.1.1: cache pra detectar transicoes via polling
+    _lastGameActive := true   ; v0.1.1: cache to detect transitions via polling
 
     _handlerFocusChanged := ""
     _handlerTick         := ""   ; v0.1.1: backup polling via Tick
@@ -63,11 +65,11 @@ class FocusAutoPauseService
     __New(bus, timerSvc, cfg)
     {
         if !(bus is EventBus)
-            throw TypeError("FocusAutoPauseService: 'bus' deve ser EventBus")
+            throw TypeError("FocusAutoPauseService: 'bus' must be EventBus")
         if !(timerSvc is TimerService)
-            throw TypeError("FocusAutoPauseService: 'timerSvc' deve ser TimerService")
+            throw TypeError("FocusAutoPauseService: 'timerSvc' must be TimerService")
         if !(cfg is AppSettings)
-            throw TypeError("FocusAutoPauseService: 'cfg' deve ser AppSettings")
+            throw TypeError("FocusAutoPauseService: 'cfg' must be AppSettings")
 
         this._bus      := bus
         this._timer    := timerSvc
@@ -87,7 +89,7 @@ class FocusAutoPauseService
             return
         this._enabled := true
         this._pausedByFocus := false
-        ; Snapshot inicial do estado de foco pro polling detectar transicoes.
+        ; Initial snapshot of the focus state for polling to detect transitions.
         this._lastGameActive := this._IsGameActive()
         this._bus.Subscribe(Events.WindowFocusChanged, this._handlerFocusChanged)
         this._bus.Subscribe(Events.Tick, this._handlerTick)
@@ -107,16 +109,17 @@ class FocusAutoPauseService
     WasPausedByFocus()  => this._pausedByFocus
 
     ; ============================================================
-    ; Handler de Evt.Tick (v0.1.1) — polling backup
+    ; Evt.Tick handler (v0.1.1) — polling backup
     ;
-    ; PoE2 EA nao emite "Gained focus" no Client.txt confiavelmente.
-    ; Polleia WinActive a cada Tick (~300ms) e, quando detecta mudanca
-    ; de estado, simula o evento de focus correspondente chamando o
-    ; mesmo _OnWindowFocusChanged que o caminho log-based usa.
+    ; PoE2 EA does not reliably emit "Gained focus" in Client.txt.
+    ; Polls WinActive on every Tick (~300ms) and, when it detects a
+    ; state change, simulates the corresponding focus event by calling
+    ; the same _OnWindowFocusChanged that the log-based path uses.
     ;
-    ; Idempotencia garantida: timer.Pause() em paused = no-op, idem
-    ; Resume() em running. Mesmo que o log dispare antes (caminho rapido),
-    ; o tick subsequente que detectar a mesma transicao eh benigno.
+    ; Idempotency guaranteed: timer.Pause() when paused = no-op, same
+    ; for Resume() when running. Even if the log fires first (fast
+    ; path), the subsequent tick that detects the same transition is
+    ; harmless.
     ; ============================================================
     _OnTick(data)
     {
@@ -124,34 +127,35 @@ class FocusAutoPauseService
             return
         if !this._settings.autoPauseOnFocus
         {
-            this._lastGameActive := this._IsGameActive()   ; mantem snapshot
+            this._lastGameActive := this._IsGameActive()   ; keep snapshot
             this._pausedByFocus := false
             return
         }
 
         isActive := this._IsGameActive()
         if (isActive = this._lastGameActive)
-            return   ; sem mudanca, no-op
+            return   ; no change, no-op
         this._lastGameActive := isActive
 
-        ; Dispara o mesmo handler que o log-based usa.
+        ; Fires the same handler that the log-based path uses.
         this._OnWindowFocusChanged(Map("state", isActive ? "gained" : "lost"))
     }
 
     ; ============================================================
     ; _IsGameActive (v0.1.1)
     ;
-    ; Detecta se a janela do PoE2 esta atualmente focada. Match estrito
-    ; por ahk_exe pra evitar falsos positivos do substring match
-    ; (browsers/Discord com "Path of Exile 2" no titulo).
+    ; Detects whether the PoE2 window is currently focused. Strict
+    ; match by ahk_exe to avoid false positives from substring match
+    ; (browsers/Discord with "Path of Exile 2" in the title).
     ;
-    ; Cobre nomes conhecidos do executavel:
+    ; Covers known executable names:
     ;   PoE2 EA Steam:    PathOfExile2Steam.exe, PathOfExile_x64Steam.exe
     ;   PoE2 EA Standalone: PathOfExile2_x64.exe, PathOfExile2.exe
-    ;   Compat PoE1 names: PathOfExile_x64.exe, PathOfExile.exe
+    ;   PoE1 names compat: PathOfExile_x64.exe, PathOfExile.exe
     ;
-    ; Se nenhum casar (versao futura com nome diferente), retorna false
-    ; — polling nao age, mas log-based detection continua funcionando.
+    ; If none match (future version with a different name), returns
+    ; false — polling does nothing, but log-based detection keeps
+    ; working.
     ; ============================================================
     _IsGameActive()
     {
@@ -164,15 +168,15 @@ class FocusAutoPauseService
     }
 
     ; ============================================================
-    ; Handler de Evt.WindowFocusChanged
+    ; Evt.WindowFocusChanged handler
     ;
-    ; Payload esperado: Map("state", "lost" | "gained")
+    ; Expected payload: Map("state", "lost" | "gained")
     ;
-    ; Idempotente — handlers duplicados ou estados redundantes nao
-    ; causam efeito colateral (Pause em timer ja pausado eh no-op).
+    ; Idempotent — duplicate handlers or redundant states do not
+    ; cause side effects (Pause on an already-paused timer is a no-op).
     ;
-    ; Chamado tanto pelo log-based path (subscribe a Evt.WindowFocusChanged)
-    ; quanto pelo polling backup (_OnTick).
+    ; Called both by the log-based path (subscribe to
+    ; Evt.WindowFocusChanged) and by the polling backup (_OnTick).
     ; ============================================================
     _OnWindowFocusChanged(data)
     {
@@ -180,8 +184,8 @@ class FocusAutoPauseService
             return
         if !this._settings.autoPauseOnFocus
         {
-            ; Setting desabilitada — zera flag pra nao deixar pendurada
-            ; caso usuario reabilite no meio.
+            ; Setting disabled — clear the flag so it doesn't stay
+            ; dangling if the user re-enables it in the middle.
             this._pausedByFocus := false
             return
         }
@@ -192,7 +196,7 @@ class FocusAutoPauseService
 
         if (state = "lost")
         {
-            ; Pausa apenas se timer estava RODANDO (nao se ja parado/pausado).
+            ; Pause only if the timer was RUNNING (not if already stopped/paused).
             if this._timer.IsRunning()
             {
                 this._timer.Pause()
@@ -203,14 +207,14 @@ class FocusAutoPauseService
 
         if (state = "gained")
         {
-            ; Resume apenas se NOS pausamos (nao se usuario pausou
-            ; manualmente durante o alt-tab).
+            ; Resume only if WE paused (not if the user paused
+            ; manually during the alt-tab).
             if (this._pausedByFocus && this._timer.IsPaused())
                 this._timer.Resume()
             this._pausedByFocus := false
             return
         }
 
-        ; State desconhecido — ignora silenciosamente.
+        ; Unknown state — silently ignored.
     }
 }

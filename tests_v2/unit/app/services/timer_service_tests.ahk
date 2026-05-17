@@ -2,27 +2,27 @@
 ; TimerServiceTests
 ; ============================================================
 ;
-; TimerService: state machine 3-estados com clock + bus injetaveis.
-;   - PARADO  : !_active
-;   - RODANDO : _active && !_paused
-;   - PAUSADO : _active && _paused
+; TimerService: 3-state state machine with injectable clock + bus.
+;   - STOPPED : !_active
+;   - RUNNING : _active && !_paused
+;   - PAUSED  : _active && _paused
 ;
-; Comandos: Start, Pause, Resume, Stop, Reset, Toggle, Hydrate
+; Commands: Start, Pause, Resume, Stop, Reset, Toggle, Hydrate
 ; Queries:  IsActive, IsRunning, IsPaused, GetRunMs
-; Eventos:  TimerStarted/Paused/Resumed/Stopped/Reset (todos via bus)
+; Events:   TimerStarted/Paused/Resumed/Stopped/Reset (all via bus)
 ;
-; NOTA: variavel local `events` colide case-insensitively com a CLASSE
-; `Events` (pitfall #4 do README). Usar `evtLog` em vez disso.
+; NOTE: the local variable `events` collides case-insensitively with
+; the `Events` CLASS (pitfall #4 of the README). Use `evtLog` instead.
 ;
-; Cobertura:
-;   - Construtor (validacao clock/bus)
-;   - Queries iniciais
-;   - Cada transicao valida + evento publicado
-;   - No-ops (comando em estado errado: retorna false, nao publica)
-;   - GetRunMs em cada estado + apos pausa/resume
+; Coverage:
+;   - Constructor (clock/bus validation)
+;   - Initial queries
+;   - Each valid transition + published event
+;   - No-ops (command in wrong state: returns false, doesn't publish)
+;   - GetRunMs in each state + after pause/resume
 ;   - Toggle (state machine)
-;   - Reset (sempre publica)
-;   - Hydrate (silencioso, 3 status hints, defensivos)
+;   - Reset (always publishes)
+;   - Hydrate (silent, 3 status hints, defensive)
 
 
 class TimerServiceTests extends TestCase
@@ -44,13 +44,13 @@ class TimerServiceTests extends TestCase
     }
 
     static Tests := [
-        ; --- Construtor ---
+        ; --- Constructor ---
         "constructor_throws_when_clock_missing_now_ms",
         "constructor_throws_when_clock_is_string",
         "constructor_throws_when_bus_not_event_bus",
         "constructor_accepts_valid_clock_and_bus",
 
-        ; --- Queries iniciais ---
+        ; --- Initial queries ---
         "is_active_false_initially",
         "is_running_false_initially",
         "is_paused_false_initially",
@@ -63,7 +63,7 @@ class TimerServiceTests extends TestCase
         "start_when_already_running_does_not_publish",
         "start_when_paused_returns_false",
 
-        ; --- GetRunMs durante RUNNING ---
+        ; --- GetRunMs while RUNNING ---
         "get_run_ms_returns_zero_immediately_after_start",
         "get_run_ms_returns_clock_delta_while_running",
         "get_run_ms_increases_with_clock_advance",
@@ -75,7 +75,7 @@ class TimerServiceTests extends TestCase
         "pause_when_idle_returns_false",
         "pause_when_already_paused_returns_false",
 
-        ; --- GetRunMs durante PAUSED ---
+        ; --- GetRunMs while PAUSED ---
         "get_run_ms_constant_while_paused_after_advance",
         "pause_commits_delta_to_base_ms",
 
@@ -117,7 +117,7 @@ class TimerServiceTests extends TestCase
         "hydrate_with_non_number_uses_zero",
         "hydrate_does_not_publish_any_event",
 
-        ; --- AddPenaltyMs (v0.1.3 - death penalty no timer real-time) ---
+        ; --- AddPenaltyMs (v0.1.3 - death penalty in real-time timer) ---
         "add_penalty_ms_returns_true_with_positive_value",
         "add_penalty_ms_returns_false_with_zero",
         "add_penalty_ms_returns_false_with_negative",
@@ -137,11 +137,11 @@ class TimerServiceTests extends TestCase
     ; Helpers
     ; ============================================================
 
-    ; Captura todos os eventos do timer em um array. Retorna o array.
-    ; NOTA: handlers hardcoded em vez de loop pra evitar closure-in-loop
-    ; bug (AHK v2 captura variavel local por referencia; loop com closure
-    ; capturando `localName := nm` faz todos os 5 handlers verem o ultimo
-    ; valor de `localName` = "TimerReset").
+    ; Captures all timer events into an array. Returns the array.
+    ; NOTE: handlers hardcoded instead of a loop to avoid the
+    ; closure-in-loop bug (AHK v2 captures local variable by reference;
+    ; a loop with a closure capturing `localName := nm` makes all 5
+    ; handlers see the last value of `localName` = "TimerReset").
     _CaptureAllTimerEvents()
     {
         out := []
@@ -159,12 +159,12 @@ class TimerServiceTests extends TestCase
     }
 
     ; ============================================================
-    ; Construtor
+    ; Constructor
     ; ============================================================
 
     constructor_throws_when_clock_missing_now_ms()
     {
-        ; Objeto sem NowMs
+        ; Object without NowMs
         fakeClockNoMethod := { Now: () => "20260101000000" }
         Assert.Throws(TypeError, () => TimerService(fakeClockNoMethod, this.bus))
     }
@@ -182,12 +182,12 @@ class TimerServiceTests extends TestCase
 
     constructor_accepts_valid_clock_and_bus()
     {
-        ; Setup ja cria o svc. Verifica que esta operacional.
+        ; Setup already creates svc. Verifies it's operational.
         Assert.False(this.svc.IsActive())
     }
 
     ; ============================================================
-    ; Queries iniciais
+    ; Initial queries
     ; ============================================================
 
     is_active_false_initially()  => Assert.False(this.svc.IsActive())
@@ -234,11 +234,11 @@ class TimerServiceTests extends TestCase
     {
         this.svc.Start()
         this.svc.Pause()
-        Assert.False(this.svc.Start(), "Start em PAUSADO eh no-op (use Resume)")
+        Assert.False(this.svc.Start(), "Start in PAUSED is no-op (use Resume)")
     }
 
     ; ============================================================
-    ; GetRunMs durante RUNNING
+    ; GetRunMs while RUNNING
     ; ============================================================
 
     get_run_ms_returns_zero_immediately_after_start()
@@ -306,7 +306,7 @@ class TimerServiceTests extends TestCase
     }
 
     ; ============================================================
-    ; GetRunMs durante PAUSED
+    ; GetRunMs while PAUSED
     ; ============================================================
 
     get_run_ms_constant_while_paused_after_advance()
@@ -316,15 +316,15 @@ class TimerServiceTests extends TestCase
         this.svc.Pause()
         Assert.Equal(2000, this.svc.GetRunMs())
 
-        ; Clock avanca mas paused: run ms nao muda
+        ; Clock advances but paused: run ms doesn't change
         this.stubClock.AdvanceMs(10000)
         Assert.Equal(2000, this.svc.GetRunMs())
     }
 
     pause_commits_delta_to_base_ms()
     {
-        ; Apos pause, base_ms = delta acumulado. Mesmo se outro
-        ; clock advance acontecer, GetRunMs continua igual.
+        ; After pause, base_ms = accumulated delta. Even if another
+        ; clock advance happens, GetRunMs stays the same.
         this.svc.Start()
         this.stubClock.AdvanceMs(5000)
         this.svc.Pause()
@@ -372,13 +372,13 @@ class TimerServiceTests extends TestCase
     resume_when_running_returns_false()
     {
         this.svc.Start()
-        Assert.False(this.svc.Resume(), "Resume em RUNNING eh no-op (use Pause)")
+        Assert.False(this.svc.Resume(), "Resume in RUNNING is no-op (use Pause)")
     }
 
     resume_continues_accumulating_after_pause()
     {
-        ; Start em t=1000, advance 2s, Pause (base=2000),
-        ; advance 5s (sem efeito), Resume em t=8000,
+        ; Start at t=1000, advance 2s, Pause (base=2000),
+        ; advance 5s (no effect), Resume at t=8000,
         ; advance 1s => GetRunMs = 2000 + 1000 = 3000
         this.svc.Start()
         this.stubClock.AdvanceMs(2000)
@@ -416,7 +416,7 @@ class TimerServiceTests extends TestCase
         this.stubClock.AdvanceMs(7000)
         this.svc.Stop()
         Assert.Equal(7000, this.svc.GetRunMs())
-        ; Clock advance apos stop: nao muda
+        ; Clock advance after stop: no change
         this.stubClock.AdvanceMs(10000)
         Assert.Equal(7000, this.svc.GetRunMs())
     }
@@ -461,7 +461,7 @@ class TimerServiceTests extends TestCase
 
     reset_works_from_idle()
     {
-        ; Reset em IDLE sempre publica (sem condicao)
+        ; Reset in IDLE always publishes (unconditional)
         Assert.True(this.svc.Reset())
     }
 
@@ -512,7 +512,7 @@ class TimerServiceTests extends TestCase
     }
 
     ; ============================================================
-    ; Hydrate (silencioso)
+    ; Hydrate (silent)
     ; ============================================================
 
     hydrate_default_status_is_stopped()
@@ -547,7 +547,7 @@ class TimerServiceTests extends TestCase
 
     hydrate_running_accumulates_after_clock_advance()
     {
-        ; Apos hydrate "running", clock advance entra no GetRunMs.
+        ; After hydrate "running", clock advance enters GetRunMs.
         this.svc.Hydrate(5000, "running")
         Assert.Equal(5000, this.svc.GetRunMs())
         this.stubClock.AdvanceMs(2000)
@@ -559,7 +559,7 @@ class TimerServiceTests extends TestCase
         this.svc.Hydrate(5000, "paused")
         Assert.Equal(5000, this.svc.GetRunMs())
         this.stubClock.AdvanceMs(10000)
-        Assert.Equal(5000, this.svc.GetRunMs(), "paused = base constante")
+        Assert.Equal(5000, this.svc.GetRunMs(), "paused = constant base")
     }
 
     hydrate_clamps_negative_to_zero()
@@ -580,23 +580,23 @@ class TimerServiceTests extends TestCase
         this.svc.Hydrate(5000, "running")
         this.svc.Hydrate(7000, "paused")
         this.svc.Hydrate(3000, "stopped")
-        Assert.Equal(0, evtLog.Length, "Hydrate eh silencioso por design")
+        Assert.Equal(0, evtLog.Length, "Hydrate is silent by design")
     }
 
     ; ============================================================
-    ; AddPenaltyMs (v0.1.3 — death penalty no timer real-time)
+    ; AddPenaltyMs (v0.1.3 — death penalty in real-time timer)
     ; ============================================================
     ;
-    ; Contrato:
-    ;   - Argumento positivo > 0 → adiciona ao _baseMs, retorna true
-    ;   - Zero / negativo / non-number → no-op, retorna false
-    ;   - Em RUNNING: commita delta atual antes de adicionar (preserva
-    ;     o tempo decorrido até o momento da penalty); timer continua
-    ;     contando após a adição.
-    ;   - Em PAUSED ou IDLE: adição direta ao _baseMs.
-    ;   - NUNCA publica eventos do bus (decisão de design: widgets
-    ;     dão refresh no próximo Tick e mostram o novo runMs sem
-    ;     precisar de evento dedicado).
+    ; Contract:
+    ;   - Argument positive > 0 → adds to _baseMs, returns true
+    ;   - Zero / negative / non-number → no-op, returns false
+    ;   - In RUNNING: commits current delta before adding (preserves
+    ;     the elapsed time up to the penalty moment); timer keeps
+    ;     counting after the addition.
+    ;   - In PAUSED or IDLE: direct addition to _baseMs.
+    ;   - NEVER publishes bus events (design decision: widgets refresh
+    ;     on the next Tick and show the new runMs without needing a
+    ;     dedicated event).
 
     add_penalty_ms_returns_true_with_positive_value()
     {
@@ -608,7 +608,7 @@ class TimerServiceTests extends TestCase
     {
         this.svc.Start()
         Assert.False(this.svc.AddPenaltyMs(0),
-            "Zero eh no-op (sem penalty efetiva)")
+            "Zero is no-op (no effective penalty)")
     }
 
     add_penalty_ms_returns_false_with_negative()
@@ -623,27 +623,27 @@ class TimerServiceTests extends TestCase
         this.svc.Start()
         Assert.False(this.svc.AddPenaltyMs("abc"))
         Assert.False(this.svc.AddPenaltyMs(""))
-        ; AHK v2 trata Map() como nao-numero
+        ; AHK v2 treats Map() as non-number
         Assert.False(this.svc.AddPenaltyMs(Map()))
     }
 
     add_penalty_ms_increases_run_ms_when_running()
     {
-        ; Start em t=1000, advance 2s (runMs=2000), penalty 500ms
-        ; → runMs deve virar 2500 imediatamente.
+        ; Start at t=1000, advance 2s (runMs=2000), penalty 500ms
+        ; → runMs should become 2500 immediately.
         this.svc.Start()
         this.stubClock.AdvanceMs(2000)
         Assert.Equal(2000, this.svc.GetRunMs())
 
         this.svc.AddPenaltyMs(500)
         Assert.Equal(2500, this.svc.GetRunMs(),
-            "Penalty entra direto no runMs em RUNNING")
+            "Penalty goes straight into runMs in RUNNING")
     }
 
     add_penalty_ms_increases_run_ms_when_paused()
     {
-        ; Start, advance, Pause em runMs=3000, penalty 500
-        ; → runMs vira 3500 e fica constante (paused).
+        ; Start, advance, Pause at runMs=3000, penalty 500
+        ; → runMs becomes 3500 and stays constant (paused).
         this.svc.Start()
         this.stubClock.AdvanceMs(3000)
         this.svc.Pause()
@@ -652,31 +652,32 @@ class TimerServiceTests extends TestCase
         this.svc.AddPenaltyMs(500)
         Assert.Equal(3500, this.svc.GetRunMs())
 
-        ; Clock advance em PAUSED: runMs nao deve mudar
+        ; Clock advance in PAUSED: runMs must not change
         this.stubClock.AdvanceMs(10000)
         Assert.Equal(3500, this.svc.GetRunMs(),
-            "Em PAUSED, runMs permanece com penalty incluida")
+            "In PAUSED, runMs remains with penalty included")
     }
 
     add_penalty_ms_increases_run_ms_when_idle()
     {
-        ; Em IDLE, GetRunMs retorna _baseMs. AddPenaltyMs incrementa
-        ; _baseMs incondicionalmente — caller (app handler) eh quem
-        ; filtra com IsActive() check. O metodo em si nao rejeita.
+        ; In IDLE, GetRunMs returns _baseMs. AddPenaltyMs increments
+        ; _baseMs unconditionally — the caller (app handler) is who
+        ; filters with the IsActive() check. The method itself doesn't
+        ; reject.
         Assert.Equal(0, this.svc.GetRunMs())
         Assert.True(this.svc.AddPenaltyMs(500))
         Assert.Equal(500, this.svc.GetRunMs(),
-            "Em IDLE, penalty adiciona ao _baseMs (caller filtra)")
+            "In IDLE, penalty adds to _baseMs (caller filters)")
     }
 
     add_penalty_ms_does_not_freeze_running_timer()
     {
-        ; Importante: penalty nao para o timer. Clock continua
-        ; acumulando normalmente apos AddPenaltyMs.
-        ;   Start em t=1000
+        ; Important: penalty doesn't stop the timer. Clock keeps
+        ; accumulating normally after AddPenaltyMs.
+        ;   Start at t=1000
         ;   advance 2s → runMs=2000
         ;   penalty 500 → runMs=2500
-        ;   advance 1s → runMs=3500 (timer ainda rodando)
+        ;   advance 1s → runMs=3500 (timer still running)
         this.svc.Start()
         this.stubClock.AdvanceMs(2000)
         this.svc.AddPenaltyMs(500)
@@ -684,17 +685,17 @@ class TimerServiceTests extends TestCase
 
         this.stubClock.AdvanceMs(1000)
         Assert.Equal(3500, this.svc.GetRunMs(),
-            "Timer continua rodando apos penalty")
+            "Timer keeps running after penalty")
 
         Assert.True(this.svc.IsRunning(),
-            "Estado RUNNING preservado apos penalty")
+            "RUNNING state preserved after penalty")
     }
 
     add_penalty_ms_does_not_publish_any_event()
     {
-        ; Penalty muda runMs mas eh silenciosa — widgets dao refresh
-        ; no proximo Tick. Garante que nenhum dos 5 eventos do timer
-        ; eh publicado (Start/Pause/Resume/Stop/Reset).
+        ; Penalty changes runMs but is silent — widgets refresh on the
+        ; next Tick. Guarantees that none of the 5 timer events are
+        ; published (Start/Pause/Resume/Stop/Reset).
         this.svc.Start()
         this.stubClock.AdvanceMs(1000)
 
@@ -705,35 +706,35 @@ class TimerServiceTests extends TestCase
         this.svc.Resume()
         this.svc.AddPenaltyMs(500)
 
-        ; Apenas Paused + Resumed devem ter aparecido — nenhum dos 3
-        ; AddPenaltyMs publicou nada.
+        ; Only Paused + Resumed should have appeared — none of the 3
+        ; AddPenaltyMs calls published anything.
         Assert.Equal(2, evtLog.Length,
-            "AddPenaltyMs nao publica eventos (apenas Pause/Resume devem aparecer)")
+            "AddPenaltyMs doesn't publish events (only Pause/Resume should appear)")
         Assert.Equal("TimerPaused",  evtLog[1]["event"])
         Assert.Equal("TimerResumed", evtLog[2]["event"])
     }
 
     add_penalty_ms_coerces_float_to_int()
     {
-        ; Penalty floats devem ser truncados a int (consistente com
-        ; o construtor de Duration e demais helpers do projeto).
+        ; Float penalties must be truncated to int (consistent with
+        ; the Duration constructor and other project helpers).
         this.svc.Start()
         this.stubClock.AdvanceMs(1000)
         this.svc.AddPenaltyMs(500.7)
         Assert.Equal(1500, this.svc.GetRunMs(),
-            "500.7 truncado pra 500")
+            "500.7 truncated to 500")
     }
 
     add_penalty_ms_can_be_applied_multiple_times()
     {
-        ; Cada chamada acumula. Cenario realista: jogador morre 3x na
-        ; mesma run.
+        ; Each call accumulates. Realistic scenario: player dies 3x in
+        ; the same run.
         this.svc.Start()
-        this.stubClock.AdvanceMs(60000)   ; 1min na run
+        this.stubClock.AdvanceMs(60000)   ; 1min into the run
 
-        this.svc.AddPenaltyMs(150000)     ; 1a morte
-        this.svc.AddPenaltyMs(150000)     ; 2a morte
-        this.svc.AddPenaltyMs(150000)     ; 3a morte
+        this.svc.AddPenaltyMs(150000)     ; 1st death
+        this.svc.AddPenaltyMs(150000)     ; 2nd death
+        this.svc.AddPenaltyMs(150000)     ; 3rd death
 
         ; 60s clock + 3 * 150s penalty = 60 + 450 = 510s = 510000ms
         Assert.Equal(510000, this.svc.GetRunMs())
@@ -741,7 +742,7 @@ class TimerServiceTests extends TestCase
 
     add_penalty_ms_zero_does_not_modify_state()
     {
-        ; Confirma que no-ops (return false) nao mexem em nada.
+        ; Confirms that no-ops (return false) don't touch anything.
         this.svc.Start()
         this.stubClock.AdvanceMs(2000)
         before := this.svc.GetRunMs()
@@ -751,19 +752,19 @@ class TimerServiceTests extends TestCase
         this.svc.AddPenaltyMs("abc")
 
         Assert.Equal(before, this.svc.GetRunMs(),
-            "Nenhum dos no-ops alterou o estado")
+            "None of the no-ops changed the state")
     }
 
     add_penalty_ms_persists_through_pause_resume_cycle()
     {
-        ; Cenario: morte durante RUNNING (penalty aplicada),
-        ; jogador pausa pra ir ao banheiro, despausa e continua.
-        ; A penalty deve estar costurada no _baseMs.
+        ; Scenario: death during RUNNING (penalty applied), player
+        ; pauses to go to the bathroom, resumes and continues. The
+        ; penalty must be sewn into _baseMs.
         ;   t=1000: Start
         ;   t=3000: advance 2s, runMs=2000
         ;   penalty 500: runMs=2500
-        ;   Pause: commita, _baseMs=2500
-        ;   advance 5s (sem efeito — paused)
+        ;   Pause: commits, _baseMs=2500
+        ;   advance 5s (no effect — paused)
         ;   Resume
         ;   advance 1s → runMs=3500
         this.svc.Start()
@@ -776,7 +777,7 @@ class TimerServiceTests extends TestCase
         this.svc.Resume()
         this.stubClock.AdvanceMs(1000)
         Assert.Equal(3500, this.svc.GetRunMs(),
-            "Penalty sobrevive ao Pause/Resume")
+            "Penalty survives the Pause/Resume")
     }
 }
 

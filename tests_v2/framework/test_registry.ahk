@@ -1,17 +1,17 @@
 ; ============================================================
-; TestRegistry - registro de classes de teste
+; TestRegistry - registry of test classes
 ; ============================================================
 ;
-; Cada arquivo de teste, no final, chama:
-;   TestRegistry.Register(MinhaSuite)
+; Each test file, at the end, calls:
+;   TestRegistry.Register(MySuite)
 ;
-; Isso popula um array que o TestRunner consome na hora de rodar.
+; This populates an array that the TestRunner consumes at run time.
 ;
-; Por que registro explicito e nao auto-discovery por nome?
-; - AHK v2 nao tem enumeracao de classes derivadas de uma base.
-; - Auto-discovery por nome (varrer simbolos por prefixo "Test") seria
-;   pior em ergonomia e nao pega classes com nomes que fogem do padrao.
-; - Explicito eh visivel no diff e impossivel de esquecer "acidentalmente".
+; Why an explicit registry and not auto-discovery by name?
+; - AHK v2 has no enumeration of subclasses derived from a base.
+; - Auto-discovery by name (scanning symbols by "Test" prefix) would
+;   be worse ergonomically and would miss classes with off-pattern names.
+; - Explicit is visible in the diff and impossible to "accidentally" forget.
 
 class TestRegistry
 {
@@ -20,11 +20,11 @@ class TestRegistry
     static Register(cls)
     {
         if (!IsObject(cls))
-            throw TypeError("TestRegistry.Register: argumento nao eh classe")
+            throw TypeError("TestRegistry.Register: argument is not a class")
         if (!cls.HasOwnProp("Tests"))
-            throw ValueError("TestCase '" cls.Prototype.__Class "' sem static Tests array")
+            throw ValueError("TestCase '" cls.Prototype.__Class "' missing static Tests array")
         if (!(cls.Tests is Array))
-            throw TypeError("TestCase '" cls.Prototype.__Class "': static Tests deve ser Array")
+            throw TypeError("TestCase '" cls.Prototype.__Class "': static Tests must be Array")
         TestRegistry.Classes.Push(cls)
     }
 

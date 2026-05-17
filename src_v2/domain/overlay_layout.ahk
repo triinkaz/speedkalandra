@@ -1,11 +1,11 @@
 ; ============================================================
-; OverlayLayout - posicoes de widgets do overlay (Onda 6)
+; OverlayLayout - overlay widget positions (Wave 6)
 ; ============================================================
 ;
-; VERSAO POS-DEMOLICAO: 1 position por widget. Removida a complexidade
-; de 3 maps (NORMAL/COMPACT/MICRO). Cada widget tem 1 OverlayPosition
-; e ponto. O OverlayModeService decide qual widget esta visivel num
-; momento, mas a position do widget eh sempre a mesma.
+; POST-DEMOLITION VERSION: 1 position per widget. The 3-map complexity
+; (NORMAL/COMPACT/MICRO) was removed. Each widget has 1 OverlayPosition
+; and that's it. OverlayModeService decides which widget is visible at
+; any given moment, but the widget's position is always the same.
 ;
 ; INI MAPPING:
 ;   [Overlay]
@@ -19,20 +19,20 @@
 ;   ...
 ;   hoverHide=1
 ;
-; ESTRUTURA:
+; STRUCTURE:
 ;   OverlayLayout
 ;       .positions  : Map<widgetId, OverlayPosition>
-;       .hoverHide  : bool (global, herdado)
+;       .hoverHide  : bool (global, inherited)
 ;
-;   OverlayPosition (value object, com clamps em property setters)
-;       .left, .top : float [0..95]    (percentual da resolucao, MAX_PCT_SAFE=95)
+;   OverlayPosition (value object, with clamps in property setters)
+;       .left, .top : float [0..95]    (percent of resolution, MAX_PCT_SAFE=95)
 ;       .scale      : float [0.5..3.0]
 ;       .visible    : bool
 ;       .centered   : bool
 
 
 ; ------------------------------------------------------------
-; OverlayPosition - posicao de um widget individual
+; OverlayPosition - position of an individual widget
 ; ------------------------------------------------------------
 class OverlayPosition
 {
@@ -65,7 +65,7 @@ class OverlayPosition
     static FromMap(data)
     {
         if !IsObject(data)
-            throw TypeError("OverlayPosition.FromMap: 'data' deve ser Map")
+            throw TypeError("OverlayPosition.FromMap: 'data' must be a Map")
 
         op := OverlayPosition()
         op.left     := OverlayPosition._GetPercent(data, "left",  op.left)
@@ -139,7 +139,7 @@ class OverlayPosition
 
 
 ; ------------------------------------------------------------
-; OverlayLayout - colecao de OverlayPosition por widget
+; OverlayLayout - collection of OverlayPosition by widget
 ; ------------------------------------------------------------
 class OverlayLayout
 {
@@ -149,7 +149,7 @@ class OverlayLayout
     static Defaults()
     {
         ol := OverlayLayout()
-        ; Defaults dos 2 layout widgets
+        ; Defaults for the 2 layout widgets
         compact := OverlayPosition()
         compact.left    := 10.0
         compact.top     := 1.5
@@ -169,10 +169,10 @@ class OverlayLayout
     static FromMap(data)
     {
         if !IsObject(data)
-            throw TypeError("OverlayLayout.FromMap: 'data' deve ser Map")
+            throw TypeError("OverlayLayout.FromMap: 'data' must be a Map")
 
         ol := OverlayLayout.Defaults()
-        ; Merge: defaults primeiro, FromMap sobrescreve
+        ; Merge: defaults first, FromMap overrides
         if data.Has("positions") && IsObject(data["positions"])
         {
             for widgetId, raw in data["positions"]
@@ -200,9 +200,9 @@ class OverlayLayout
     SetPosition(widgetId, position)
     {
         if (widgetId = "")
-            throw ValueError("OverlayLayout.SetPosition: widgetId vazio")
+            throw ValueError("OverlayLayout.SetPosition: empty widgetId")
         if !(position is OverlayPosition)
-            throw TypeError("OverlayLayout.SetPosition: 'position' deve ser OverlayPosition")
+            throw TypeError("OverlayLayout.SetPosition: 'position' must be an OverlayPosition")
         this.positions[widgetId] := position
     }
 

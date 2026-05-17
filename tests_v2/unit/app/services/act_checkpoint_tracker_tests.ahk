@@ -2,28 +2,28 @@
 ; ActCheckpointTrackerTests
 ; ============================================================
 ;
-; ActCheckpointTracker eh um service reativo com 2 deps:
-;   - bus (EventBus)   -> subscribe ZoneEntered + lifecycle
-;   - timer (TimerService-like) -> GetRunMs() pra capturar momento
+; ActCheckpointTracker is a reactive service with 2 deps:
+;   - bus (EventBus)   -> subscribes ZoneEntered + lifecycle
+;   - timer (TimerService-like) -> GetRunMs() to capture moment
 ;
-; Logica nuclear (em _OnZoneEntered):
-;   - data deve ter actIndex > 0
-;   - Se _currentAct > 0 && newAct != _currentAct:
-;       _checkpoints[_currentAct] = timer.GetRunMs()  (checkpoint do anterior)
-;   - _currentAct := newAct (sempre, mesmo no primeiro)
+; Core logic (in _OnZoneEntered):
+;   - data must have actIndex > 0
+;   - If _currentAct > 0 && newAct != _currentAct:
+;       _checkpoints[_currentAct] = timer.GetRunMs()  (checkpoint of previous)
+;   - _currentAct := newAct (always, even on first)
 ;
 ; CaptureCurrentAsCheckpoint:
-;   - Chamado manualmente pelo composition root em fim de run
-;   - Registra _checkpoints[_currentAct] := runMs (validado >0)
+;   - Called manually by composition root at end of run
+;   - Records _checkpoints[_currentAct] := runMs (validated >0)
 ;
-; NOTA: usamos `stubTimer` como nome local (caso-insensitive distinto
-; de class `TimerService`).
+; NOTE: we use `stubTimer` as a local name (case-insensitive
+; distinct from the `TimerService` class).
 
 
 ; ------------------------------------------------------------
-; Stub injetavel pra timer: implementa GetRunMs() retornando
-; valor controlado via SetMs(). Top-level porque AHK v2 nao tem
-; nested class.
+; Injectable stub for the timer: implements GetRunMs() returning
+; a value controlled via SetMs(). Top-level because AHK v2 has
+; no nested class.
 ; ------------------------------------------------------------
 class _ActCheckpointStubTimer
 {
@@ -57,7 +57,7 @@ class ActCheckpointTrackerTests extends TestCase
     }
 
     static Tests := [
-        ; --- Construtor ---
+        ; --- Constructor ---
         "constructor_throws_when_bus_not_event_bus",
         "constructor_throws_when_timer_missing_get_run_ms",
         "constructor_throws_when_timer_is_string",
@@ -82,7 +82,7 @@ class ActCheckpointTrackerTests extends TestCase
         "ignores_zone_entered_with_non_object_data",
         "ignores_transition_when_timer_returns_zero",
 
-        ; --- Reset em lifecycle ---
+        ; --- Reset on lifecycle ---
         "resets_on_run_started",
         "resets_on_run_reset",
         "resets_on_run_cancelled",
@@ -95,11 +95,11 @@ class ActCheckpointTrackerTests extends TestCase
         "capture_no_op_when_run_ms_is_non_number",
         "capture_overwrites_existing_checkpoint",
 
-        ; --- GetCheckpoints retorna copia ---
+        ; --- GetCheckpoints returns a copy ---
         "get_checkpoints_returns_defensive_copy",
         "mutating_returned_map_does_not_affect_internal",
 
-        ; --- Reset manual ---
+        ; --- Manual reset ---
         "reset_zeroes_current_act",
         "reset_clears_checkpoints",
 
@@ -110,7 +110,7 @@ class ActCheckpointTrackerTests extends TestCase
     ]
 
     ; ============================================================
-    ; Construtor
+    ; Constructor
     ; ============================================================
 
     constructor_throws_when_bus_not_event_bus()
@@ -122,7 +122,7 @@ class ActCheckpointTrackerTests extends TestCase
     constructor_throws_when_timer_missing_get_run_ms()
     {
         b := this.bus
-        ; Objeto sem GetRunMs
+        ; Object without GetRunMs
         emptyObj := { foo: () => 0 }
         Assert.Throws(TypeError, () => ActCheckpointTracker(b, emptyObj))
     }
@@ -171,7 +171,7 @@ class ActCheckpointTrackerTests extends TestCase
 
     first_zone_entered_records_no_checkpoint()
     {
-        ; Primeira zona da run: nao ha ato anterior pra registrar
+        ; First zone of the run: no previous act to record
         this.bus.Publish(Events.ZoneEntered, Map("actIndex", 1, "zoneName", "Clearfell"))
         Assert.Equal(0, this.svc.GetCheckpoints().Count)
     }
@@ -182,12 +182,12 @@ class ActCheckpointTrackerTests extends TestCase
         this.stubTimer.SetMs(60000)
         this.bus.Publish(Events.ZoneEntered, Map("actIndex", 1, "zoneName", "Mud Burrow"))
         Assert.Equal(0, this.svc.GetCheckpoints().Count,
-            "Mesma ato: sem transicao, sem checkpoint")
+            "Same act: no transition, no checkpoint")
     }
 
     act_transition_records_previous_act_checkpoint()
     {
-        ; Act 1 -> Act 2 em t=28:45 (1725000ms)
+        ; Act 1 -> Act 2 at t=28:45 (1725000ms)
         this.bus.Publish(Events.ZoneEntered, Map("actIndex", 1, "zoneName", "Clearfell"))
         this.stubTimer.SetMs(1725000)
         this.bus.Publish(Events.ZoneEntered, Map("actIndex", 2, "zoneName", "Vastiri"))
@@ -222,20 +222,20 @@ class ActCheckpointTrackerTests extends TestCase
 
     checkpoint_key_is_previous_act_not_new_one()
     {
-        ; Transicao 1->2: salva checkpoint NA KEY 1 (ato que saiu), nao 2
+        ; Transition 1->2: saves checkpoint AT KEY 1 (act that left), not 2
         this.bus.Publish(Events.ZoneEntered, Map("actIndex", 1, "zoneName", "Clearfell"))
         this.stubTimer.SetMs(1725000)
         this.bus.Publish(Events.ZoneEntered, Map("actIndex", 2, "zoneName", "Vastiri"))
 
-        Assert.True(this.svc.GetCheckpoints().Has(1), "Key 1 (ato anterior)")
-        Assert.False(this.svc.GetCheckpoints().Has(2), "Key 2 (novo ato) nao tem checkpoint ainda")
+        Assert.True(this.svc.GetCheckpoints().Has(1), "Key 1 (previous act)")
+        Assert.False(this.svc.GetCheckpoints().Has(2), "Key 2 (new act) has no checkpoint yet")
         Assert.Equal(2, this.svc.GetCurrentAct())
     }
 
     ignores_zone_entered_without_act_index()
     {
         this.bus.Publish(Events.ZoneEntered, Map("zoneName", "Clearfell"))
-        Assert.Equal(0, this.svc.GetCurrentAct(), "actIndex faltando: ignora")
+        Assert.Equal(0, this.svc.GetCurrentAct(), "actIndex missing: ignore")
     }
 
     ignores_zone_entered_with_zero_act_index()
@@ -258,18 +258,18 @@ class ActCheckpointTrackerTests extends TestCase
 
     ignores_transition_when_timer_returns_zero()
     {
-        ; Edge case: se timer.GetRunMs() retornar 0/negativo, defensive
-        ; nao registra checkpoint (mas current_act muda)
+        ; Edge case: if timer.GetRunMs() returns 0/negative, defensively
+        ; we don't record a checkpoint (but current_act still changes)
         this.bus.Publish(Events.ZoneEntered, Map("actIndex", 1, "zoneName", "Clearfell"))
         this.stubTimer.SetMs(0)
         this.bus.Publish(Events.ZoneEntered, Map("actIndex", 2, "zoneName", "Vastiri"))
         Assert.Equal(0, this.svc.GetCheckpoints().Count,
-            "Timer retornando 0: defensivo, sem checkpoint")
-        Assert.Equal(2, this.svc.GetCurrentAct(), "current_act ainda muda")
+            "Timer returning 0: defensive, no checkpoint")
+        Assert.Equal(2, this.svc.GetCurrentAct(), "current_act still changes")
     }
 
     ; ============================================================
-    ; Reset em lifecycle
+    ; Reset on lifecycle
     ; ============================================================
 
     resets_on_run_started()
@@ -318,7 +318,7 @@ class ActCheckpointTrackerTests extends TestCase
 
     capture_no_op_when_current_act_is_zero()
     {
-        ; Sem zona ainda entrada: current_act=0, no-op
+        ; No zone entered yet: current_act=0, no-op
         this.svc.CaptureCurrentAsCheckpoint(1000)
         Assert.Equal(0, this.svc.GetCheckpoints().Count)
     }
@@ -346,7 +346,7 @@ class ActCheckpointTrackerTests extends TestCase
 
     capture_overwrites_existing_checkpoint()
     {
-        ; Caso raro mas valido: capture chamado mais de uma vez no mesmo ato
+        ; Rare but valid case: capture called more than once in the same act
         this.bus.Publish(Events.ZoneEntered, Map("actIndex", 1))
         this.svc.CaptureCurrentAsCheckpoint(1000)
         this.svc.CaptureCurrentAsCheckpoint(2000)
@@ -354,7 +354,7 @@ class ActCheckpointTrackerTests extends TestCase
     }
 
     ; ============================================================
-    ; GetCheckpoints retorna copia
+    ; GetCheckpoints returns a copy
     ; ============================================================
 
     get_checkpoints_returns_defensive_copy()
@@ -365,7 +365,7 @@ class ActCheckpointTrackerTests extends TestCase
 
         copy1 := this.svc.GetCheckpoints()
         copy2 := this.svc.GetCheckpoints()
-        Assert.False(copy1 == copy2, "Mapas distintos (referencias diferentes)")
+        Assert.False(copy1 == copy2, "Distinct maps (different references)")
         Assert.Equal(copy1[1], copy2[1])
     }
 
@@ -376,17 +376,17 @@ class ActCheckpointTrackerTests extends TestCase
         this.bus.Publish(Events.ZoneEntered, Map("actIndex", 2))
 
         copy := this.svc.GetCheckpoints()
-        copy[99] := 999   ; mutacao no retorno
+        copy[99] := 999   ; mutate the return
         copy.Delete(1)
 
-        ; Estado interno intacto
+        ; Internal state intact
         original := this.svc.GetCheckpoints()
         Assert.False(original.Has(99))
         Assert.True(original.Has(1))
     }
 
     ; ============================================================
-    ; Reset manual
+    ; Manual reset
     ; ============================================================
 
     reset_zeroes_current_act()
@@ -414,7 +414,7 @@ class ActCheckpointTrackerTests extends TestCase
         this.svc.Dispose()
         Assert.Equal(0, this.bus.Subscribers(Events.ZoneEntered))
 
-        ; Apos Dispose, eventos nao afetam state
+        ; After Dispose, events don't affect state
         this.bus.Publish(Events.ZoneEntered, Map("actIndex", 5))
         Assert.Equal(0, this.svc.GetCurrentAct())
     }
@@ -430,7 +430,7 @@ class ActCheckpointTrackerTests extends TestCase
     dispose_is_idempotent()
     {
         this.svc.Dispose()
-        this.svc.Dispose()   ; segundo Dispose: no-op
+        this.svc.Dispose()   ; second Dispose: no-op
         Assert.Equal(0, this.bus.Subscribers(Events.ZoneEntered))
     }
 }

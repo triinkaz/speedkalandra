@@ -1,43 +1,44 @@
 ﻿; ============================================================
-; LogService — log estruturado para uso em todo o app
+; LogService — structured logging for use across the app
 ; ============================================================
 ;
-; Uso:
+; Usage:
 ;     log := LogService(A_ScriptDir "\data\speedkalandra.log", "INFO")
-;     log.Info("App iniciado")
-;     log.Warn("Algo estranho", "TimerService")
-;     log.Error("Falha critica", "LogMonitor")
+;     log.Info("App started")
+;     log.Warn("Something odd", "TimerService")
+;     log.Error("Critical failure", "LogMonitor")
 ;
-; Convencao:
-;   - Cada modulo passa seu nome como `context` para facilitar grep no log
-;   - Logger nunca pode estourar: erros internos cadem em OutputDebug
+; Convention:
+;   - Each module passes its name as `context` to ease grepping the log
+;   - Logger must never throw: internal errors fall back to OutputDebug
 ;
-; Nivel minimo:
+; Minimum level:
 ;   DEBUG < INFO < WARN < ERROR
-;   minLevel="INFO" filtra DEBUG. minLevel="DEBUG" mostra tudo.
+;   minLevel="INFO" filters out DEBUG. minLevel="DEBUG" shows everything.
 ;
-; Para testes, use NullLogger (zero overhead) ou InMemoryLogger
-; (captura linhas em array para asserts).
+; For tests, use NullLogger (zero overhead) or InMemoryLogger
+; (captures lines into an array for asserts).
 ;
 ; ------------------------------------------------------------
 ; BUFFERING (refactor R7):
 ;
-; LogService aceita `bufferSize` no construtor:
-;   - 1 (default): flush imediato em cada linha. Compat com testes
-;     que verificam conteudo do arquivo imediatamente apos log call.
-;   - N > 1: bufferiza INFO/DEBUG ate N linhas, depois Flush.
-;     WARN/ERROR sempre flush imediato (preserva ordem ao flushar
-;     buffer pendente antes da linha critica).
+; LogService accepts `bufferSize` in the constructor:
+;   - 1 (default): immediate flush on each line. Compatible with tests
+;     that check file contents immediately after a log call.
+;   - N > 1: buffers INFO/DEBUG up to N lines, then Flush.
+;     WARN/ERROR always flush immediately (preserves order by flushing
+;     pending buffer before the critical line).
 ;
-; Producao usa N=32 pra reduzir I/O syscalls. Crash entre flushes
-; perde ate' 32 linhas INFO/DEBUG — nao critico porque WARN/ERROR
-; sempre passam imediatamente. Plus: app.Stop() chama Flush(),
-; e OnExit handler no entrypoint tambem (cobre exit normal e ctrl-C).
+; Production uses N=32 to reduce I/O syscalls. A crash between flushes
+; loses up to 32 INFO/DEBUG lines — not critical because WARN/ERROR
+; always go through immediately. Plus: app.Stop() calls Flush(),
+; and the OnExit handler in the entrypoint does too (covers normal
+; exit and ctrl-C).
 ;
 ; ------------------------------------------------------------
-; Interface implicita (duck-typed): qualquer objeto com
-; Debug/Info/Warn/Error com assinatura (msg, context := "")
-; pode ser usado como logger.
+; Implicit interface (duck-typed): any object with
+; Debug/Info/Warn/Error with signature (msg, context := "")
+; can be used as a logger.
 ; ------------------------------------------------------------
 
 class LogService
@@ -47,30 +48,31 @@ class LogService
     static LEVEL_WARN  := 2
     static LEVEL_ERROR := 3
 
-    ; v17.15 (Bug #32): tamanho maximo antes de rotacionar log.
-    ; Quando log atinge esse tamanho, renomeia pra .log.old (sobrescreve
-    ; .old anterior) e comeca um novo arquivo. Mantem historico curto
-    ; (uma rotacao = ate 10MB total) e evita arquivo crescer indefinidamente.
+    ; v17.15 (Bug #32): maximum size before rotating the log.
+    ; When the log reaches this size, it is renamed to .log.old
+    ; (overwriting any previous .old) and a new file is started. Keeps
+    ; a short history (one rotation = up to 10MB total) and prevents
+    ; the file from growing indefinitely.
     static MAX_LOG_SIZE := 5 * 1024 * 1024   ; 5MB
 
     _logFile    := ""
     _minLevel   := 1   ; INFO
-    _bufferSize := 1   ; sem buffer por default (compat testes)
-    _buffer     := ""  ; Array<string> de linhas pendentes
-    _warnCount  := 0   ; contador de WARN logados desde criacao/ResetCounts
-    _errorCount := 0   ; contador de ERROR logados desde criacao/ResetCounts
+    _bufferSize := 1   ; no buffer by default (test compat)
+    _buffer     := ""  ; Array<string> of pending lines
+    _warnCount  := 0   ; counter of WARNs logged since creation/ResetCounts
+    _errorCount := 0   ; counter of ERRORs logged since creation/ResetCounts
 
     __New(logFile, minLevel := "INFO", bufferSize := 1)
     {
         if !IsNumber(bufferSize) || bufferSize < 1
-            throw ValueError("LogService: bufferSize deve ser inteiro >= 1")
+            throw ValueError("LogService: bufferSize must be an integer >= 1")
         this._logFile    := logFile
         this._minLevel   := this._ParseLevel(minLevel)
         this._bufferSize := bufferSize
         this._buffer     := []
         this._EnsureLogDir()
-        ; v17.15 (Bug #32): rotaciona log se passou de MAX_LOG_SIZE
-        ; antes de comecar a escrever novas linhas.
+        ; v17.15 (Bug #32): rotate log if it has exceeded MAX_LOG_SIZE
+        ; before starting to write new lines.
         this._RotateIfTooBig()
     }
 
@@ -85,14 +87,14 @@ class LogService
     }
 
     ; ============================================================
-    ; Counters de severidade (WARN/ERROR)
+    ; Severity counters (WARN/ERROR)
     ;
-    ; Contam INDEPENDENTEMENTE do minLevel — eventos aconteceram
-    ; mesmo que o display esteja filtrado. Util pra surface no boot:
-    ; emitir TrayTip quando o boot teve warnings/errors.
+    ; Counted INDEPENDENTLY of minLevel — events happened even if
+    ; the display is filtered. Useful to surface on boot: emit a
+    ; TrayTip when boot had warnings/errors.
     ;
-    ; Resetam via ResetCounts (ex: depois de mostrar TrayTip de boot,
-    ; pra que warnings durante runtime nao acumulem na contagem).
+    ; Reset via ResetCounts (e.g. after showing the boot TrayTip,
+    ; so warnings during runtime don't accumulate in the count).
     ; ============================================================
     GetWarnCount()  => this._warnCount
     GetErrorCount() => this._errorCount
@@ -104,14 +106,14 @@ class LogService
     }
 
     ; ============================================================
-    ; Flush() — escreve buffer pendente no arquivo.
+    ; Flush() — writes pending buffer to the file.
     ;
-    ; Idempotente: chamado em buffer vazio eh no-op.
-    ; Chamado por:
-    ;   - app.Stop() ao desligar normalmente
-    ;   - OnExit handler no entrypoint (cobre Ctrl-C, fechar app)
-    ;   - Internamente quando buffer atinge bufferSize
-    ;   - Internamente antes de cada WARN/ERROR (preserva ordem)
+    ; Idempotent: called on an empty buffer is a no-op.
+    ; Called by:
+    ;   - app.Stop() on normal shutdown
+    ;   - OnExit handler in the entrypoint (covers Ctrl-C, closing the app)
+    ;   - Internally when the buffer reaches bufferSize
+    ;   - Internally before each WARN/ERROR (preserves order)
     ; ============================================================
     Flush()
     {
@@ -120,8 +122,8 @@ class LogService
 
     _Log(numericLevel, levelName, msg, context)
     {
-        ; Conta WARN/ERROR INDEPENDENTEMENTE do minLevel. Aconteceu o
-        ; evento, conta — mesmo que o display esteja filtrado.
+        ; Count WARN/ERROR INDEPENDENTLY of minLevel. The event
+        ; happened, so it counts — even if the display is filtered.
         if (numericLevel = LogService.LEVEL_WARN)
             this._warnCount += 1
         else if (numericLevel = LogService.LEVEL_ERROR)
@@ -134,9 +136,9 @@ class LogService
         ctx  := (context != "") ? "[" context "] " : ""
         line := "[" ts "] " levelName " " ctx msg "`n"
 
-        ; WARN/ERROR: flush buffer primeiro (preserva ordem cronologica)
-        ; e escreve linha imediatamente. Mensagens criticas nao podem
-        ; esperar buffer encher — user pode estar diagnosticando crash.
+        ; WARN/ERROR: flush buffer first (preserves chronological order)
+        ; and write line immediately. Critical messages cannot wait for
+        ; the buffer to fill — user may be diagnosing a crash.
         if (numericLevel >= LogService.LEVEL_WARN)
         {
             this._FlushInternal()
@@ -145,7 +147,7 @@ class LogService
             return
         }
 
-        ; INFO/DEBUG: append ao buffer
+        ; INFO/DEBUG: append to buffer
         this._buffer.Push(line)
         if (this._buffer.Length >= this._bufferSize)
             this._FlushInternal()
@@ -156,9 +158,9 @@ class LogService
         if (this._buffer.Length = 0)
             return
 
-        ; Concatena linhas em chunk único pra reduzir syscalls (1 FileAppend
-        ; em vez de N). Clear ANTES do write — se write falhar, buffer ja
-        ; foi consumido (perda controlada vs retry-loop infinito).
+        ; Concatenate lines into a single chunk to reduce syscalls (1 FileAppend
+        ; instead of N). Clear BEFORE the write — if the write fails, the buffer
+        ; has already been consumed (controlled loss vs infinite retry loop).
         chunk := ""
         for _, line in this._buffer
             chunk .= line
@@ -174,9 +176,9 @@ class LogService
         }
         catch as e
         {
-            ; Logger NUNCA pode quebrar a aplicacao.
-            ; Fallback: cuspe em OutputDebug e segue a vida.
-            OutputDebug("LogService falhou: " e.Message " | conteudo: " content)
+            ; Logger must NEVER break the application.
+            ; Fallback: dump to OutputDebug and move on.
+            OutputDebug("LogService failed: " e.Message " | content: " content)
         }
     }
 
@@ -204,11 +206,11 @@ class LogService
     ; ============================================================
     ; _RotateIfTooBig (v17.15 - Bug #32)
     ;
-    ; Verifica tamanho do log no boot. Se passou de MAX_LOG_SIZE,
-    ; renomeia pra .log.old (sobrescreve .old anterior se existir)
-    ; e o proximo FileAppend cria fresh.
+    ; Checks log size on boot. If it has exceeded MAX_LOG_SIZE,
+    ; renames it to .log.old (overwriting any previous .old)
+    ; and the next FileAppend creates a fresh one.
     ;
-    ; Falhas silenciam pra OutputDebug — logger nao pode quebrar app.
+    ; Failures fall back to OutputDebug — logger must not break the app.
     ; ============================================================
     _RotateIfTooBig()
     {
@@ -228,14 +230,14 @@ class LogService
         }
         catch as ex
         {
-            OutputDebug("LogService._RotateIfTooBig falhou: " ex.Message)
+            OutputDebug("LogService._RotateIfTooBig failed: " ex.Message)
         }
     }
 }
 
 ; ------------------------------------------------------------
-; NullLogger — implementacao no-op para testes ou contextos
-; onde logging e indesejavel
+; NullLogger — no-op implementation for tests or contexts
+; where logging is undesirable
 ; ------------------------------------------------------------
 class NullLogger
 {
@@ -243,14 +245,14 @@ class NullLogger
     Info(msg, context := "")  => 0
     Warn(msg, context := "")  => 0
     Error(msg, context := "") => 0
-    Flush() => 0   ; no-op (R7) — simetria com LogService
-    GetWarnCount()  => 0   ; simetria com LogService
+    Flush() => 0   ; no-op (R7) — symmetry with LogService
+    GetWarnCount()  => 0   ; symmetry with LogService
     GetErrorCount() => 0
     ResetCounts()   => 0
 }
 
 ; ------------------------------------------------------------
-; InMemoryLogger — captura linhas em array, ideal para asserts
+; InMemoryLogger — captures lines into an array, ideal for asserts
 ; ------------------------------------------------------------
 class InMemoryLogger
 {
@@ -312,6 +314,6 @@ class InMemoryLogger
         ))
     }
 
-    Flush() => 0   ; no-op (R7) — InMemoryLogger nao tem buffer, mas
-                   ; precisa do metodo pra duck-typing com LogService
+    Flush() => 0   ; no-op (R7) — InMemoryLogger has no buffer, but
+                   ; needs the method to duck-type with LogService
 }

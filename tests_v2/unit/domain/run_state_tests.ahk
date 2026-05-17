@@ -2,11 +2,11 @@
 ; RunState tests
 ; ============================================================
 ;
-; Cobre o value object RunState (runId, startedAt, status, runBaseMs):
-;   - Empty() retorna estado zerado
-;   - FromMap valida status contra os 5 valores aceitos
-;   - FromMap aceita runBaseMs negativo coercendo pra 0
-;   - FromMap aceita data nao-Map retornando Empty (defensive)
+; Covers the RunState value object (runId, startedAt, status, runBaseMs):
+;   - Empty() returns a zeroed state
+;   - FromMap validates status against the 5 accepted values
+;   - FromMap accepts negative runBaseMs by coercing to 0
+;   - FromMap accepts non-Map data by returning Empty (defensive)
 ;   - ToMap/FromMap roundtrip
 ;   - Predicates: IsEmpty, IsRunning, IsPaused, IsCompleted, IsCancelled, IsActive
 
@@ -90,7 +90,7 @@ class RunStateTests extends TestCase
     from_map_ignores_unknown_status()
     {
         s := RunState.FromMap(Map("status", "weird_status"))
-        Assert.Equal("idle", s.status, "Status invalido deve manter default")
+        Assert.Equal("idle", s.status, "Invalid status must keep the default")
     }
 
     from_map_accepts_all_known_statuses()
@@ -113,7 +113,7 @@ class RunStateTests extends TestCase
     {
         s := RunState.FromMap(Map("runId", "20260512_142345"))
         Assert.Equal("20260512_142345", s.runId)
-        Assert.Equal("idle", s.status, "Status nao informado mantem default")
+        Assert.Equal("idle", s.status, "Unspecified status keeps the default")
         Assert.Equal(0, s.runBaseMs)
     }
 
@@ -213,7 +213,7 @@ class RunStateTests extends TestCase
     is_active_false_for_idle_completed_cancelled()
     {
         s := RunState.Empty()
-        Assert.False(s.IsActive(), "idle nao eh ativo")
+        Assert.False(s.IsActive(), "idle is not active")
 
         s.status := "completed"
         Assert.False(s.IsActive())

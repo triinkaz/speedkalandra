@@ -2,15 +2,16 @@
 ; LayoutWidgetBaseTests
 ; ============================================================
 ;
-; LayoutWidgetBase extends WidgetBase com:
-;   - Show() override que aplica scale em cima de _GetFixedSize()
-;     (nao testavel em headless - cria Gui real)
-;   - _OnWheelResize(steps) callback do OverlayInteractionService —
-;     newScale = currentScale + steps*0.1, depois SetScale (clamp + persist)
-;   - _GetFixedSize abstract — subclasse override pra retornar Map(w,h)
-;   - Helpers de construcao de banda Kalandra (privados, requerem Gui real)
+; LayoutWidgetBase extends WidgetBase with:
+;   - Show() override that applies scale on top of _GetFixedSize()
+;     (not testable in headless - creates real Gui)
+;   - _OnWheelResize(steps) callback from OverlayInteractionService —
+;     newScale = currentScale + steps*0.1, then SetScale
+;     (clamp + persist)
+;   - _GetFixedSize abstract — subclass override to return Map(w,h)
+;   - Kalandra band construction helpers (private, require real Gui)
 ;
-; Cobertura aqui: _OnWheelResize + _GetFixedSize abstract.
+; Coverage here: _OnWheelResize + _GetFixedSize abstract.
 
 
 class _LayoutWidgetBaseStub extends LayoutWidgetBase
@@ -18,17 +19,17 @@ class _LayoutWidgetBaseStub extends LayoutWidgetBase
     _GetFixedSize() => Map("w", 500, "h", 96)
     _BuildGui()
     {
-        ; Stub: nao chamado em testes que evitam Show
+        ; Stub: not called in tests that avoid Show
     }
 }
 
 
 class _LayoutWidgetBaseStubNoFixedSize extends LayoutWidgetBase
 {
-    ; NAO override _GetFixedSize — herda do base que throws
+    ; NOT overriding _GetFixedSize — inherits from base, which throws
     _BuildGui()
     {
-        ; vazio
+        ; empty
     }
 }
 
@@ -95,8 +96,9 @@ class LayoutWidgetBaseTests extends TestCase
 
     get_fixed_size_throws_on_base_class()
     {
-        ; Instancia subclasse sem override — ainda nao chama _GetFixedSize
-        ; (so chamado por Show). Mas o metodo direto throws.
+        ; Subclass instance without override — _GetFixedSize is not yet
+        ; called (only called by Show). But calling the method directly
+        ; throws.
         wgNoSize := _LayoutWidgetBaseStubNoFixedSize(
             "no_size", "No Size", this.bus, this.position
         )
@@ -154,7 +156,7 @@ class LayoutWidgetBaseTests extends TestCase
     {
         this.position.scale := 1.0
         this.widget._OnWheelResize("not number")
-        Assert.Equal(1.0, this.position.scale, "Steps invalido: no-op")
+        Assert.Equal(1.0, this.position.scale, "Invalid steps: no-op")
     }
 
     wheel_resize_persists_on_change()
@@ -172,32 +174,32 @@ class LayoutWidgetBaseTests extends TestCase
         this.widget._OnWheelResize(0)
         Assert.Equal(1.0, this.position.scale)
         Assert.Equal(before, this.persistCallCount,
-            "Step 0: scale nao muda, nao persiste")
+            "Step 0: scale doesn't change, doesn't persist")
     }
 
     wheel_resize_rounds_to_avoid_float_drift()
     {
-        ; Sem rounding: 1.0 + 0.1 + 0.1 + 0.1 != 1.3 (float)
+        ; Without rounding: 1.0 + 0.1 + 0.1 + 0.1 != 1.3 (float)
         this.position.scale := 1.0
         this.widget._OnWheelResize(1)
         this.widget._OnWheelResize(1)
         this.widget._OnWheelResize(1)
-        ; Rounding manual em _OnWheelResize: Round(scale * 10) / 10
+        ; Manual rounding in _OnWheelResize: Round(scale * 10) / 10
         Assert.Equal(1.3, this.position.scale,
-            "Rounding evita drift de float (0.1+0.1+0.1 sem fix != 0.3)")
+            "Rounding prevents float drift (0.1+0.1+0.1 without fix != 0.3)")
     }
 
     wheel_resize_uses_default_when_position_scale_invalid()
     {
-        ; Se scale eh 0 ou nao-numero, _OnWheelResize usa 1.0 como base
+        ; If scale is 0 or non-number, _OnWheelResize uses 1.0 as base
         this.position.scale := 0
         this.widget._OnWheelResize(1)
         Assert.Equal(1.1, this.position.scale,
-            "Default 1.0 quando scale invalido")
+            "Default 1.0 when scale invalid")
     }
 
     ; ============================================================
-    ; Heranca de WidgetBase
+    ; WidgetBase inheritance
     ; ============================================================
 
     inherits_set_visible()

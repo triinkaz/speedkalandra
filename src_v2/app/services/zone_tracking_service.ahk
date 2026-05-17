@@ -1,101 +1,105 @@
 ; ============================================================
-; ZoneTrackingService - tempo agregado por zona durante uma run
+; ZoneTrackingService - aggregated time per zone during a run
 ; ============================================================
 ;
-; Substitui o legado TownVisitTracker + paradigma de "tempo por step".
-; Em vez de tracking por step (que nao existe mais sem rota), rastreamos
-; tempo por ZONA fisica. Resultado: Map<zoneName, totalMs>.
+; Replaces the legacy TownVisitTracker + the "time per step" paradigm.
+; Instead of tracking per step (which no longer exists without a
+; route), we track time per PHYSICAL ZONE. Result: Map<zoneName, totalMs>.
 ;
-; SEMANTICA DE "TEMPO":
-;   Tempo so eh acumulado quando ha RUN ATIVA. Antes de RunStarted (ou
-;   apos RunCompleted/Cancelled/Reset), o service pode REGISTRAR qual eh
-;   a zona corrente (pra display nos widgets) mas NAO incrementa
-;   contadores nem inicia _startMs.
+; "TIME" SEMANTICS:
+;   Time is only accumulated when there is an ACTIVE RUN. Before
+;   RunStarted (or after RunCompleted/Cancelled/Reset), the service
+;   may REGISTER which zone is current (for widget display) but
+;   does NOT increment counters or start _startMs.
 ;
-;   Isso evita que o seed do LogMonitor (que republica o ultimo
-;   ZoneChanged do tail do log no boot pra hidratar widgets) faca o
-;   tracker acumular tempo "fantasma" antes de qualquer run comecar.
+;   This prevents the LogMonitor seed (which republishes the last
+;   ZoneChanged from the log tail on boot to hydrate widgets) from
+;   making the tracker accumulate "phantom" time before any run
+;   has started.
 ;
-; FLUXO:
+; FLOW:
 ;   - boot: _runActive=false, _activeZone="", _startMs=0, _totals={}
 ;
-;   - Evt.ZoneChanged chega com nova zona:
-;       1. Se ha zona ativa COM startMs > 0: flush (soma elapsed em _totals)
-;       2. Set _activeZone = nova
-;       3. Se _runActive: _startMs = NowMs() (comeca a contar)
-;          Senao: _startMs = 0 (so registra a zona, sem contar)
-;       4. Publica Evt.ZoneEntered (com metadata do catalog).
+;   - Evt.ZoneChanged arrives with a new zone:
+;       1. If there is an active zone WITH startMs > 0: flush (adds
+;          elapsed to _totals)
+;       2. Set _activeZone = new
+;       3. If _runActive: _startMs = NowMs() (starts counting)
+;          Otherwise: _startMs = 0 (just registers the zone, no counting)
+;       4. Publishes Evt.ZoneEntered (with catalog metadata).
 ;
 ;   - Evt.RunStarted:
-;       1. Zera _totals (run nova comeca do zero)
+;       1. Clears _totals (new run starts from zero)
 ;       2. _runActive = true
-;       3. Se _activeZone != "": _startMs = NowMs() (jogador ja estava
-;          numa zona quando run iniciou, comeca a contar agora)
+;       3. If _activeZone != "": _startMs = NowMs() (player was
+;          already in a zone when the run started, count from now)
 ;
 ;   - Evt.RunReset / Evt.RunCancelled:
-;       Zera tudo (_totals, _activeZone, _startMs); _runActive=false
+;       Clears everything (_totals, _activeZone, _startMs); _runActive=false
 ;
 ;   - Evt.RunCompleted:
-;       Flush ultimo zone (preserva _totals pro plot final); _runActive=false
+;       Flush last zone (preserves _totals for the final plot); _runActive=false
 ;
-; INTERACAO COM TIMER:
-;   - TimerPaused: fecha zona ativa (soma tempo ate o pause). A zona
-;     "logica" continua ativa, mas _startMs zera. Quando timer resume,
-;     _startMs eh redefinido.
-;   - TimerResumed: reabre tracking da zona ativa (_startMs=NowMs).
-;   - TimerStopped: fecha sem somar (run encerrada — tempo orfao).
-;     Mantem _activeZone pro caso de TimerStop ser apenas mecanico
-;     (run ainda nao formalmente cancelada).
+; INTERACTION WITH TIMER:
+;   - TimerPaused: closes the active zone (adds time up to the pause).
+;     The "logical" zone stays active, but _startMs is zeroed. When
+;     the timer resumes, _startMs is redefined.
+;   - TimerResumed: reopens tracking for the active zone (_startMs=NowMs).
+;   - TimerStopped: closes without adding (run ended — orphan time).
+;     Keeps _activeZone in case TimerStop is only mechanical (run not
+;     yet formally cancelled).
 ;
-; CONSULTAS PARA WIDGETS:
-;   GetActiveZone()           => string (zona atualmente sendo tracked)
-;   GetActiveElapsedMs()      => Int (tempo desde entrada na ativa)
-;   GetZoneTotal(zoneName)    => Int (acumulado historico da zona)
-;   GetZoneTotalWithActive(zoneName) => Int (historico + elapsed atual)
-;   GetTotals()               => Map<zoneName, totalMs> (copia defensiva)
-;   GetTotalsForSnapshot()    => Map (copia + soma elapsed da zona ativa)
-;   GetTownTotalsByAct()      => Map<actIndex, totalMs> (filtrado is_town)
-;   GetTotalTownMs()          => Int (soma total de town inc. zona ativa)
-;   GetActTotals()            => Map<actIndex, totalMs> (todas zonas do ato)
-;   GetTotalRunMs()           => Int (sum de tudo)
-;   IsRunActive()             => bool (true entre RunStarted e RunEnded)
+; QUERIES FOR WIDGETS:
+;   GetActiveZone()           => string (zone currently being tracked)
+;   GetActiveElapsedMs()      => Int (time since entry into the active zone)
+;   GetZoneTotal(zoneName)    => Int (zone's historical accumulated)
+;   GetZoneTotalWithActive(zoneName) => Int (history + current elapsed)
+;   GetTotals()               => Map<zoneName, totalMs> (defensive copy)
+;   GetTotalsForSnapshot()    => Map (copy + adds active zone elapsed)
+;   GetTownTotalsByAct()      => Map<actIndex, totalMs> (is_town filtered)
+;   GetTotalTownMs()          => Int (total town sum incl. active zone)
+;   GetActTotals()            => Map<actIndex, totalMs> (all act zones)
+;   GetTotalRunMs()           => Int (sum of everything)
+;   IsRunActive()             => bool (true between RunStarted and RunEnded)
 ;
-; PERSISTENCIA:
-;   _totals eh persistido pelo composition root via RunStateRepository
-;   (section [RunZoneTotals] no INI). Salvo a cada ~5s e no shutdown.
-;   No boot, o composition root chama Hydrate(runState.LoadZoneTotals())
-;   pra restaurar tempo da run em andamento entre sessoes/crashes.
+; PERSISTENCE:
+;   _totals is persisted by the composition root via
+;   RunStateRepository ([RunZoneTotals] INI section). Saved every ~5s
+;   and on shutdown. On boot, the composition root calls
+;   Hydrate(runState.LoadZoneTotals()) to restore the time of the
+;   ongoing run across sessions/crashes.
 ;
-;   Pra capturar o tempo em curso da zona ativa (que ainda nao foi
-;   flushed), use GetTotalsForSnapshot() em vez de GetTotals().
+;   To capture the current ongoing time of the active zone (not yet
+;   flushed), use GetTotalsForSnapshot() instead of GetTotals().
 ;
-; CONSTRUCAO:
+; CONSTRUCTION:
 ;   svc := ZoneTrackingService(bus, clock, catalog)
 ;
-; NOTA SOBRE NOME DO PARAMETRO:
-;   AHK v2 faz lookup case-insensitive de variaveis. Se nomeassemos
-;   o param `zonesCatalog`, ele colidiria case-insensitive com a classe
-;   `ZonesCatalog` no operando direito de `is`, e a checagem viraria
-;   "instancia is instancia" (falha com "Expected a Class but got a
-;   ZonesCatalog"). Por isso `catalog` — case-insensitive-distinto.
+; NOTE ON PARAMETER NAME:
+;   AHK v2 does case-insensitive variable lookup. If we named the
+;   param `zonesCatalog`, it would collide case-insensitively with
+;   the `ZonesCatalog` class on the right side of `is`, and the
+;   check would become "instance is instance" (fails with "Expected
+;   a Class but got a ZonesCatalog"). Hence `catalog` —
+;   case-insensitive-distinct.
 
 
 class ZoneTrackingService
 {
     _bus     := ""
     _clock   := ""
-    _catalog := ""    ; ZonesCatalog (pode ser "" se nao houver)
+    _catalog := ""    ; ZonesCatalog (may be "" if none)
 
     _activeZone := ""
     _startMs    := 0
     _totals     := ""    ; Map<zoneName, totalMs>
     _runActive  := false
     _timerPaused := false   ; v0.1.1 (Bug Lechtansi): tracks timer pause state
-                            ; pra ZoneChanged respeitar. Sem isso, ZoneChanged
-                            ; que dispara durante pausa (ex: [SCENE] emitido
-                            ; pelo game enquanto alt-tabbed) reiniciava _startMs
-                            ; e o zone timer continuava "ticking" mesmo com
-                            ; overall pausado.
+                            ; so ZoneChanged respects it. Without this, a
+                            ; ZoneChanged that fires during a pause (e.g. [SCENE]
+                            ; emitted by the game while alt-tabbed) would restart
+                            ; _startMs and the zone timer would keep "ticking"
+                            ; even with the overall paused.
 
     _handlerZoneChanged   := ""
     _handlerTimerPaused   := ""
@@ -109,12 +113,12 @@ class ZoneTrackingService
     __New(bus, clock, catalog := "")
     {
         if !(bus is EventBus)
-            throw TypeError("ZoneTrackingService: 'bus' deve ser EventBus")
+            throw TypeError("ZoneTrackingService: 'bus' must be EventBus")
         if !IsObject(clock) || !clock.HasMethod("NowMs")
-            throw TypeError("ZoneTrackingService: 'clock' deve implementar NowMs()")
-        ; catalog eh opcional (pra testes / boot sem CSV).
+            throw TypeError("ZoneTrackingService: 'clock' must implement NowMs()")
+        ; catalog is optional (for tests / boot without CSV).
         if (catalog != "" && !(catalog is ZonesCatalog))
-            throw TypeError("ZoneTrackingService: 'catalog' deve ser ZonesCatalog ou vazio")
+            throw TypeError("ZoneTrackingService: 'catalog' must be ZonesCatalog or empty")
 
         this._bus     := bus
         this._clock   := clock
@@ -185,21 +189,22 @@ class ZoneTrackingService
     }
 
     ; ============================================================
-    ; Hydrate - restaura state vindo do disco (crash recovery)
+    ; Hydrate - restores state from disk (crash recovery)
     ;
-    ; Chamado pelo composition root no boot, ANTES de RunStarted ser
-    ; (re)publicado. Se houver run em andamento no disco, o RunService
-    ; tambem foi hidratado e _runActive sera setado quando RunStarted
-    ; disparar — ou marcado manualmente via SetRunActive(true).
+    ; Called by the composition root on boot, BEFORE RunStarted is
+    ; (re)published. If there is an ongoing run on disk, RunService
+    ; was also hydrated and _runActive will be set when RunStarted
+    ; fires — or manually marked via SetRunActive(true).
     ;
-    ; Importante: NAO ativa cronometragem da zona ativa atual aqui (sem
-    ; ZoneChanged conhecida, _activeZone fica vazio). O LogMonitor seed
-    ; reemite o ultimo ZoneChanged no boot pra repopular esse state.
+    ; Important: this does NOT activate timing for the current active
+    ; zone here (without a known ZoneChanged, _activeZone stays empty).
+    ; The LogMonitor seed re-emits the last ZoneChanged on boot to
+    ; repopulate that state.
     ; ============================================================
     Hydrate(zoneTotalsMap)
     {
         if !(zoneTotalsMap is Map)
-            throw TypeError("ZoneTrackingService.Hydrate: 'zoneTotalsMap' deve ser Map")
+            throw TypeError("ZoneTrackingService.Hydrate: 'zoneTotalsMap' must be Map")
         clean := Map()
         for k, v in zoneTotalsMap
             clean[k] := v
@@ -209,23 +214,24 @@ class ZoneTrackingService
     }
 
     ; ============================================================
-    ; SetRunActive - manualmente seta _runActive
+    ; SetRunActive - manually sets _runActive
     ;
-    ; Usado pelo composition root no boot quando o RunService foi
-    ; hidratado com run em andamento (status=running) e o evento
-    ; RunStarted NAO sera re-publicado. Sem isso, o service ficaria
-    ; "preso" em _runActive=false ate proximo RunStarted manual.
+    ; Used by the composition root on boot when RunService was
+    ; hydrated with a run in progress (status=running) and the
+    ; RunStarted event will NOT be re-published. Without this, the
+    ; service would stay "stuck" in _runActive=false until the next
+    ; manual RunStarted.
     ; ============================================================
     SetRunActive(active)
     {
         this._runActive := !!active
-        ; Se ativando e ja ha zona conhecida, comeca cronometro
+        ; If enabling and there's a known zone, start the clock
         if (this._runActive && this._activeZone != "" && this._startMs = 0)
             this._startMs := this._clock.NowMs()
     }
 
     ; ============================================================
-    ; Queries publicas
+    ; Public queries
     ; ============================================================
 
     GetActiveZone()    => this._activeZone
@@ -245,9 +251,9 @@ class ZoneTrackingService
         return this._totals.Has(zoneName) ? this._totals[zoneName] : 0
     }
 
-    ; Total atual da zona ativa = historico acumulado + elapsed em curso.
-    ; Util pra widgets exibirem o "tempo na zona atual" mesmo se voltou
-    ; depois de ter saido.
+    ; Current total of the active zone = accumulated history + ongoing elapsed.
+    ; Useful for widgets to display the "time on the current zone" even if
+    ; the player returned after leaving.
     GetZoneTotalWithActive(zoneName)
     {
         base := this.GetZoneTotal(zoneName)
@@ -265,14 +271,14 @@ class ZoneTrackingService
     }
 
     ; ============================================================
-    ; GetTotalsForSnapshot - copia de _totals + elapsed da zona ATIVA
+    ; GetTotalsForSnapshot - copy of _totals + elapsed from the ACTIVE zone
     ;
-    ; Diferente de GetTotals(), esta inclui o tempo em curso da zona
-    ; ativa (que ainda nao foi flushed em _totals). Usado pelo
-    ; composition root pra persistir a cada ~5s no disco — garante
-    ; que mesmo o tempo "em andamento" eh preservado.
+    ; Unlike GetTotals(), this includes the active zone's ongoing
+    ; time (which has not yet been flushed into _totals). Used by
+    ; the composition root to persist every ~5s to disk — guarantees
+    ; that even "ongoing" time is preserved.
     ;
-    ; Nao modifica state interno (nao faz flush, nao reseta _startMs).
+    ; Does not modify internal state (no flush, no _startMs reset).
     ; ============================================================
     GetTotalsForSnapshot()
     {
@@ -291,8 +297,8 @@ class ZoneTrackingService
         return out
     }
 
-    ; Totais agregados por ato (consulta ZonesCatalog pra mapear).
-    ; Inclui apenas zonas conhecidas (lookup via FindByName).
+    ; Aggregated totals by act (queries ZonesCatalog to map them).
+    ; Includes only known zones (lookup via FindByName).
     GetActTotals()
     {
         out := Map()
@@ -310,8 +316,8 @@ class ZoneTrackingService
         return out
     }
 
-    ; Totais de TOWN apenas, agregados por ato. Substitui o
-    ; GetTownTotals() do legado TownVisitTracker.
+    ; TOWN-only totals, aggregated by act. Replaces the legacy
+    ; TownVisitTracker.GetTownTotals().
     GetTownTotalsByAct()
     {
         out := Map()
@@ -330,16 +336,16 @@ class ZoneTrackingService
     }
 
     ; ============================================================
-    ; GetTotalTownMs - soma todo tempo gasto em zonas town na run.
+    ; GetTotalTownMs - sum of all time spent in town zones in the run.
     ;
-    ; Inclui zonas town FECHADAS (em _totals) + elapsed da zona ATIVA
-    ; se ela for town. Equivalente ao GetTotalRunTownMs() do legado
-    ; TownVisitTracker.
+    ; Includes CLOSED town zones (in _totals) + elapsed of the ACTIVE
+    ; zone if it is a town. Equivalent to legacy
+    ; TownVisitTracker.GetTotalRunTownMs().
     ;
-    ; Usado pelo CompactLayoutWidget pra renderizar a stacked bar
-    ; (Mapa / Loading / Cidade) em tempo real durante a run.
+    ; Used by CompactLayoutWidget to render the stacked bar (Map /
+    ; Loading / Town) in real time during the run.
     ;
-    ; Retorna 0 se nao houver catalog (sem como classificar town).
+    ; Returns 0 if there is no catalog (no way to classify town).
     ; ============================================================
     GetTotalTownMs()
     {
@@ -354,8 +360,8 @@ class ZoneTrackingService
                 total += ms
         }
 
-        ; Adiciona elapsed da zona ATIVA se for town (ainda nao foi
-        ; flushed em _totals — tempo "em curso").
+        ; Add ACTIVE zone elapsed if it is town (not yet flushed into
+        ; _totals — "ongoing" time).
         if this.IsActive()
         {
             entry := this._catalog.FindByName(this._activeZone)
@@ -377,10 +383,10 @@ class ZoneTrackingService
     }
 
     ; ============================================================
-    ; Reset - zera state interno (totals + zona ativa + flags)
-    ;   Publica nada. Util externamente em testes; internamente os
-    ;   handlers de Run lifecycle controlam os flags com semantica
-    ;   especifica (ver _OnRunStarted / _OnRunEnded).
+    ; Reset - clears internal state (totals + active zone + flags)
+    ;   Publishes nothing. Useful externally in tests; internally the
+    ;   Run lifecycle handlers control the flags with specific
+    ;   semantics (see _OnRunStarted / _OnRunEnded).
     ; ============================================================
 
     Reset()
@@ -393,7 +399,7 @@ class ZoneTrackingService
     }
 
     ; ============================================================
-    ; Handlers privados
+    ; Private handlers
     ; ============================================================
 
     _OnZoneChanged(data)
@@ -404,25 +410,25 @@ class ZoneTrackingService
         if (newZone = "")
             return
 
-        ; Fecha zona anterior (se estava sendo cronometrada) somando elapsed.
-        ; _FlushActive eh no-op quando _startMs=0 (zona registrada sem cronometro).
+        ; Closes the previous zone (if it was being timed) by adding the elapsed.
+        ; _FlushActive is a no-op when _startMs=0 (zone registered without clock).
         this._FlushActive()
 
-        ; Abre nova
+        ; Opens new
         this._activeZone := newZone
-        ; Conta tempo somente se run ativa E timer NAO esta pausado.
-        ; Caso contrario, mantem a zona registrada (pra display) com
-        ; cronometro parado.
+        ; Counts time only if the run is active AND the timer is NOT paused.
+        ; Otherwise, keeps the zone registered (for display) with the
+        ; clock stopped.
         ;
-        ; v0.1.1 (Bug Lechtansi): adicionada checagem de !_timerPaused.
-        ; Antes considerava so _runActive — ZoneChanged durante pausa
-        ; reiniciava _startMs e o zone timer continuava tickando enquanto
-        ; o overall estava pausado. Caso comum: PoE2 emite [SCENE] events
-        ; durante alt-tab (loading screens em background, portal animations,
-        ; etc) que viram ZoneChanged via _ProcessLine do LogMonitor.
+        ; v0.1.1 (Bug Lechtansi): added the !_timerPaused check. Before
+        ; it only considered _runActive — ZoneChanged during a pause
+        ; restarted _startMs and the zone timer kept ticking while the
+        ; overall was paused. Common case: PoE2 emits [SCENE] events
+        ; during alt-tab (background loading screens, portal animations,
+        ; etc.) that become ZoneChanged via LogMonitor's _ProcessLine.
         this._startMs := (this._runActive && !this._timerPaused) ? this._clock.NowMs() : 0
 
-        ; Publica evento enriquecido com metadata do catalog
+        ; Publishes the event enriched with catalog metadata
         actIdx := 0
         isTown := false
         if IsObject(this._catalog)
@@ -445,48 +451,50 @@ class ZoneTrackingService
 
     _OnTimerPaused(data)
     {
-        ; v0.1.1: seta flag ANTES de _FlushActive pra que ZoneChanged
-        ; que dispare imediatamente apos (race entre log lines) nao
-        ; reinicie _startMs.
+        ; v0.1.1: sets the flag BEFORE _FlushActive so that a
+        ; ZoneChanged firing immediately after (race between log
+        ; lines) does not restart _startMs.
         this._timerPaused := true
-        ; Fecha zona ativa (acumula tempo ate o pause). Apos resume,
-        ; a zona ativa atual eh "reaberta" no _OnTimerResumed.
-        ; Param true = keepActive (preserva _activeZone, so zera _startMs).
+        ; Closes the active zone (accumulates time up to the pause).
+        ; After resume, the current active zone is "reopened" in
+        ; _OnTimerResumed.
+        ; Param true = keepActive (preserves _activeZone, only zeroes _startMs).
         this._FlushActive(true)
     }
 
     _OnTimerResumed(data)
     {
-        ; v0.1.1: limpa flag ANTES de setar _startMs.
+        ; v0.1.1: clears the flag BEFORE setting _startMs.
         this._timerPaused := false
-        ; Reseta startMs da zona atual (se houver) pra contar de
-        ; agora em diante. Tempo durante o pause nao foi contado.
+        ; Resets startMs of the current zone (if any) to count from
+        ; now on. Time during the pause was not counted.
         if (this._activeZone != "" && this._runActive)
             this._startMs := this._clock.NowMs()
     }
 
     _OnTimerStopped(data)
     {
-        ; v17.15 (Bug #1): faz FLUSH antes de zerar _startMs.
+        ; v17.15 (Bug #1): FLUSH before zeroing _startMs.
         ;
-        ; Antes: _startMs := 0 sem flush. Resultado: FinalizeRun ->
-        ; timer.Stop -> TimerStopped (zera _startMs) -> RunCompleted
-        ; -> _OnRunCompleted chamava _FlushActive() mas ja era no-op
-        ; (_startMs=0). O tempo da zona desde o ultimo ZoneChanged
-        ; era perdido em TODAS as runs finalizadas.
+        ; Before: _startMs := 0 with no flush. Result: FinalizeRun ->
+        ; timer.Stop -> TimerStopped (zeroes _startMs) -> RunCompleted
+        ; -> _OnRunCompleted called _FlushActive() but it was already
+        ; a no-op (_startMs=0). The zone time since the last
+        ; ZoneChanged was lost in EVERY finalized run.
         ;
-        ; Agora: _FlushActive(true) commita o elapsed em _totals antes
-        ; de zerar _startMs. keepActive=true preserva _activeZone
-        ; (jogador continua na zona; futura RunStarted reabrira tracking).
-        this._timerPaused := false   ; v0.1.1: run encerrou, nao mais pausada
+        ; Now: _FlushActive(true) commits the elapsed into _totals
+        ; before zeroing _startMs. keepActive=true preserves
+        ; _activeZone (player is still in the zone; the future
+        ; RunStarted will reopen tracking).
+        this._timerPaused := false   ; v0.1.1: run ended, no longer paused
         this._FlushActive(true)
     }
 
     _OnRunStarted(data)
     {
-        ; Nova run: zera totals, marca runActive.
-        ; Se ja ha zona registrada (do seed ou ZoneChanged anterior),
-        ; comeca a contar a partir de agora.
+        ; New run: clear totals, mark runActive.
+        ; If there is already a registered zone (from the seed or a
+        ; previous ZoneChanged), start counting from now.
         this._totals := Map()
         this._runActive := true
         this._timerPaused := false   ; v0.1.1: fresh start
@@ -496,40 +504,41 @@ class ZoneTrackingService
 
     _OnRunEnded(data)
     {
-        ; RunReset / RunCancelled: zera tudo (state limpo, _runActive=false).
-        ; _activeZone limpo tambem pra que proxima RunStarted exija
-        ; uma nova ZoneChanged (ou exigir entrada do jogador num novo
-        ; mapa) antes de contar tempo. Comportamento pratico: ao cancelar
-        ; uma run, o tracker fica em estado completamente idle.
+        ; RunReset / RunCancelled: clear everything (clean state,
+        ; _runActive=false). _activeZone is also cleared so the next
+        ; RunStarted requires a new ZoneChanged (or the player entering
+        ; a new map) before counting time. Practical behavior: when a
+        ; run is cancelled, the tracker becomes fully idle.
         this._totals := Map()
         this._activeZone := ""
         this._startMs := 0
         this._runActive := false
-        this._timerPaused := false   ; v0.1.1: run encerrou
+        this._timerPaused := false   ; v0.1.1: run ended
     }
 
     _OnRunCompleted(data)
     {
-        ; Antes de zerar, fecha a zona ativa pra capturar tempo final.
-        ; Composition root deve usar GetTotals() entre Evt.RunCompleted
-        ; e o Reset que ocorre logo apos.
+        ; Before zeroing, closes the active zone to capture the final
+        ; time. The composition root should use GetTotals() between
+        ; Evt.RunCompleted and the Reset that happens shortly after.
         this._FlushActive()
         this._runActive := false
-        this._timerPaused := false   ; v0.1.1: run encerrou
-        ; Nao zera _totals — outros subscribers (RunStatsPlotDialog)
-        ; consultam GetTotals() durante o ciclo de RunCompleted pra
-        ; montar o plot final. Proxima RunStarted limpa via _OnRunStarted.
+        this._timerPaused := false   ; v0.1.1: run ended
+        ; Does not zero _totals — other subscribers (RunStatsPlotDialog)
+        ; query GetTotals() during the RunCompleted cycle to build the
+        ; final plot. The next RunStarted clears it via _OnRunStarted.
     }
 
     ; ============================================================
-    ; _FlushActive — fecha a zona ativa, acumula elapsed em _totals.
+    ; _FlushActive — closes the active zone, accumulates elapsed into _totals.
     ;
-    ;   No-op se _startMs=0 (zona "registrada mas nao cronometrada",
-    ;   ex: estado pre-run).
+    ;   No-op if _startMs=0 (zone "registered but not timed", e.g.
+    ;   pre-run state).
     ;
-    ;   keepActive=true: nao reseta _activeZone (so zera _startMs).
-    ;     Usado em TimerPaused — a zona "logica" continua ativa, mas
-    ;     o timer parou. Quando timer resume, _startMs eh redefinido.
+    ;   keepActive=true: does not reset _activeZone (only zeroes
+    ;     _startMs). Used in TimerPaused — the "logical" zone stays
+    ;     active, but the timer stopped. When the timer resumes,
+    ;     _startMs is redefined.
     ; ============================================================
     _FlushActive(keepActive := false)
     {

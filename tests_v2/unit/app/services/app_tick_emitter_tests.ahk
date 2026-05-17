@@ -2,21 +2,22 @@
 ; AppTickEmitterTests
 ; ============================================================
 ;
-; AppTickEmitter é deliberadamente simples:
-;   - bus + intervalMs no construtor
-;   - Start/Stop usam SetTimer real (OS hook)
-;   - Pulse() é test-friendly: publica Events.Tick UMA vez sem
-;     usar SetTimer. Usamos Pulse() pra verificar comportamento
-;     de pulse sem timing real.
+; AppTickEmitter is deliberately simple:
+;   - bus + intervalMs in the constructor
+;   - Start/Stop use a real SetTimer (OS hook)
+;   - Pulse() is test-friendly: publishes Events.Tick ONCE without
+;     using SetTimer. We use Pulse() to verify pulse behavior
+;     without real timing.
 ;
-; Cobertura:
-;   - Construtor: validações (bus tipo, intervalMs > 0, integer)
+; Coverage:
+;   - Constructor: validations (bus type, intervalMs > 0, integer)
 ;   - Queries: GetIntervalMs / IsRunning / default interval
-;   - Pulse: publica Events.Tick, idempotência, não afeta state
-;   - Start/Stop: state changes + idempotência
+;   - Pulse: publishes Events.Tick, idempotence, doesn't affect state
+;   - Start/Stop: state changes + idempotence
 ;
-; NOTA: NÃO testamos SetTimer real. O teste seria flaky e lento.
-; Idempotência é verificada via state field, não via emission count.
+; NOTE: we do NOT test the real SetTimer. The test would be flaky
+; and slow. Idempotence is verified via state field, not via emission
+; count.
 
 
 class AppTickEmitterTests extends TestCase
@@ -34,7 +35,7 @@ class AppTickEmitterTests extends TestCase
     }
 
     static Tests := [
-        ; --- Construtor ---
+        ; --- Constructor ---
         "constructor_throws_when_bus_not_event_bus",
         "constructor_throws_on_zero_interval",
         "constructor_throws_on_negative_interval",
@@ -61,7 +62,7 @@ class AppTickEmitterTests extends TestCase
     ]
 
     ; ============================================================
-    ; Construtor
+    ; Constructor
     ; ============================================================
 
     constructor_throws_when_bus_not_event_bus()
@@ -134,7 +135,7 @@ class AppTickEmitterTests extends TestCase
         this.bus.Subscribe(Events.Tick, (data) => out.Push(data))
         emitter := AppTickEmitter(this.bus, 300)
         emitter.Pulse()
-        ; EventBus.Publish sem data passa "" como default (vide Wave 1)
+        ; EventBus.Publish without data passes "" as the default (see Wave 1)
         Assert.Equal([""], out)
     }
 
@@ -154,7 +155,7 @@ class AppTickEmitterTests extends TestCase
         emitter := AppTickEmitter(this.bus, 300)
         emitter.Pulse()
         Assert.False(emitter.IsRunning(),
-            "Pulse manual nao deve marcar emitter como rodando")
+            "Manual Pulse must not mark emitter as running")
     }
 
     ; ============================================================
@@ -168,7 +169,7 @@ class AppTickEmitterTests extends TestCase
         try
             Assert.True(emitter.IsRunning())
         finally
-            emitter.Stop()    ; cleanup SetTimer real
+            emitter.Stop()    ; cleanup real SetTimer
     }
 
     stop_sets_is_running_false()
@@ -185,7 +186,7 @@ class AppTickEmitterTests extends TestCase
         emitter.Start()
         try
         {
-            ; Segundo Start nao deve quebrar nem mudar state
+            ; Second Start must not break nor change state
             emitter.Start()
             Assert.True(emitter.IsRunning())
         }
@@ -196,7 +197,7 @@ class AppTickEmitterTests extends TestCase
     stop_is_idempotent_when_already_stopped()
     {
         emitter := AppTickEmitter(this.bus, 300)
-        ; Stop em estado parado: no-op
+        ; Stop in stopped state: no-op
         emitter.Stop()
         Assert.False(emitter.IsRunning())
     }

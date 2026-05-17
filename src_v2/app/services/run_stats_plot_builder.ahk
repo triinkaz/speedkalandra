@@ -1,15 +1,15 @@
 ; ============================================================
-; RunStatsPlotBuilder - agrega snapshot de run em Map renderizavel
+; RunStatsPlotBuilder - aggregates a run snapshot into a renderable Map
 ; ============================================================
 ;
-; VERSAO POS-DEMOLICAO (Onda 5):
-;   - Sem RunRepository / LoadingRepository (sem persistencia historica).
-;   - Recebe dados via Map snapshot e os agrega em totals + details.
-;   - Categorias zerada-up: mapa / cidade / loading / morte.
-;   - Sem transitionMs (era step-based, removido).
-;   - Categoria boss REMOVIDA em v17.13 (boss tracking saiu da app).
+; POST-DEMOLITION VERSION (Wave 5):
+;   - No RunRepository / LoadingRepository (no historical persistence).
+;   - Receives data via Map snapshot and aggregates it into totals + details.
+;   - Zeroed-up categories: mapa / cidade / loading / morte.
+;   - No transitionMs (was step-based, removed).
+;   - boss category REMOVED in v17.13 (boss tracking left the app).
 ;
-; FONTE DE DADOS (snapshot):
+; DATA SOURCE (snapshot):
 ;   Map(
 ;     "runId":         "20260512_1423",
 ;     "profile":       "Default",
@@ -21,10 +21,10 @@
 ;     "deathCount":    int
 ;   )
 ;
-; CATEGORIAS:
-;   mapa     - tempo agregado de zonas com isTown=false
-;   cidade   - tempo agregado de zonas com isTown=true
-;   loading  - soma de durationMs de todos os loadingEvents
+; CATEGORIES:
+;   mapa     - aggregated time of zones with isTown=false
+;   cidade   - aggregated time of zones with isTown=true
+;   loading  - sum of durationMs across all loadingEvents
 ;   morte    - deathCount * deathPenaltyMs (cfg)
 ;
 ; OUTPUT (Map):
@@ -36,24 +36,24 @@
 ;   details       (Array<Map>)    {category, categoryLabel, label, ms, note, timestamp}
 ;   deathCount    (int)
 ;   totalMs       (int)
-;   maxActReached (int)            ; v17.13 — maior numero de ato visitado na run
-;                                  ; (derivado dos `note` dos details). Usado pelo
-;                                  ; filtro "Min Ato" no plot dialog.
+;   maxActReached (int)            ; v17.13 — highest act number visited in the run
+;                                  ; (derived from the `note` of details). Used by
+;                                  ; the "Min Act" filter in the plot dialog.
 ;
-; CONSTRUCAO:
+; CONSTRUCTION:
 ;   builder := RunStatsPlotBuilder(catalog, cfg)
 ;   data := builder.Build(snapshot)
 ;
-; NOTA SOBRE NOME DO PARAMETRO:
-;   AHK v2 faz lookup case-insensitive de variaveis. Param `zonesCatalog`
-;   colidiria com a classe `ZonesCatalog` no operando direito de `is`
-;   (falha com "Expected a Class but got a ZonesCatalog"). Por isso
-;   `catalog` — case-insensitive-distinto.
+; NOTE ON PARAMETER NAME:
+;   AHK v2 does case-insensitive variable lookup. Param `zonesCatalog`
+;   would collide with the `ZonesCatalog` class on the right side of
+;   `is` (fails with "Expected a Class but got a ZonesCatalog"). Hence
+;   `catalog` — case-insensitive-distinct.
 
 
 class RunStatsPlotBuilder
 {
-    _zonesCatalog := ""    ; ZonesCatalog ou ""
+    _zonesCatalog := ""    ; ZonesCatalog or ""
     _settings     := ""    ; AppSettings
 
     static SEGMENT_KEYS := ["mapa", "cidade", "loading", "morte"]
@@ -61,15 +61,15 @@ class RunStatsPlotBuilder
     __New(catalog, cfg)
     {
         if (catalog != "" && !(catalog is ZonesCatalog))
-            throw TypeError("RunStatsPlotBuilder: 'catalog' deve ser ZonesCatalog ou vazio")
+            throw TypeError("RunStatsPlotBuilder: 'catalog' must be ZonesCatalog or empty")
         if !(cfg is AppSettings)
-            throw TypeError("RunStatsPlotBuilder: 'cfg' deve ser AppSettings")
+            throw TypeError("RunStatsPlotBuilder: 'cfg' must be AppSettings")
         this._zonesCatalog := catalog
         this._settings     := cfg
     }
 
     ; ============================================================
-    ; Definicoes de categoria (paridade visual com legado)
+    ; Category definitions (visual parity with legacy)
     ; ============================================================
     static SegmentDefinitions()
     {
@@ -115,11 +115,12 @@ class RunStatsPlotBuilder
         return data
     }
 
-    ; Deriva ato MAX alcancado dos details. Itera notes procurando
-    ; pattern "Ato N" ou "Act N" (compat com runs salvas em v17.13 ou
-    ; anteriores que usavam "Ato") e retorna o maior N. 0 se nao achar.
+    ; Derives the MAX act reached from the details. Iterates notes
+    ; looking for "Ato N" or "Act N" patterns (compat with runs saved
+    ; in v17.13 or earlier which used "Ato") and returns the highest
+    ; N. 0 if not found.
     ;
-    ; v17.13: usado pelo dialog pra filtrar runs comparaveis no chart.
+    ; v17.13: used by the dialog to filter comparable runs in the chart.
     static _DeriveMaxAct(details)
     {
         if !IsObject(details)
@@ -148,16 +149,16 @@ class RunStatsPlotBuilder
         for _, key in RunStatsPlotBuilder.SEGMENT_KEYS
             totals[key] := 0
 
-        ; v0.1.0: `runId` local colide case-insensitively com classe `RunId`
-        ; (#Warn LocalSameAsGlobal). Mesma resolucao adotada em outros lugares
-        ; do projeto: usar `currentRunId`.
+        ; v0.1.0: local `runId` collides case-insensitively with the `RunId`
+        ; class (#Warn LocalSameAsGlobal). Same resolution adopted elsewhere
+        ; in the project: use `currentRunId`.
         currentRunId := IsObject(snapshot) && snapshot.Has("runId")      ? snapshot["runId"]      : ""
         profile      := IsObject(snapshot) && snapshot.Has("profile")    ? snapshot["profile"]    : ""
         patch        := IsObject(snapshot) && snapshot.Has("patch")      ? snapshot["patch"]      : ""
         firstTs      := IsObject(snapshot) && snapshot.Has("firstTs")    ? snapshot["firstTs"]    : ""
         deathCount   := IsObject(snapshot) && snapshot.Has("deathCount") ? snapshot["deathCount"] : 0
 
-        ; Defaults dos settings se nao vieram no snapshot
+        ; Setting defaults if not provided in the snapshot
         if (profile = "")
             profile := this._settings.profileName
         if (patch = "")
@@ -177,7 +178,7 @@ class RunStatsPlotBuilder
     }
 
     ; ============================================================
-    ; _AddZoneDetails - itera zoneTotals; categoriza por isTown
+    ; _AddZoneDetails - iterates zoneTotals; categorizes by isTown
     ; ============================================================
     _AddZoneDetails(data, snapshot)
     {
@@ -187,7 +188,7 @@ class RunStatsPlotBuilder
         {
             if (ms <= 0)
                 continue
-            ; Categoriza via ZonesCatalog (fallback: trata como mapa)
+            ; Categorize via ZonesCatalog (fallback: treat as mapa)
             category := "mapa"
             act := 0
             if IsObject(this._zonesCatalog)
@@ -205,7 +206,7 @@ class RunStatsPlotBuilder
     }
 
     ; ============================================================
-    ; _AddLoadingDetails - itera loadingEvents
+    ; _AddLoadingDetails - iterates loadingEvents
     ; ============================================================
     _AddLoadingDetails(data, snapshot)
     {
@@ -235,10 +236,10 @@ class RunStatsPlotBuilder
     }
 
     ; ============================================================
-    ; _AddDeathDetails - usa snapshot.deathCount * cfg.deathPenaltyMs
+    ; _AddDeathDetails - uses snapshot.deathCount * cfg.deathPenaltyMs
     ;
-    ; v17.15.1: respeita cfg.deathPenaltyEnabled. Se desabilitado,
-    ; mortes aparecem em deathCount mas nao adicionam barra no plot.
+    ; v17.15.1: respects cfg.deathPenaltyEnabled. If disabled, deaths
+    ; appear in deathCount but do not add a bar to the plot.
     ; ============================================================
     _AddDeathDetails(data, snapshot)
     {
@@ -248,9 +249,9 @@ class RunStatsPlotBuilder
         if !this._settings.deathPenaltyEnabled
             return
         penalty := this._settings.deathPenaltyMs
-        ; Soma como uma entrada agregada -- detalhes por morte ficam fora
-        ; do plot simplificado. Composition root pode adicionar mais detalhe
-        ; se passar deathEvents no snapshot futuramente.
+        ; Sum as a single aggregated entry -- per-death details stay out
+        ; of the simplified plot. The composition root can add more
+        ; detail by passing deathEvents in the snapshot in the future.
         this._AddDetail(data, "morte", count " deaths",
             count * penalty, "Penalty " RunStatsPlotBuilder._FormatMs(penalty) " each", "")
     }
@@ -307,8 +308,8 @@ class RunStatsPlotBuilder
 
     static FormatMs(ms) => Duration.FormatMs(ms)
 
-    ; v0.1.2 (auditoria #19): _FormatMs consolidado em Duration.FormatMs.
-    ; Mantido como alias static interno pra retrocompat dos call sites
-    ; deste arquivo (incluindo _AddDeathDetails que passa penalty).
+    ; v0.1.2 (audit #19): _FormatMs consolidated into Duration.FormatMs.
+    ; Kept as an internal static alias for back-compat with this file's
+    ; call sites (including _AddDeathDetails which passes the penalty).
     static _FormatMs(ms) => Duration.FormatMs(ms)
 }

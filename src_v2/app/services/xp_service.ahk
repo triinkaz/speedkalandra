@@ -1,33 +1,33 @@
 ﻿; ============================================================
-; XpService — estado de XP do personagem e da area atual
+; XpService — character XP state and current area
 ; ============================================================
 ;
-; Responsabilidade: manter em memoria
+; Responsibility: keep in memory
 ;   - characterName, characterClass, characterLevel
 ;   - currentAreaLevel, currentAreaCode
 ;
-; e expor calculos derivados (delegando pra XpRules da Fase 2):
+; and expose derived calculations (delegating to Phase 2's XpRules):
 ;   - GetXpPenaltyInfo()
 ;   - GetSafeRange()
 ;
-; FILOSOFIA:
-; Service de ESTADO PURO. Sem dependencia de bus, clock, repos.
-; Setters atualizam state. Getters retornam state. Calculos delegam
-; para XpRules (puramente funcional).
+; PHILOSOPHY:
+; PURE STATE service. No dependency on bus, clock, repos. Setters
+; update state. Getters return state. Calculations delegate to
+; XpRules (purely functional).
 ;
-; NAO publica eventos. Nao assina eventos. O App composition root
-; (Fase 5) ligara `Evt.CharacterLevelUp` (do log monitor) ao
-; `xpService.SetCharacter(...)`, e `Evt.AreaLevelChanged` ao
-; `xpService.SetCurrentArea(...)`.
+; Does NOT publish events. Does not subscribe to events. The App
+; composition root (Phase 5) will wire `Evt.CharacterLevelUp` (from
+; the log monitor) to `xpService.SetCharacter(...)`, and
+; `Evt.AreaLevelChanged` to `xpService.SetCurrentArea(...)`.
 ;
-; SEMANTICA:
-; - characterLevel persiste entre runs (voce nao vira level 1 num NewRun)
-; - currentAreaLevel eh da run em curso (resetado quando muda de zona)
+; SEMANTICS:
+; - characterLevel persists across runs (you don't go to level 1 on a NewRun)
+; - currentAreaLevel belongs to the run in progress (reset on zone change)
 ;
-; Construcao:
+; Construction:
 ;   xp := XpService()
 ;
-; Boot opcional (carrega de saved state):
+; Optional boot (load from saved state):
 ;   xp.Hydrate(name, class, level, areaLevel, areaCode)
 
 
@@ -41,17 +41,17 @@ class XpService
 
     __New()
     {
-        ; Sem dependencias por enquanto. Estado puro.
+        ; No dependencies for now. Pure state.
     }
 
     ; ============================================================
     ; Setters
     ; ============================================================
 
-    ; SetCharacter — atualiza informacoes do personagem.
-    ;   Strings vazias e level <= 0 sao IGNORADOS (preserva valores
-    ;   antigos). Util para chamadas parciais (ex: log monitor ja sabe
-    ;   o level mas nao name/class).
+    ; SetCharacter — updates character information.
+    ;   Empty strings and level <= 0 are IGNORED (preserves old
+    ;   values). Useful for partial calls (e.g. log monitor already
+    ;   knows the level but not name/class).
     SetCharacter(charName, charClass, charLevel)
     {
         if (charName != "")
@@ -62,8 +62,8 @@ class XpService
             this._characterLevel := Integer(charLevel + 0)
     }
 
-    ; SetCurrentArea — atualiza area atual. areaLevel <= 0 eh ignorado.
-    ;   areaCode pode ser "" (ainda atualiza).
+    ; SetCurrentArea — updates the current area. areaLevel <= 0 is ignored.
+    ;   areaCode may be "" (it still updates).
     SetCurrentArea(areaLevel, areaCode := "")
     {
         if (areaLevel <= 0)
@@ -76,10 +76,10 @@ class XpService
     ; Hydrate / Reset
     ; ============================================================
 
-    ; Hydrate — carrega state inicial vindo do disco/config.
-    ;   Em contraste com SetCharacter, aceita valores zerados (faz overwrite
-    ;   completo do state). Use Hydrate no boot, Set* nas atualizacoes
-    ;   incrementais.
+    ; Hydrate — loads initial state coming from disk/config.
+    ;   In contrast to SetCharacter, accepts zeroed values (does a
+    ;   full overwrite of state). Use Hydrate on boot, Set* for
+    ;   incremental updates.
     Hydrate(charName := "", charClass := "", charLevel := 0, areaLevel := 0, areaCode := "")
     {
         this._characterName    := charName
@@ -89,9 +89,9 @@ class XpService
         this._currentAreaCode  := areaCode
     }
 
-    ; Reset — zera TUDO. Equivalente a Hydrate() sem args.
-    ;   Tipicamente nao chamado em NewRun (characterLevel persiste),
-    ;   apenas em testes ou em cenarios extremos.
+    ; Reset — clears EVERYTHING. Equivalent to Hydrate() with no args.
+    ;   Typically not called on NewRun (characterLevel persists),
+    ;   only in tests or extreme scenarios.
     Reset()
     {
         this._characterName    := ""
@@ -101,8 +101,8 @@ class XpService
         this._currentAreaCode  := ""
     }
 
-    ; Reset apenas dos campos da area atual. Util quando muda de zona
-    ; mas o personagem continua o mesmo.
+    ; Reset only the current-area fields. Useful when the zone changes
+    ; but the character stays the same.
     ResetCurrentArea()
     {
         this._currentAreaLevel := 0
@@ -120,28 +120,29 @@ class XpService
     GetCurrentAreaCode()  => this._currentAreaCode
 
     ; ============================================================
-    ; Calculos (delegam para XpRules da Fase 2)
+    ; Calculations (delegate to Phase 2's XpRules)
     ; ============================================================
 
     ; GetXpPenaltyInfo() -> XpPenaltyInfo
-    ;   Penalty calculado para o (characterLevel, currentAreaLevel) atual.
-    ;   Se nao ha dados, retorna info com status "unknown" (nao estoura).
+    ;   Penalty calculated for the current (characterLevel,
+    ;   currentAreaLevel). If there's no data, returns info with
+    ;   status "unknown" (does not throw).
     GetXpPenaltyInfo()
     {
         return XpRules.Calculate(this._characterLevel, this._currentAreaLevel)
     }
 
     ; GetXpPenaltyInfoForArea(areaLevel) -> XpPenaltyInfo
-    ;   Penalty para uma areaLevel arbitraria. Util para preview da
-    ;   proxima zona (ex: widget mostrando "se voce entrar na zona X,
-    ;   vai dar penalty").
+    ;   Penalty for an arbitrary areaLevel. Useful for previewing the
+    ;   next zone (e.g. a widget showing "if you enter zone X, you'll
+    ;   get a penalty").
     GetXpPenaltyInfoForArea(areaLevel)
     {
         return XpRules.Calculate(this._characterLevel, areaLevel)
     }
 
     ; GetSafeRange() -> [min, max]
-    ;   Faixa de areaLevel onde o personagem nao sofre penalty.
+    ;   areaLevel range where the character has no penalty.
     GetSafeRange()
     {
         return XpRules.SafeRange(this._characterLevel)

@@ -2,14 +2,14 @@
 ; IniFile tests
 ; ============================================================
 ;
-; Wrapper sobre IniRead/IniWrite/IniDelete + helpers:
-;   - Construtor: path obrigatorio, cria diretorio
-;   - Read/Write/Delete (key ou section)
+; Wrapper over IniRead/IniWrite/IniDelete + helpers:
+;   - Constructor: path required, creates directory
+;   - Read/Write/Delete (key or section)
 ;   - ReadSection, KeysIn, ReadSectionAsMap
 ;   - Exists, SectionExists, GetPath
 ;
-; Nomenclatura: usamos `iniInst` em vez de `iniFile` pra nao colidir
-; case-insensitively com a classe IniFile.
+; Naming: we use `iniInst` instead of `iniFile` to avoid the
+; case-insensitive collision with the `IniFile` class.
 
 class IniFileTests extends TestCase
 {
@@ -19,7 +19,7 @@ class IniFileTests extends TestCase
     }
 
     static Tests := [
-        ; --- Construtor ---
+        ; --- Constructor ---
         "constructor_throws_on_empty_path",
         "constructor_creates_parent_directory",
         "constructor_does_not_create_file_until_first_write",
@@ -53,7 +53,7 @@ class IniFileTests extends TestCase
     ]
 
     ; ============================================================
-    ; Construtor
+    ; Constructor
     ; ============================================================
 
     constructor_throws_on_empty_path()
@@ -68,7 +68,7 @@ class IniFileTests extends TestCase
         iniInst := IniFile(nested)
         SplitPath(nested, , &dir)
         Assert.True(DirExist(dir),
-            "Diretorio intermediario deveria ter sido criado")
+            "Intermediate directory should have been created")
     }
 
     constructor_does_not_create_file_until_first_write()
@@ -76,7 +76,7 @@ class IniFileTests extends TestCase
         path := Fixtures.TempPath("ini")
         iniInst := IniFile(path)
         Assert.False(FileExist(path),
-            "Construtor nao deveria tocar disco antes do primeiro Write")
+            "Constructor should not touch disk before the first Write")
         Assert.False(iniInst.Exists())
     }
 
@@ -120,7 +120,7 @@ class IniFileTests extends TestCase
     {
         path := Fixtures.TempPath("ini")
         iniInst := IniFile(path)
-        ; Arquivo nem existe ainda
+        ; File doesn't even exist yet
         Assert.Equal("default", iniInst.Read("Any", "Key", "default"))
     }
 
@@ -227,10 +227,10 @@ class IniFileTests extends TestCase
     {
         path := Fixtures.TempPath("ini")
         iniInst := IniFile(path)
-        ; Sem nada escrito ainda - delete deve ser no-op
+        ; Nothing written yet - delete must be a no-op
         iniInst.Delete("NonExistent")
         iniInst.Delete("Also", "Missing")
-        Assert.True(true)   ; chegou ate aqui sem throw
+        Assert.True(true)   ; reached here without throw
     }
 
     ; ============================================================

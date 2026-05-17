@@ -2,14 +2,14 @@
 ; Ids tests - StepId, RunId, ProfileId
 ; ============================================================
 ;
-; Cobre os tres validators do dominio:
+; Covers the three domain validators:
 ;
-;   StepId    : <act>_<NN>_<slug>  (act minusculo, 2 digitos, slug minusculo)
-;   RunId     : YYYYMMDD_HHMMSS    (opcionalmente com sufixo legado)
-;   ProfileId : string nao vazia sem leading/trailing whitespace
+;   StepId    : <act>_<NN>_<slug>  (lowercase act, 2 digits, lowercase slug)
+;   RunId     : YYYYMMDD_HHMMSS    (optionally with legacy suffix)
+;   ProfileId : non-empty string without leading/trailing whitespace
 ;
-; Padroes testados via casos positivos (validos) e negativos (invalidos)
-; em IsValid, e via Assert.Throws no MustBeValid.
+; Patterns tested via positive (valid) and negative (invalid) cases
+; on IsValid, and via Assert.Throws on MustBeValid.
 
 class StepIdTests extends TestCase
 {
@@ -172,8 +172,8 @@ class RunIdTests extends TestCase
 
     is_valid_rejects_wrong_digit_count()
     {
-        Assert.False(RunId.IsValid("2026051_142345"))     ; 7 digitos data
-        Assert.False(RunId.IsValid("20260512_14234"))     ; 5 digitos hora
+        Assert.False(RunId.IsValid("2026051_142345"))     ; 7-digit date
+        Assert.False(RunId.IsValid("20260512_14234"))     ; 5-digit time
     }
 
     is_valid_rejects_non_digit_characters()
@@ -195,9 +195,9 @@ class RunIdTests extends TestCase
 
     generate_creates_id_from_clock_now()
     {
-        ; AHK v2: case-insensitive lookup faz `fakeClock` local ofuscar
-        ; a classe `FakeClock` em todo o corpo da funcao - usamos
-        ; `stubClock` pra evitar. Mesmo pitfall mencionado no
+        ; AHK v2: case-insensitive lookup makes the local `fakeClock`
+        ; shadow the `FakeClock` class throughout the function body -
+        ; we use `stubClock` to avoid that. Same pitfall mentioned in
         ; ARCHITECTURE.md (`timerService` vs class `TimerService`).
         stubClock := FakeClock("20260512142345", 0)
         Assert.Equal("20260512_142345", RunId.Generate(stubClock))
@@ -208,7 +208,7 @@ class RunIdTests extends TestCase
         stubClock := FakeClock("20300101120000", 0)
         produced := RunId.Generate(stubClock)
         Assert.Equal("20300101_120000", produced)
-        Assert.True(RunId.IsValid(produced), "Id gerado deve passar IsValid")
+        Assert.True(RunId.IsValid(produced), "Generated id must pass IsValid")
     }
 
     generate_throws_when_clock_lacks_now_method()
@@ -219,7 +219,7 @@ class RunIdTests extends TestCase
 
     generate_throws_when_clock_now_too_short()
     {
-        ; Clock que retorna string com menos de 14 chars
+        ; Clock that returns a string with fewer than 14 chars
         shortClock := FakeClock("12345", 0)
         Assert.Throws(ValueError, () => RunId.Generate(shortClock))
     }

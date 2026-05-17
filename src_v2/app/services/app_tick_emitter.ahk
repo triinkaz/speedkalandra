@@ -1,33 +1,33 @@
 ; ============================================================
-; AppTickEmitter — pulso periódico de Events.Tick
+; AppTickEmitter — periodic Events.Tick pulse
 ; ============================================================
 ;
-; Responsabilidade: publicar Events.Tick a cada N milissegundos
-; enquanto está rodando. Subscribers (widgets do overlay) reagem
-; consultando services e atualizando seus controles.
+; Responsibility: publish Events.Tick every N milliseconds while
+; running. Subscribers (overlay widgets) react by querying services
+; and updating their controls.
 ;
-; Por que existir?
-;   Widgets precisam atualizar valores em tempo real (run timer,
-;   step timer, percentages). Em vez de cada widget ter seu próprio
-;   SetTimer, centralizamos em um pulso único — todos atualizam em
-;   sincronia, sem multiplicar timers.
+; Why does it exist?
+;   Widgets need to update values in real time (run timer, step
+;   timer, percentages). Instead of each widget having its own
+;   SetTimer, we centralize in a single pulse — they all update
+;   in sync, without multiplying timers.
 ;
-; Por que sem payload?
-;   Decisão de arquitetura (Opção A da Fase 6): widgets consultam
-;   services direto via refs do construtor. O Tick é apenas o sinal
-;   "atualize agora". Mantém o emitter simples e desacoplado de
-;   quais services existem.
+; Why no payload?
+;   Architecture decision (Phase 6 Option A): widgets query services
+;   directly via constructor refs. The Tick is only the "refresh now"
+;   signal. Keeps the emitter simple and decoupled from which
+;   services exist.
 ;
 ; Lifecycle:
 ;   emitter := AppTickEmitter(bus, 300)    ; 300ms default
-;   emitter.Start()                          ; começa a pulsar
-;   emitter.Pulse()                          ; pulso manual (testes)
-;   emitter.Stop()                           ; para o SetTimer
+;   emitter.Start()                          ; starts pulsing
+;   emitter.Pulse()                          ; manual pulse (tests)
+;   emitter.Stop()                           ; stops the SetTimer
 ;
-; Idempotência:
-;   Start() em estado rodando = no-op
-;   Stop() em estado parado = no-op
-;   Múltiplos Start/Stop são seguros
+; Idempotency:
+;   Start() when running = no-op
+;   Stop() when stopped = no-op
+;   Multiple Start/Stop are safe
 
 
 class AppTickEmitter
@@ -37,27 +37,27 @@ class AppTickEmitter
     _bus            := ""
     _intervalMs     := 0
     _running        := false
-    _timerCallback  := ""    ; BoundFunc, mantida pra evitar GC
+    _timerCallback  := ""    ; BoundFunc, kept to avoid GC
 
     __New(bus, intervalMs := AppTickEmitter.DEFAULT_INTERVAL_MS)
     {
         if !(bus is EventBus)
-            throw TypeError("AppTickEmitter: 'bus' deve ser EventBus")
+            throw TypeError("AppTickEmitter: 'bus' must be EventBus")
         if (!IsInteger(intervalMs) || intervalMs <= 0)
-            throw ValueError("AppTickEmitter: 'intervalMs' deve ser inteiro positivo")
+            throw ValueError("AppTickEmitter: 'intervalMs' must be a positive integer")
 
         this._bus           := bus
         this._intervalMs    := intervalMs
-        ; Bind uma vez. Necessário porque SetTimer precisa de callable
-        ; estável (mesmo objeto) pra Stop conseguir cancelar.
+        ; Bind once. Required because SetTimer needs a stable callable
+        ; (same object) for Stop to be able to cancel it.
         this._timerCallback := this._Pulse.Bind(this)
     }
 
     ; ============================================================
-    ; Comandos
+    ; Commands
     ; ============================================================
 
-    ; Inicia o pulso periódico. No-op se já rodando.
+    ; Starts the periodic pulse. No-op if already running.
     Start()
     {
         if this._running
@@ -66,7 +66,7 @@ class AppTickEmitter
         SetTimer(this._timerCallback, this._intervalMs)
     }
 
-    ; Para o pulso. No-op se já parado.
+    ; Stops the pulse. No-op if already stopped.
     Stop()
     {
         if !this._running
@@ -75,9 +75,9 @@ class AppTickEmitter
         this._running := false
     }
 
-    ; Pulso manual (publica Events.Tick uma vez). Útil em testes
-    ; para evitar dependência de SetTimer real, e em prod para
-    ; forçar refresh imediato após mudança de estado relevante.
+    ; Manual pulse (publishes Events.Tick once). Useful in tests to
+    ; avoid depending on a real SetTimer, and in prod to force an
+    ; immediate refresh after a relevant state change.
     Pulse() => this._Pulse()
 
     ; ============================================================
@@ -88,7 +88,7 @@ class AppTickEmitter
     GetIntervalMs() => this._intervalMs
 
     ; ============================================================
-    ; Helpers privados
+    ; Private helpers
     ; ============================================================
 
     _Pulse()

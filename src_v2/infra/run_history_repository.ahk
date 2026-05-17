@@ -1,14 +1,14 @@
 ; ============================================================
-; RunHistoryRepository - persiste runs finalizadas em disco
+; RunHistoryRepository - persists finalized runs to disk
 ; ============================================================
 ;
-; ESCOPO (v17.6):
-;   Cada run finalizada eh salva como `data/runs/{runId}.ini`. O
-;   conteudo eh o "buildResult" produzido por RunStatsPlotBuilder.Build
-;   — ou seja, ja agregado em totals + details — pra que o dialog
-;   abra runs historicas sem precisar re-executar o builder.
+; SCOPE (v17.6):
+;   Each finalized run is saved as `data/runs/{runId}.ini`. The
+;   content is the "buildResult" produced by RunStatsPlotBuilder.Build
+;   — i.e. already aggregated into totals + details — so that the
+;   dialog can open historical runs without having to re-run the builder.
 ;
-; FORMATO (1 arquivo INI por run):
+; FORMAT (1 INI file per run):
 ;
 ;   [meta]
 ;   runId=20260513_051547
@@ -27,32 +27,33 @@
 ;
 ;   [details]
 ;   count=15
-;   0=mapa|Cemetery of the Eternals|220000|Ato 1|
-;   1=mapa|Clearfell|156000|Ato 1|
-;   2=cidade|The Ardura Caravan|95000|Ato 2|
+;   0=mapa|Cemetery of the Eternals|220000|Act 1|
+;   1=mapa|Clearfell|156000|Act 1|
+;   2=cidade|The Ardura Caravan|95000|Act 2|
 ;   ...
 ;
-; NOTA: runs salvas em versoes antigas podem ter `category=boss` em
-; details/totals. O loader le sem reclamar; o builder atual nao tem
-; mais a categoria boss em SegmentDefinitions, entao o plot ignora.
+; NOTE: runs saved in old versions may have `category=boss` in
+; details/totals. The loader reads without complaining; the current
+; builder no longer has the boss category in SegmentDefinitions, so
+; the plot ignores it.
 ;
-; SERIALIZACAO DE DETAILS:
-;   Cada detail vira uma linha "category|label|ms|note|timestamp".
-;   Pipe `|` eh o separador (nao deve aparecer em nomes de zonas do
-;   PoE2; se aparecer, escapado pra `\|`).
+; DETAILS SERIALIZATION:
+;   Each detail becomes a line "category|label|ms|note|timestamp".
+;   Pipe `|` is the separator (should not appear in PoE2 zone names;
+;   if it does, escaped as `\|`).
 ;
-;   Decisao: nao uso JSON pra evitar parser custom. INI ja tem reader
-;   estavel no projeto e o formato eh suficiente pra runs.
+;   Decision: no JSON to avoid a custom parser. INI already has a
+;   stable reader in the project and the format is enough for runs.
 ;
 ; QUERY API:
-;   ListRunIds(maxN := -1)         -> Array<string> ordenado desc por mtime
-;   Load(runId)                    -> Map (mesmo formato do builder) | ""
-;   LoadSummaries(maxN := -1)      -> Array<Map> com so meta+totals (rapido)
+;   ListRunIds(maxN := -1)         -> Array<string> sorted desc by mtime
+;   Load(runId)                    -> Map (same format as builder) | ""
+;   LoadSummaries(maxN := -1)      -> Array<Map> with only meta+totals (fast)
 ;   Save(buildResult)              -> bool
 ;   Delete(runId)                  -> bool
 ;   GetDir()                       -> string
 ;
-; CONSTRUCAO:
+; CONSTRUCTION:
 ;   repo := RunHistoryRepository(A_ScriptDir "\data\runs")
 
 
@@ -65,7 +66,7 @@ class RunHistoryRepository
     __New(dir)
     {
         if (Trim(String(dir)) = "")
-            throw ValueError("RunHistoryRepository: 'dir' obrigatorio")
+            throw ValueError("RunHistoryRepository: 'dir' is required")
         this._dir := dir
         this._EnsureDir()
     }
@@ -73,22 +74,22 @@ class RunHistoryRepository
     GetDir() => this._dir
 
     ; ------------------------------------------------------------
-    ; Save - persiste buildResult em data/runs/{runId}.ini
+    ; Save - persists buildResult to data/runs/{runId}.ini
     ;
-    ; buildResult eh o output de RunStatsPlotBuilder.Build (Map com
+    ; buildResult is the output of RunStatsPlotBuilder.Build (Map with
     ; runId, profile, patch, firstTs, totals, details, deathCount,
     ; totalMs).
     ;
-    ; Run sem runId ou com totalMs < 1000ms (1s) eh ignorada — evita
-    ; lixo de runs canceladas imediatamente apos start.
+    ; A run with no runId or with totalMs < 1000ms (1s) is ignored —
+    ; avoids garbage from runs cancelled immediately after start.
     ; ------------------------------------------------------------
     Save(buildResult)
     {
         if !IsObject(buildResult)
             return false
 
-        ; v0.1.0: renomeado de `runId` pra `currentRunId` (case-insensitive
-        ; collision com classe `RunId` do domain disparava #Warn).
+        ; v0.1.0: renamed from `runId` to `currentRunId` (case-insensitive
+        ; collision with the domain class `RunId` was triggering #Warn).
         currentRunId := buildResult.Has("runId") ? String(buildResult["runId"]) : ""
         if (currentRunId = "")
             return false
@@ -110,8 +111,8 @@ class RunHistoryRepository
         ini.Write(buildResult.Has("maxActReached") ? buildResult["maxActReached"] : 0, "meta", "maxActReached")
 
         ; --- [totals] ---
-        ; Limpa section primeiro pra garantir consistencia (caso uma
-        ; categoria existisse antes e nao agora — improvavel mas defensivo).
+        ; Clear the section first to ensure consistency (in case a
+        ; category existed before and not now — unlikely but defensive).
         ini.Delete("totals", "")
         totals := buildResult.Has("totals") ? buildResult["totals"] : Map()
         if IsObject(totals)
@@ -121,11 +122,11 @@ class RunHistoryRepository
         }
 
         ; --- [checkpoints] (v17.15.1) ---
-        ; Tempo TOTAL DA RUN em ms quando cada ato terminou. Map<actNum, ms>.
-        ; Persistido aqui pra que PersonalBestService.RebuildFromHistory
-        ; consiga reconstruir os PBs por ato apos delete de run. Runs
-        ; salvas antes desse campo simplesmente vem sem a section
-        ; (Load retorna Map() vazio, rebuild ignora).
+        ; Total RUN time in ms when each act ended. Map<actNum, ms>.
+        ; Persisted here so PersonalBestService.RebuildFromHistory
+        ; can rebuild per-act PBs after a run delete. Runs saved
+        ; before this field simply come without the section
+        ; (Load returns empty Map(), rebuild ignores it).
         ini.Delete("checkpoints", "")
         ckpts := buildResult.Has("actCheckpoints") ? buildResult["actCheckpoints"] : Map()
         if IsObject(ckpts)
@@ -160,17 +161,18 @@ class RunHistoryRepository
     }
 
     ; ------------------------------------------------------------
-    ; ListRunIds(maxN := -1) - lista runIds disponiveis
+    ; ListRunIds(maxN := -1) - lists available runIds
     ;
-    ; Ordenado por modification time DESC (mais recente primeiro).
-    ; Se maxN > 0, limita a essa quantidade.
+    ; Sorted by modification time DESC (most recent first).
+    ; If maxN > 0, limits to that count.
     ;
-    ; BUGFIX v17.12: Usa SplitPath em vez de SubStr(runId, -3) pra
-    ; tirar a extensao. O bug original tentava comparar SubStr(name, -3)
-    ; (= "ini", sem ponto) com ".ini" (= 4 chars), o que nunca batia.
-    ; Resultado: runId ficava com ".ini" no nome, e o _PathForRunId
-    ; sanitizava o ponto pra "_", buscando "data\runs\NAME_ini.ini" —
-    ; arquivo inexistente. LoadSummaries retornava lista vazia.
+    ; BUGFIX v17.12: Uses SplitPath instead of SubStr(runId, -3) to
+    ; strip the extension. The original bug tried to compare
+    ; SubStr(name, -3) (= "ini", no dot) to ".ini" (= 4 chars), which
+    ; never matched. Result: runId kept ".ini" in the name, and
+    ; _PathForRunId sanitized the dot to "_", looking up
+    ; "data\runs\NAME_ini.ini" — a non-existent file. LoadSummaries
+    ; returned an empty list.
     ; ------------------------------------------------------------
     ListRunIds(maxN := -1)
     {
@@ -178,23 +180,23 @@ class RunHistoryRepository
         if !DirExist(this._dir)
             return result
 
-        ; Coleta {runId, mtime} pra ordenar depois
+        ; Collect {runId, mtime} to sort later
         candidates := []
         loop files this._dir "\*.ini", "F"
         {
-            ; Extrai nome sem extensao via SplitPath.
-            ; `runId` ByRef out colide com classe `RunId` (#Warn).
+            ; Extract name without extension via SplitPath.
+            ; `runId` ByRef out collides with the `RunId` class (#Warn).
             SplitPath(A_LoopFileName, , , , &currentRunId)
             if (currentRunId = "")
                 continue
-            ; A_LoopFileTimeModified eh "YYYYMMDDHHMMSS"
+            ; A_LoopFileTimeModified is "YYYYMMDDHHMMSS"
             candidates.Push(Map(
                 "runId", currentRunId,
                 "mtime", A_LoopFileTimeModified
             ))
         }
 
-        ; Sort desc por mtime (insertion sort simples — N tipicamente < 100)
+        ; Sort desc by mtime (simple insertion sort — N typically < 100)
         n := candidates.Length
         i := 2
         while (i <= n)
@@ -210,7 +212,7 @@ class RunHistoryRepository
             i++
         }
 
-        ; Aplica limit
+        ; Apply limit
         limit := (maxN > 0 && maxN < n) ? maxN : n
         i := 1
         while (i <= limit)
@@ -222,8 +224,8 @@ class RunHistoryRepository
     }
 
     ; ------------------------------------------------------------
-    ; Load(runId) - reconstrói buildResult salvo
-    ; Retorna Map (mesmo formato do builder) ou "" se nao encontrado.
+    ; Load(runId) - reconstructs saved buildResult
+    ; Returns Map (same format as builder) or "" if not found.
     ; ------------------------------------------------------------
     Load(runId)
     {
@@ -257,8 +259,8 @@ class RunHistoryRepository
         result["totals"] := totals
 
         ; --- checkpoints (v17.15.1) ---
-        ; Reconstroi Map<actNum, ms> da section [checkpoints]. Runs
-        ; antigas sem essa section retornam Map vazio.
+        ; Rebuilds Map<actNum, ms> from the [checkpoints] section. Old
+        ; runs without that section return an empty Map.
         checkpoints := Map()
         try
         {
@@ -311,17 +313,17 @@ class RunHistoryRepository
     }
 
     ; ------------------------------------------------------------
-    ; LoadSummaries(maxN := -1) - carrega so meta+totals (sem details)
+    ; LoadSummaries(maxN := -1) - loads only meta+totals (no details)
     ;
-    ; Mais rapido pra listar runs no historico/grafico comparativo.
-    ; Cada elemento eh um Map com mesmo formato do builder, mas com
-    ; details := [] (vazio).
+    ; Faster for listing runs in the history/comparison plot. Each
+    ; element is a Map with the same format as the builder, but with
+    ; details := [] (empty).
     ; ------------------------------------------------------------
     LoadSummaries(maxN := -1)
     {
         result := []
         ids := this.ListRunIds(maxN)
-        ; `runId` loop var colide com classe `RunId` (#Warn).
+        ; `runId` loop var collides with the `RunId` class (#Warn).
         for _, currentRunId in ids
         {
             path := this._PathForRunId(currentRunId)
@@ -357,7 +359,7 @@ class RunHistoryRepository
     }
 
     ; ------------------------------------------------------------
-    ; Delete(runId) - apaga arquivo da run
+    ; Delete(runId) - deletes the run's file
     ; ------------------------------------------------------------
     Delete(runId)
     {
@@ -371,21 +373,21 @@ class RunHistoryRepository
         }
         catch as ex
         {
-            ; v17.15 (Bug #8): registra falha pra diagnostico em vez
-            ; de retornar false silencioso. Sem logger injetado.
-            OutputDebug("RunHistoryRepository.Delete falhou (" runId "): " ex.Message)
+            ; v17.15 (Bug #8): records the failure for diagnostics
+            ; instead of silently returning false. No logger injected.
+            OutputDebug("RunHistoryRepository.Delete failed (" runId "): " ex.Message)
             return false
         }
     }
 
     ; ------------------------------------------------------------
-    ; Helpers privados
+    ; Private helpers
     ; ------------------------------------------------------------
 
     _PathForRunId(runId)
     {
-        ; Sanitiza runId pra path seguro (deve ser timestamp formato
-        ; "YYYYMMDD_HHMMSS" mas defensivo).
+        ; Sanitize runId to a safe path (should be a timestamp in the
+        ; "YYYYMMDD_HHMMSS" format, but defensive).
         safe := RegExReplace(String(runId), "[^A-Za-z0-9_\-]", "_")
         return this._dir "\" safe ".ini"
     }
@@ -398,7 +400,7 @@ class RunHistoryRepository
         }
     }
 
-    ; Serializa um detail Map em string "category|label|ms|note|timestamp"
+    ; Serializes a detail Map into a "category|label|ms|note|timestamp" string
     static _SerializeDetail(detail)
     {
         cat   := detail.Has("category")  ? detail["category"]  : ""
@@ -415,7 +417,7 @@ class RunHistoryRepository
              . RunHistoryRepository._Escape(String(ts))
     }
 
-    ; Inverso do _SerializeDetail. Retorna Map ou "".
+    ; Inverse of _SerializeDetail. Returns a Map or "".
     static _ParseDetail(line)
     {
         if (line = "")
@@ -445,15 +447,16 @@ class RunHistoryRepository
         )
     }
 
-    ; v0.1.0: lookup explicito em SegmentDefinitions em vez de delegar a
-    ; CategoryLabel (que retorna "All" pra unknowns, transformando categorias
-    ; legadas como `boss` em "All" na UI). Aqui queremos passthrough da string
-    ; original pra categorias desconhecidas — runs salvas em versoes antigas
-    ; podem ter category=boss, e o nome "boss" eh mais util na UI que "All".
+    ; v0.1.0: explicit lookup in SegmentDefinitions instead of delegating
+    ; to CategoryLabel (which returns "All" for unknowns, turning legacy
+    ; categories like `boss` into "All" in the UI). Here we want passthrough
+    ; of the original string for unknown categories — runs saved in old
+    ; versions may have category=boss, and the name "boss" is more useful
+    ; in the UI than "All".
     ;
-    ; Tambem usa lookup dinamico via %"..."%, mantendo o fallback hardcoded
-    ; pro caso de RunStatsPlotBuilder nao estar no escopo (testes isolados
-    ; deste repository sem incluir o builder).
+    ; Also uses dynamic lookup via %"..."%, keeping the hardcoded fallback
+    ; for the case where RunStatsPlotBuilder is not in scope (isolated tests
+    ; of this repository without including the builder).
     static _SafeCategoryLabel(cat)
     {
         catStr := String(cat)
@@ -463,7 +466,7 @@ class RunHistoryRepository
             for _, seg in builderClass.SegmentDefinitions()
                 if (seg["key"] = catStr)
                     return seg["label"]
-            ; Categoria desconhecida: passthrough
+            ; Unknown category: passthrough
             return catStr
         }
         catch
@@ -479,8 +482,8 @@ class RunHistoryRepository
         }
     }
 
-    ; Escape pra serializacao: troca | por \|, e \ por \\ (precisa
-    ; ser nessa ordem na hora do escape, e invertida no parse).
+    ; Escape for serialization: replaces | with \|, and \ with \\
+    ; (must be in this order when escaping, reversed when parsing).
     static _Escape(s)
     {
         s := StrReplace(s, "\", "\\")
@@ -495,7 +498,7 @@ class RunHistoryRepository
         return s
     }
 
-    ; Split que respeita escapes. Quebra em separadores nao escapados.
+    ; Split that respects escapes. Breaks on unescaped separators.
     static _SplitEscaped(line, sep)
     {
         out := []
@@ -507,7 +510,7 @@ class RunHistoryRepository
             ch := SubStr(line, i, 1)
             if (ch = "\" && i < len)
             {
-                ; Escape: pega proximo char literal
+                ; Escape: take next char literally
                 current .= ch . SubStr(line, i+1, 1)
                 i += 2
                 continue

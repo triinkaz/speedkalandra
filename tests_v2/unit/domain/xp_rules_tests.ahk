@@ -2,26 +2,26 @@
 ; XpRules tests
 ; ============================================================
 ;
-; Cobre a regra de penalidade de XP de PoE2:
+; Covers the PoE2 XP penalty rule:
 ;
 ;   threshold = 3 + floor(charLevel / 16)
 ;
-;   |charLevel - areaLevel| > threshold  -> penalty (vermelho)
-;     diff > 0  -> direction = "zona baixa"
-;     diff < 0  -> direction = "zona alta"
+;   |charLevel - areaLevel| > threshold  -> penalty (red)
+;     diff > 0  -> direction = "low zone"
+;     diff < 0  -> direction = "high zone"
 ;
 ;   |charLevel - areaLevel| = threshold  -> limit (amber)
 ;
-;   |charLevel - areaLevel| < threshold  -> ok (verde)
+;   |charLevel - areaLevel| < threshold  -> ok (green)
 ;
-;   level <= 0 OR areaLevel <= 0         -> unknown (cinza)
+;   level <= 0 OR areaLevel <= 0         -> unknown (gray)
 ;
-; SafeRange(level) retorna [min, max] do areaLevel sem penalty.
+; SafeRange(level) returns [min, max] of areaLevel without penalty.
 
 class XpRulesTests extends TestCase
 {
     static Tests := [
-        ; --- Inputs invalidos ---
+        ; --- Invalid inputs ---
         "unknown_when_char_level_is_zero",
         "unknown_when_area_level_is_zero",
         "unknown_when_both_are_negative",
@@ -42,12 +42,12 @@ class XpRulesTests extends TestCase
         "limit_when_diff_equals_threshold_positive",
         "limit_when_diff_equals_threshold_negative",
         "limit_uses_amber_color",
-        "limit_text_is_xp_limite",
+        "limit_text_is_xp_limit",
 
         ; --- Status: penalty ---
         "penalty_when_diff_exceeds_threshold",
-        "penalty_direction_zona_baixa_when_area_below_char",
-        "penalty_direction_zona_alta_when_area_above_char",
+        "penalty_direction_low_zone_when_area_below_char",
+        "penalty_direction_high_zone_when_area_above_char",
         "penalty_uses_red_color",
         "penalty_outside_field_reflects_distance_beyond_threshold",
 
@@ -62,7 +62,7 @@ class XpRulesTests extends TestCase
     ]
 
     ; ============================================================
-    ; Inputs invalidos
+    ; Invalid inputs
     ; ============================================================
 
     unknown_when_char_level_is_zero()
@@ -165,10 +165,10 @@ class XpRulesTests extends TestCase
         Assert.Equal(XpRules.COLOR_LIMIT, info.color)
     }
 
-    limit_text_is_xp_limite()
+    limit_text_is_xp_limit()
     {
         info := XpRules.Calculate(15, 12)
-        Assert.Equal("XP LIMITE", info.text)
+        Assert.Equal("XP LIMIT", info.text)
     }
 
     ; ============================================================
@@ -182,20 +182,20 @@ class XpRulesTests extends TestCase
         Assert.Equal("penalty", info.status)
     }
 
-    penalty_direction_zona_baixa_when_area_below_char()
+    penalty_direction_low_zone_when_area_below_char()
     {
-        ; area < char => diff > 0 => "zona baixa"
+        ; area < char => diff > 0 => "low zone"
         info := XpRules.Calculate(20, 5)
         Assert.Equal("penalty", info.status)
-        Assert.Equal("zona baixa", info.direction)
+        Assert.Equal("low zone", info.direction)
     }
 
-    penalty_direction_zona_alta_when_area_above_char()
+    penalty_direction_high_zone_when_area_above_char()
     {
-        ; area > char => diff < 0 => "zona alta"
+        ; area > char => diff < 0 => "high zone"
         info := XpRules.Calculate(5, 20)
         Assert.Equal("penalty", info.status)
-        Assert.Equal("zona alta", info.direction)
+        Assert.Equal("high zone", info.direction)
     }
 
     penalty_uses_red_color()
@@ -240,7 +240,7 @@ class XpRulesTests extends TestCase
 
     safe_range_clamps_min_to_1_for_low_levels()
     {
-        ; level 1, threshold 3 -> min seria -2, clampado para 1
+        ; level 1, threshold 3 -> min would be -2, clamped to 1
         rng := XpRules.SafeRange(1)
         Assert.Equal(1, rng[1])
         Assert.Equal(4, rng[2])

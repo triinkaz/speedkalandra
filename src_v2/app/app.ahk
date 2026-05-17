@@ -1,53 +1,53 @@
 ; ============================================================
-; SpeedKalandraApp - composition root (Onda 7, v17.10)
+; SpeedKalandraApp - composition root (Wave 7, v17.10)
 ; ============================================================
 ;
-; VERSAO POS-DEMOLICAO: focada em speedrun puro.
+; POST-DEMOLITION VERSION: focused on pure speedrun.
 ;
-; PERSISTENCIA DE RUN (crash recovery + perf):
-;   4 pecas sao persistidas no INI:
-;     1. [RunState].(RunId,StartedAt,Status) — metadata (transicoes only)
-;     2. [RunState].RunBaseMs                — timer (tick periodico 5s)
-;     3. [RunState].LoadingTotalMs           — loading acumulado
-;     4. [RunZoneTotals]                     — Map<zona, ms>
+; RUN PERSISTENCE (crash recovery + perf):
+;   4 pieces are persisted to the INI:
+;     1. [RunState].(RunId,StartedAt,Status) — metadata (transitions only)
+;     2. [RunState].RunBaseMs                — timer (5s periodic tick)
+;     3. [RunState].LoadingTotalMs           — accumulated loading
+;     4. [RunZoneTotals]                     — Map<zone, ms>
 ;
-;   OTIMIZACAO CRITICA (v14.1): _PersistRunData usa cache de hash pra
-;   pular IniWrites desnecessarios. Antes fazia 25 IniWrites a cada 5s
-;   bloqueando o thread por 1-2s — causava lag de 6s no pause-detection.
+;   CRITICAL OPTIMIZATION (v14.1): _PersistRunData uses a hash cache to
+;   skip unnecessary IniWrites. Previously did 25 IniWrites every 5s
+;   blocking the thread for 1-2s — caused 6s lag in pause-detection.
 ;
-; HISTORICO DE RUNS (v17.6 + v17.10):
-;   Toda run salva em data/runs/{runId}.ini pelo RunHistoryRepository.
-;   Save acontece em dois eventos:
-;     - Evt.RunCompleted (Ctrl+Alt+F) — sempre salva
-;     - Evt.RunCancelled (Ctrl+Alt+N -> CancelRun, ou Ctrl+Alt+R) —
-;       salva so se runMs >= MIN_CANCELLED_SAVE_MS (3min). Evita lixo
-;       de aborts rapidos / testes.
+; RUN HISTORY (v17.6 + v17.10):
+;   Every run is saved to data/runs/{runId}.ini by RunHistoryRepository.
+;   Save happens on two events:
+;     - Evt.RunCompleted (Ctrl+Alt+F) — always saved
+;     - Evt.RunCancelled (Ctrl+Alt+N -> CancelRun, or Ctrl+Alt+R) —
+;       saved only if runMs >= MIN_CANCELLED_SAVE_MS (3min). Avoids
+;       garbage from quick aborts / tests.
 ;
-;   ORDEM DE SUBSCRIBE (v17.10):
-;     O EventBus chama subscribers em ordem FIFO. RunStatsRecorder e
-;     ZoneTrackingService ambos zeram seu state interno em RunCancelled.
-;     Se inscrevessemos nosso save handler em Start() (depois deles),
-;     o snapshot ja viria vazio.
+;   SUBSCRIBE ORDER (v17.10):
+;     EventBus calls subscribers in FIFO order. RunStatsRecorder and
+;     ZoneTrackingService both clear their internal state on RunCancelled.
+;     If we subscribed our save handler in Start() (after them), the
+;     snapshot would already come back empty.
 ;
-;     Solucao: inscrevemos os handlers no __New, LOGO APOS criar
-;     this.runHistory e ANTES de instanciar zoneTracker e statsRecorder.
-;     Assim nosso handler eh chamado FIRST quando RunCancelled dispara,
-;     com state intacto.
+;     Solution: we subscribe the handlers in __New, RIGHT AFTER creating
+;     this.runHistory and BEFORE instantiating zoneTracker and statsRecorder.
+;     That way our handler is called FIRST when RunCancelled fires, with
+;     state intact.
 ;
-;     A arrow function captura `this` por escopo (nao por valor); quando
-;     o handler eh invocado, this.statsRecorder etc. ja existem.
+;     The arrow function captures `this` by scope (not by value); when
+;     the handler is invoked, this.statsRecorder etc. already exist.
 ;
-; AUTO-MICRO POR PANEL KEYS (REMOVIDO em v17.2):
-;   PanelKeyService DESCONECTADO. MICRO so ativa via Ctrl+F9.
+; AUTO-MICRO VIA PANEL KEYS (REMOVED in v17.2):
+;   PanelKeyService DISCONNECTED. MICRO only activates via Ctrl+F9.
 ;
-; GAME PAUSE DETECTION (REMOVIDO em v17.5):
-;   GamePauseDetectionService DESCONECTADO (falsos positivos).
+; GAME PAUSE DETECTION (REMOVED in v17.5):
+;   GamePauseDetectionService DISCONNECTED (false positives).
 
 
 class SpeedKalandraApp
 {
-    ; Runs canceladas com menos disso NAO sao salvas no historico
-    ; (evita lixo de teste/abort rapido). Em milissegundos.
+    ; Cancelled runs shorter than this are NOT saved to history
+    ; (avoids test/quick-abort garbage). In milliseconds.
     static MIN_CANCELLED_SAVE_MS := 180000   ; 3min
 
     _cfg          := ""
@@ -101,18 +101,19 @@ class SpeedKalandraApp
     _persistFn := ""
     _logMonitorTimer  := ""
     _runPersistTimer  := ""
-    _headless         := false    ; v17.13 — controla se mostra MsgBox de confirmacao
+    _headless         := false    ; v17.13 — controls whether confirmation MsgBoxes are shown
 
     _lastSavedLoadingTotal := -1
     _lastSavedZoneTotalsHash := ""
 
-    ; v17.15 (Bug #9): flag pra reset de level so na PRIMEIRA entrada
-    ; do Riverbank na run. Antes, qualquer re-entrada (death respawn,
-    ; portal, party invite) resetava characterLevel pra 1 silenciosamente.
+    ; v17.15 (Bug #9): flag to reset level only on the FIRST entry
+    ; into Riverbank in the run. Previously, any re-entry (death
+    ; respawn, portal, party invite) silently reset characterLevel to 1.
     _riverbankSeenInRun := false
 
-    ; v17.14 — "Undo last save" (F1): runId do save mais recente que ainda
-    ; pode ser desfeito. Limpo apos 60s pelo _undoTimerFn ou ao executar undo.
+    ; v17.14 — "Undo last save" (F1): runId of the most recent save
+    ; that can still be undone. Cleared after 60s by _undoTimerFn
+    ; or when undo is executed.
     _lastSavedRunId := ""
     _undoTimerFn    := ""
 
@@ -137,8 +138,8 @@ class SpeedKalandraApp
 
         this.log   := LogService(logPath, "INFO", headless ? 1 : 32)
         this.bus   := EventBus(this.log)
-        ; v0.1.1: clock injetavel via cfgMap pra integration tests usarem FakeClock.
-        ; Default eh RealClock (NowMs = A_TickCount).
+        ; v0.1.1: clock injectable via cfgMap so integration tests can use FakeClock.
+        ; Default is RealClock (NowMs = A_TickCount).
         this.clock := cfgMap.Has("clock") ? cfgMap["clock"] : RealClock()
 
         ini := IniFile(iniPath)
@@ -146,30 +147,30 @@ class SpeedKalandraApp
         this._cfg := this._settingsRepo.Load()
 
         this.zonesCatalog := ZonesCatalog(zonesCsvPath)
-        this.log.Info("Catalogo de zonas carregado: " this.zonesCatalog.Count() " zonas", "App")
+        this.log.Info("Zones catalog loaded: " this.zonesCatalog.Count() " zones", "App")
 
-        ; Historico de runs (v17.6)
+        ; Run history (v17.6)
         this.runHistory := RunHistoryRepository(runHistoryDir)
 
-        ; Personal bests (v17.13) — carrega do INI no construtor do
-        ; service (via repo.Load). Atualizado em _SaveRunSnapshot quando
+        ; Personal bests (v17.13) — loaded from the INI in the service
+        ; constructor (via repo.Load). Updated in _SaveRunSnapshot when
         ; reason="completed".
         this.personalBest := PersonalBestService(PersonalBestRepository(pbPath))
         if this.personalBest.HasRunPb()
         {
-            try this.log.Info("PB de run carregado: "
+            try this.log.Info("Run PB loaded: "
                 . this.personalBest.GetRunPbMs() . " ms ("
                 . this.personalBest.GetRunPbRunId() . ")", "App")
         }
 
-        ; (ActCheckpointTracker eh instanciado MAIS ABAIXO, depois do
-        ; this.timer ser criado — ele depende do TimerService.GetRunMs.)
+        ; (ActCheckpointTracker is instantiated FURTHER DOWN, after
+        ; this.timer is created — it depends on TimerService.GetRunMs.)
 
         ; ============================================================
-        ; v17.10: HISTORY SAVE handlers — inscritos AGORA, antes dos
-        ; services que zeram state em RunCancelled (statsRecorder e
-        ; zoneTracker mais abaixo). Ordem FIFO do EventBus garante que
-        ; nossos handlers sao chamados primeiro, com snapshot intacto.
+        ; v17.10: HISTORY SAVE handlers — subscribed NOW, before the
+        ; services that clear state on RunCancelled (statsRecorder and
+        ; zoneTracker further down). EventBus FIFO order ensures our
+        ; handlers are called first, with the snapshot intact.
         ; ============================================================
         this.bus.Subscribe(Events.RunCompleted,
             (data) => this._SaveRunSnapshot("completed"))
@@ -180,10 +181,10 @@ class SpeedKalandraApp
         this.timer      := TimerService(this.clock, this.bus)
         this.runService := RunService(this.clock, this.bus, this.timer, this.runState)
 
-        ; Act checkpoint tracker (v17.13) — rastreia tempo total da run
-        ; em cada transicao de ato. Alimenta PB-por-ato no finalize.
-        ; Depende do this.timer (pra GetRunMs), entao instanciado AQUI
-        ; logo apos o timer.
+        ; Act checkpoint tracker (v17.13) — tracks total run time at
+        ; each act transition. Feeds per-act PB on finalize. Depends on
+        ; this.timer (for GetRunMs), so instantiated HERE right after
+        ; the timer.
         this.actCheckpoints := ActCheckpointTracker(this.bus, this.timer)
 
         hydratedState := this.runState.Load()
@@ -191,12 +192,12 @@ class SpeedKalandraApp
 
         this.focusAutoPause := FocusAutoPauseService(this.bus, this.timer, this._cfg)
 
-        ; GamePauseDetection DESCONECTADO em v17.5
+        ; GamePauseDetection DISCONNECTED in v17.5
 
         this.hotkeyService := HotkeyService(this.bus, headless)
         this.hotkeyService.Hydrate(this._cfg.hotkeys)
 
-        ; PanelKeys DESCONECTADO em v17.2
+        ; PanelKeys DISCONNECTED in v17.2
 
         this.overlayMode := OverlayModeService(this.bus, this._cfg)
         this.overlayMode.Hydrate()
@@ -213,12 +214,12 @@ class SpeedKalandraApp
 
         this.logMonitor := LogMonitorService(this.clock, this.bus, this.log)
         this.logMonitor.Configure(this._cfg.logFile)
-        ; v17.15 (Bug #2): hidrata o nome do personagem pro filtro de
-        ; DeathDetected. Sem isso, deaths em real-time entre boot e
-        ; primeiro CharacterLevelUp nao seriam contados.
+        ; v17.15 (Bug #2): hydrates the character name for the
+        ; DeathDetected filter. Without this, real-time deaths between
+        ; boot and the first CharacterLevelUp would not be counted.
         this.logMonitor.SetCharacterName(this._cfg.characterName)
 
-        ; zoneTracker subscribe RunCancelled aqui — DEPOIS do nosso save handler
+        ; zoneTracker subscribes to RunCancelled here — AFTER our save handler
         this.zoneTracker := ZoneTrackingService(this.bus, this.clock, this.zonesCatalog)
 
         try
@@ -228,13 +229,13 @@ class SpeedKalandraApp
             if (hydratedState is RunState && hydratedState.IsRunning())
             {
                 this.zoneTracker.SetRunActive(true)
-                this.log.Info("Zone tracker hidratado: " . zoneTotals.Count . " zonas com tempo acumulado (run em andamento)", "App")
+                this.log.Info("Zone tracker hydrated: " . zoneTotals.Count . " zones with accumulated time (run in progress)", "App")
             }
             this._lastSavedZoneTotalsHash := this._ComputeTotalsHash(zoneTotals)
         }
         catch as ex
         {
-            this.log.Warn("Falha ao hidratar zone totals: " . ex.Message
+            this.log.Warn("Failed to hydrate zone totals: " . ex.Message
                 . " | What: " . (ex.HasOwnProp("What") ? ex.What : "?")
                 . " | Line: " . (ex.HasOwnProp("Line") ? ex.Line : "?")
                 . " | File: " . (ex.HasOwnProp("File") ? ex.File : "?"), "App")
@@ -256,26 +257,26 @@ class SpeedKalandraApp
                 loadingMs := this.runState.LoadLoadingTotal()
                 this.loadingTotals.Hydrate(loadingMs)
                 if (loadingMs > 0)
-                    this.log.Info("Loading totals hidratados: " . loadingMs . " ms acumulados", "App")
+                    this.log.Info("Loading totals hydrated: " . loadingMs . " ms accumulated", "App")
                 this._lastSavedLoadingTotal := loadingMs
             }
         }
         catch as ex
         {
-            this.log.Warn("Falha ao hidratar loading totals: " . ex.Message
+            this.log.Warn("Failed to hydrate loading totals: " . ex.Message
                 . " | What: " . (ex.HasOwnProp("What") ? ex.What : "?")
                 . " | Line: " . (ex.HasOwnProp("Line") ? ex.Line : "?")
                 . " | File: " . (ex.HasOwnProp("File") ? ex.File : "?"), "App")
         }
 
-        ; statsRecorder subscribe RunCancelled aqui — DEPOIS do nosso save handler
+        ; statsRecorder subscribes to RunCancelled here — AFTER our save handler
         this.statsRecorder := RunStatsRecorder(this.bus, this.clock)
         this.plotBuilder   := RunStatsPlotBuilder(this.zonesCatalog, this._cfg)
 
         this.autoFinalize := AutoFinalizeService(this.bus, this._cfg)
-        ; v17.15 (Bug #4): passa runService pra que AutoStart saiba se ja
-        ; existe run ativa hidratada e nao a apague com a proxima linha
-        ; do log que casar autoStartRegex.
+        ; v17.15 (Bug #4): passes runService so that AutoStart knows
+        ; whether there is already a hydrated active run and does not
+        ; wipe it with the next log line matching autoStartRegex.
         this.autoStart := AutoStartService(this.bus, this._cfg, this.runService)
 
         compactPos := this._GetWidgetPos("compactLayout", 10, 1.5)
@@ -332,18 +333,18 @@ class SpeedKalandraApp
             return
         this._started := true
 
-        ; v17.15.2: mostra disclaimer no boot se ainda nao foi reconhecido.
-        ; Modal — bloqueia o restante do Start() ate user dismisse.
+        ; v17.15.2: shows disclaimer on boot if not yet acknowledged.
+        ; Modal — blocks the rest of Start() until the user dismisses it.
         this._ShowDisclaimerIfNeeded()
 
-        ; v0.1.3: setup do Client.txt na primeira execucao. Bloqueia o
-        ; boot ate que o usuario configure um path valido (ou cancele,
-        ; o que encerra o app).
+        ; v0.1.3: Client.txt setup on first run. Blocks the boot until
+        ; the user configures a valid path (or cancels, which closes
+        ; the app).
         this._PromptLogFileSetupIfNeeded()
 
-        ; v17.14 — F4: se ha run ativa hidratada, pergunta ao usuario
-        ; o que fazer antes de subir os widgets/hotkeys. Resolve a
-        ; ambiguidade de "run pendurada" no boot.
+        ; v17.14 — F4: if there is a hydrated active run, ask the user
+        ; what to do before bringing up the widgets/hotkeys. Resolves
+        ; the ambiguity of a "dangling run" on boot.
         this._PromptHydratedRun()
 
         this.bus.Subscribe(Events.CharacterLevelUp,
@@ -359,29 +360,29 @@ class SpeedKalandraApp
         this.bus.Subscribe(Events.RunCancelled,
             (data) => this._OnRunEndedClearZones(data))
 
-        ; NOTA: os subscribes pra RunCompleted/RunCancelled que CHAMAM
-        ; _SaveRunSnapshot ja foram feitos no __New (antes dos services
-        ; que zeram state). Nao re-inscrever aqui.
+        ; NOTE: the subscribes for RunCompleted/RunCancelled that CALL
+        ; _SaveRunSnapshot were already done in __New (before the
+        ; services that clear state). Do not re-subscribe here.
 
         if (this._cfg.logFile != "" && FileExist(this._cfg.logFile))
         {
             this.logMonitor.Start(true)
             this._logMonitorTimer := () => this.logMonitor.Tick()
             try SetTimer(this._logMonitorTimer, 250)
-            this.log.Info("Log monitor iniciado: " this._cfg.logFile, "App")
+            this.log.Info("Log monitor started: " this._cfg.logFile, "App")
         }
         else if (this._cfg.logFile = "")
         {
-            ; v17.15.2: fresh install — logFile vazio eh esperado. INFO
-            ; em vez de WARN pra nao disparar TrayTip de "boot com avisos"
-            ; no primeiro boot do user.
-            this.log.Info("Log file nao configurado. Configure o caminho do Client.txt em Settings (tray menu) pra ativar detecção de zona.", "App")
+            ; v17.15.2: fresh install — empty logFile is expected. INFO
+            ; instead of WARN so it does not trigger the "boot with
+            ; warnings" TrayTip on the user's first boot.
+            this.log.Info("Log file not configured. Configure the Client.txt path in Settings (tray menu) to enable zone detection.", "App")
         }
         else
         {
-            ; logFile configurado mas inexistente — user errou o path.
-            ; Continua WARN pra notificar.
-            this.log.Warn("Log file configurado mas arquivo não existe: " this._cfg.logFile, "App")
+            ; logFile configured but missing — user got the path wrong.
+            ; Keep WARN to notify.
+            this.log.Warn("Log file configured but file does not exist: " this._cfg.logFile, "App")
         }
 
         this.focusAutoPause.Start()
@@ -403,29 +404,29 @@ class SpeedKalandraApp
         try SetTimer(this._runPersistTimer, 5000)
 
         this.bus.Publish(Events.AppStarted, Map())
-        this.log.Info("SpeedKalandra iniciado", "App")
+        this.log.Info("SpeedKalandra started", "App")
 
         ; ============================================================
-        ; Surface de warnings/errors do boot (v17.15).
+        ; Surface boot warnings/errors (v17.15).
         ;
-        ; LogService conta WARN/ERROR independente do minLevel. Se o
-        ; boot logou algo, emite TrayTip pra que o user saiba — sem
-        ; isso, warnings ficavam silenciosos no arquivo de log (caso do
-        ; bug "Map has no method Count" que rodou por 3 dias sem ninguém
-        ; perceber).
+        ; LogService counts WARN/ERROR regardless of minLevel. If the
+        ; boot logged anything, emit a TrayTip so the user knows —
+        ; without this, warnings stayed silent in the log file (case
+        ; of the "Map has no method Count" bug that ran for 3 days
+        ; without anyone noticing).
         ;
-        ; Reseta counters apos surface: warnings durante runtime não
-        ; acumulam no proximo boot prompt.
+        ; Resets counters after surfacing: runtime warnings don't
+        ; accumulate in the next boot prompt.
         ; ============================================================
         warnCount := this.log.GetWarnCount()
         errorCount := this.log.GetErrorCount()
         if (!this._headless && (warnCount > 0 || errorCount > 0))
         {
             label := errorCount > 0
-                ? "Boot com erros (" warnCount " warn, " errorCount " error)"
-                : "Boot com avisos (" warnCount " warn)"
+                ? "Boot with errors (" warnCount " warn, " errorCount " error)"
+                : "Boot with warnings (" warnCount " warn)"
             try TrayTip("SpeedKalandra",
-                label . "`nVeja data\speedkalandra.log para detalhes.",
+                label . "`nSee data\speedkalandra.log for details.",
                 "Iconi")
         }
         try this.log.ResetCounts()
@@ -505,27 +506,27 @@ class SpeedKalandraApp
         this.bus.Subscribe(Events.RunStarted,
             (data) => this._OnRunStartedForXp(data))
 
-        ; v17.13 — reset de PBs via tray menu
+        ; v17.13 — reset PBs via tray menu
         this.bus.Subscribe(Commands.ResetPersonalBestsRequested,
             (data) => this._OnResetPersonalBestsRequested())
 
-        ; v0.1.0 — export de runs (publicado pelos botoes do RunHistoryDialog)
+        ; v0.1.0 — run export (published by RunHistoryDialog buttons)
         this.bus.Subscribe(Commands.ExportRunsRequested,
             (data) => this._OnExportRunsRequested(data))
 
-        ; v0.1.0 — import de runs (publicado pelo botao Import... do RunHistoryDialog)
+        ; v0.1.0 — run import (published by the Import... button in RunHistoryDialog)
         this.bus.Subscribe(Commands.ImportRunsRequested,
             (data) => this._OnImportRunsRequested(data))
 
-        ; v0.1.0 Fase 5 — logging de export/import pra rastreio em
-        ; data\speedkalandra.log. Subscriber-only, sem mudar services.
+        ; v0.1.0 Phase 5 — export/import logging for tracing in
+        ; data\speedkalandra.log. Subscriber-only, doesn't change services.
         this.bus.Subscribe(Events.RunsExported,
             (data) => this._LogRunsExported(data))
         this.bus.Subscribe(Events.RunsImported,
             (data) => this._LogRunsImported(data))
 
-        ; v0.1.3: aplicar penalty de morte no timer em tempo real (era
-        ; antes so visivel post-finalize no plot).
+        ; v0.1.3: apply death penalty to the timer in real time (it
+        ; was only visible post-finalize in the plot before).
         this.bus.Subscribe(Events.DeathDetected,
             (data) => this._OnDeathApplyTimerPenalty(data))
     }
@@ -533,17 +534,18 @@ class SpeedKalandraApp
     ; ============================================================
     ; _OnDeathApplyTimerPenalty (v0.1.3)
     ;
-    ; Handler de Evt.DeathDetected. Se cfg.deathPenaltyEnabled e a run
-    ; esta ativa, adiciona cfg.deathPenaltyMs ao timer via
-    ; TimerService.AddPenaltyMs. O usuario ve o ponteiro saltar pra
-    ; frente no overlay assim que morre.
+    ; Handler for Evt.DeathDetected. If cfg.deathPenaltyEnabled and
+    ; the run is active, adds cfg.deathPenaltyMs to the timer via
+    ; TimerService.AddPenaltyMs. The user sees the pointer jump
+    ; forward in the overlay as soon as they die.
     ;
-    ; A categoria "Deaths" no plot post-finalize continua sendo
-    ; count*penalty (RunStatsPlotBuilder._AddDeathDetails). O totalMs do
-    ; plot ja inclui essa soma porque _AddZoneDetails / _AddLoadingDetails
-    ; cobrem o tempo real (sem penalty) e _AddDeathDetails fornece a
-    ; penalty separada — mesma soma do runMs agora (que ja inclui
-    ; penalty incorporado).
+    ; The "Deaths" category in the post-finalize plot continues to
+    ; be count*penalty (RunStatsPlotBuilder._AddDeathDetails). The
+    ; plot's totalMs already includes that sum because
+    ; _AddZoneDetails / _AddLoadingDetails cover real time (no
+    ; penalty) and _AddDeathDetails provides the penalty separately
+    ; — same sum as the current runMs (which already has the penalty
+    ; baked in).
     ; ============================================================
     _OnDeathApplyTimerPenalty(data)
     {
@@ -556,15 +558,15 @@ class SpeedKalandraApp
             return
         try this.timer.AddPenaltyMs(penaltyMs)
         if IsObject(this.log)
-            try this.log.Info("Death penalty aplicada ao timer: +" . penaltyMs . " ms", "App")
+            try this.log.Info("Death penalty applied to timer: +" . penaltyMs . " ms", "App")
     }
 
     ; ============================================================
     ; _OnExportRunsRequested (v0.1.0)
     ;
-    ; Handler de Commands.ExportRunsRequested. Espera `data` ter
-    ; o campo "runIds" (Array<string>). Repassa pro ExportOptionsDialog
-    ; que faz o resto (opcoes + path picker + chamada do service).
+    ; Handler for Commands.ExportRunsRequested. Expects `data` to have
+    ; the "runIds" field (Array<string>). Forwards to ExportOptionsDialog
+    ; which does the rest (options + path picker + service call).
     ; ============================================================
     _OnExportRunsRequested(data)
     {
@@ -583,11 +585,11 @@ class SpeedKalandraApp
     ; ============================================================
     ; _OnImportRunsRequested (v0.1.0)
     ;
-    ; Handler de Commands.ImportRunsRequested. Espera `data` ter
-    ; o campo "path" (string apontando pro .json). Chama Preview
-    ; do RunImportService; se sucesso, abre o ImportPreviewDialog.
-    ; Se falhar (arquivo invalido, schema errado, etc), mostra
-    ; MsgBox com erros.
+    ; Handler for Commands.ImportRunsRequested. Expects `data` to have
+    ; the "path" field (string pointing to the .json). Calls Preview
+    ; on RunImportService; on success, opens the ImportPreviewDialog.
+    ; On failure (invalid file, wrong schema, etc.), shows a MsgBox
+    ; with the errors.
     ; ============================================================
     _OnImportRunsRequested(data)
     {
@@ -613,12 +615,13 @@ class SpeedKalandraApp
     }
 
     ; ============================================================
-    ; _LogRunsExported / _LogRunsImported (v0.1.0 Fase 5)
+    ; _LogRunsExported / _LogRunsImported (v0.1.0 Phase 5)
     ;
-    ; Subscribers de Evt.RunsExported / Evt.RunsImported. Registram
-    ; no LogService pra que operacoes de export/import aparecam em
-    ; data/speedkalandra.log. Sem isso, debug fica cego — os services
-    ; nao tem log injetado (decisao deliberada pra mante-los simples).
+    ; Subscribers for Evt.RunsExported / Evt.RunsImported. Record to
+    ; LogService so that export/import operations appear in
+    ; data/speedkalandra.log. Without this, debug is blind — the
+    ; services have no injected log (deliberate decision to keep
+    ; them simple).
     ; ============================================================
     _LogRunsExported(data)
     {
@@ -646,14 +649,14 @@ class SpeedKalandraApp
         if !IsObject(data)
             return
         name      := data.Has("character") ? data["character"] : ""
-        ; v0.1.1: `class` colide com keyword `class` do AHK v2. Usar `charClass`.
+        ; v0.1.1: `class` collides with the AHK v2 `class` keyword. Use `charClass`.
         charClass := data.Has("class")     ? data["class"]     : ""
         level     := data.Has("level")     ? data["level"]     : 0
         this.xpService.SetCharacter(name, charClass, level)
         if (name != "")
         {
             this._cfg.characterName := name
-            ; v17.15 (Bug #2): propaga pro filtro de DeathDetected
+            ; v17.15 (Bug #2): propagate to the DeathDetected filter
             try this.logMonitor.SetCharacterName(name)
         }
         if (charClass != "")
@@ -677,19 +680,19 @@ class SpeedKalandraApp
 
     _OnZoneEnteredForLevel(data)
     {
-        ; v17.15 (Bug #9): so reseta level pra 1 na PRIMEIRA entrada
-        ; do Riverbank em uma run nova.
+        ; v17.15 (Bug #9): only resets level to 1 on the FIRST entry
+        ; into Riverbank in a fresh run.
         ;
-        ; Antes: InStr(zone, "Riverbank") + reset incondicional.
-        ; Problema 1: substring match (qualquer zona com "Riverbank"
-        ;             no nome casava — pouco provavel em PoE2 mas
-        ;             fragil contra mudancas de nome).
-        ; Problema 2: re-entrada (death respawn, portal, party invite)
-        ;             resetava level cacheado, causando XP display errado
-        ;             ate o proximo CharacterLevelUp.
+        ; Before: InStr(zone, "Riverbank") + unconditional reset.
+        ; Problem 1: substring match (any zone with "Riverbank" in
+        ;            its name would match — unlikely in PoE2 but
+        ;            fragile against name changes).
+        ; Problem 2: re-entry (death respawn, portal, party invite)
+        ;            reset the cached level, causing wrong XP display
+        ;            until the next CharacterLevelUp.
         ;
-        ; Agora: nome exato "The Riverbank" + flag _riverbankSeenInRun.
-        ; Flag eh resetado em RunStarted (NEW run) e RunEnded (Reset/Cancel).
+        ; Now: exact name "The Riverbank" + _riverbankSeenInRun flag.
+        ; Flag is cleared on RunStarted (NEW run) and RunEnded (Reset/Cancel).
         if !IsObject(data) || !data.Has("zoneName")
             return
         zone := data["zoneName"]
@@ -702,16 +705,16 @@ class SpeedKalandraApp
         this._cfg.characterLevel := 1
     }
 
-    ; v17.14 — Handler de RunStarted que NAO reseta XP area quando a
-    ; run vem de Hydrate (reload do app). Hydrate restaura state
-    ; persistido; resetar XP area perderia info acumulada da run.
+    ; v17.14 — RunStarted handler that does NOT reset XP area when the
+    ; run comes from Hydrate (app reload). Hydrate restores persisted
+    ; state; resetting XP area would lose accumulated info from the run.
     _OnRunStartedForXp(data)
     {
         isHydrate := IsObject(data) && data.Has("hydrated") && data["hydrated"]
         if isHydrate
             return
         try this.xpService.ResetCurrentArea()
-        ; v17.15 (Bug #9): nova run, libera o reset de level no Riverbank
+        ; v17.15 (Bug #9): new run, release the level reset on Riverbank
         this._riverbankSeenInRun := false
     }
 
@@ -720,43 +723,43 @@ class SpeedKalandraApp
         try this.runState.ClearZoneTotals()
         this._lastSavedLoadingTotal := -1
         this._lastSavedZoneTotalsHash := ""
-        ; v17.15 (Bug #9): fim de run, libera flag pra proxima
+        ; v17.15 (Bug #9): end of run, release the flag for the next one
         this._riverbankSeenInRun := false
     }
 
     ; ============================================================
     ; _PromptLogFileSetupIfNeeded (v0.1.3)
     ;
-    ; Bloqueia o boot ate o usuario configurar um Client.txt valido.
+    ; Blocks boot until the user configures a valid Client.txt.
     ;
-    ; Pre-condicoes pra MOSTRAR o dialog:
-    ;   - !this._headless (testes pulam silenciosamente)
-    ;   - cfg.logFile vazio  OR  arquivo configurado nao existe
+    ; Preconditions to SHOW the dialog:
+    ;   - !this._headless (tests silently skip)
+    ;   - cfg.logFile empty  OR  configured file does not exist
     ;
-    ; Default sugerido eh o path padrao do Steam (PoE2 instalado via
-    ; Steam). Versao standalone (GGG launcher) tem outro path; usuario
-    ; troca via Browse.
+    ; The suggested default is the Steam path (PoE2 installed via Steam).
+    ; The standalone version (GGG launcher) has a different path; the
+    ; user changes it via Browse.
     ;
-    ; Botoes:
-    ;   OK — se path valido (FileExist), salva no INI e prossegue.
-    ;        Se path invalido, mostra erro e mantem dialog aberto.
-    ;   Cancel — ExitApp() (encerra o programa). User pediu explici
-    ;            tamente que o app NAO funcione sem Client.txt.
+    ; Buttons:
+    ;   OK — if path is valid (FileExist), saves to the INI and proceeds.
+    ;        If path is invalid, shows an error and keeps the dialog open.
+    ;   Cancel — ExitApp() (closes the program). User explicitly asked
+    ;            that the app NOT run without Client.txt.
     ; ============================================================
     _PromptLogFileSetupIfNeeded()
     {
         if this._headless
             return
 
-        ; Ja temos um path valido? Nao precisa configurar.
+        ; Do we already have a valid path? Then no setup is needed.
         if (this._cfg.logFile != "" && FileExist(this._cfg.logFile))
             return
 
         defaultPath := "C:\Program Files (x86)\Steam\steamapps\common\Path of Exile 2\logs\Client.txt"
 
-        ; Pre-fill: se ja tinha um path configurado mas o arquivo sumiu,
-        ; preserva o path antigo pra o usuario corrigir; caso contrario,
-        ; usa o default do Steam.
+        ; Pre-fill: if there was already a configured path but the file
+        ; is gone, preserve the old path for the user to correct;
+        ; otherwise, use the Steam default.
         initialPath := this._cfg.logFile != "" ? this._cfg.logFile : defaultPath
 
         choice := { value: "", path: "" }
@@ -776,7 +779,7 @@ class SpeedKalandraApp
             . " default location when PoE2 is installed via Steam.\n\nIf your installation"
             . " is somewhere else, use Browse to point to your own Client.txt. The app"
             . " will not start without a valid path."
-        ; AHK v2 nao reconhece \n; converte pra `n
+        ; AHK v2 doesn't recognize \n; convert to `n
         bodyText := StrReplace(bodyText, "\n", "`n")
         g.Add("Text", "x16 y44 w560 h60", bodyText)
 
@@ -794,12 +797,12 @@ class SpeedKalandraApp
         )
         btnBrowse.OnEvent("Click", browseHandler)
 
-        ; Status line (vazio inicialmente, ganha texto vermelho em erro)
+        ; Status line (empty initially, gets red text on error)
         g.SetFont("s9", "Segoe UI")
         statusLbl := g.Add("Text",
             "x16 y162 w560 h20 c" Theme.Color("danger"), "")
 
-        ; Botoes
+        ; Buttons
         btnOk := g.Add("Button", "x376 y196 w100 h30 Default", "OK")
         btnCancel := g.Add("Button", "x484 y196 w92 h30", "Cancel")
 
@@ -822,7 +825,7 @@ class SpeedKalandraApp
 
         g.Show("w592 h240")
 
-        ; Bloqueia ate user dismisse
+        ; Block until user dismisses
         hwnd := g.Hwnd
         while (choice.value = "" && WinExist("ahk_id " hwnd))
             Sleep 50
@@ -830,28 +833,28 @@ class SpeedKalandraApp
         if (choice.value = "cancel")
         {
             if IsObject(this.log)
-                try this.log.Info("Setup cancelado pelo usuario: encerrando app", "App")
+                try this.log.Info("Setup cancelled by user: exiting app", "App")
             try TrayTip("SpeedKalandra",
                 "Setup cancelled. The app cannot run without Client.txt.",
                 "Iconx")
             ExitApp()
         }
 
-        ; OK: persiste o path escolhido
+        ; OK: persist the chosen path
         this._cfg.logFile := choice.path
         try this._PersistSettings()
         if IsObject(this.log)
-            try this.log.Info("Client.txt path configurado: " . choice.path, "App")
+            try this.log.Info("Client.txt path configured: " . choice.path, "App")
     }
 
-    ; Helper do setup dialog: abre FileSelect e devolve o path escolhido
-    ; (ou "" se canceled). Mantido como metodo separado pra closure capture
-    ; do path inicial.
+    ; Setup dialog helper: opens FileSelect and returns the chosen
+    ; path (or "" if cancelled). Kept as a separate method for closure
+    ; capture of the initial path.
     _SetupBrowseLog(currentValue)
     {
         try
         {
-            ; v0.1.1: `file` colide com builtin `File`. Usar `selectedFile`.
+            ; v0.1.1: `file` collides with the builtin `File`. Use `selectedFile`.
             selectedFile := FileSelect(1, currentValue,
                 "Select PoE2 Client.txt", "Log files (*.txt)")
             return selectedFile
@@ -859,9 +862,9 @@ class SpeedKalandraApp
         return ""
     }
 
-    ; Helper do setup dialog: valida que o path existe. Em caso de erro,
-    ; atualiza o label de status com mensagem vermelha. Retorna bool
-    ; indicando se prossegue.
+    ; Setup dialog helper: validates that the path exists. On error,
+    ; updates the status label with a red message. Returns a bool
+    ; indicating whether to proceed.
     _SetupValidatePath(path, statusLbl)
     {
         path := Trim(path)
@@ -881,15 +884,16 @@ class SpeedKalandraApp
     ; ============================================================
     ; _ShowDisclaimerIfNeeded (v17.15.2)
     ;
-    ; Modal no boot. Mostra dialog com disclaimer + checkbox "Don't
-    ; show again". Se user marcar checkbox e clicar "I understand",
-    ; persiste cfg.disclaimerAcknowledged = true e nao mostra mais.
+    ; Modal on boot. Shows a dialog with the disclaimer + a "Don't
+    ; show again" checkbox. If the user ticks the checkbox and clicks
+    ; "I understand", persists cfg.disclaimerAcknowledged = true and
+    ; does not show it again.
     ;
-    ; Headless mode: pula. Ja-acknowledged: pula.
+    ; Headless mode: skipped. Already-acknowledged: skipped.
     ;
-    ; O texto eh em ingles pra alcancar a maior audiencia possivel
-    ; (PoE2 eh global; player brasileiro normalmente ja domina ingles
-    ; de gaming). Mantemos o texto em um lugar so pra facil edicao.
+    ; The text is in English to reach the largest possible audience
+    ; (PoE2 is global; Brazilian players usually already know gaming
+    ; English). We keep the text in a single place for easy editing.
     ; ============================================================
     _ShowDisclaimerIfNeeded()
     {
@@ -898,9 +902,9 @@ class SpeedKalandraApp
         if this._cfg.disclaimerAcknowledged
             return
 
-        ; Texto do disclaimer (multi-line continuation section).
-        ; Whitespace inicial de cada linha eh stripado pelo AHK ate
-        ; alinhar com o `)` de fechamento.
+        ; Disclaimer text (multi-line continuation section).
+        ; Leading whitespace on each line is stripped by AHK up to the
+        ; closing `)`.
         bodyText := "
         (
 SpeedKalandra is a personal project by a player, not a developer.
@@ -936,7 +940,7 @@ If it helps your runs, great. If it doesn't fit your needs, that's fine too - th
         g.SetFont("s11 bold", "Segoe UI")
         g.Add("Text", "x16 y14 w560", "Before using SpeedKalandra...")
 
-        ; Multi-line Edit read-only com VScroll. Wrap automatico.
+        ; Multi-line Edit read-only with VScroll. Automatic wrap.
         g.SetFont("s9", "Segoe UI")
         edt := g.Add("Edit",
             "x16 y42 w560 h360 +Multi +ReadOnly +VScroll Background0xFFFFFF",
@@ -947,10 +951,10 @@ If it helps your runs, great. If it doesn't fit your needs, that's fine too - th
         chkDontShow := g.Add("Checkbox", "x16 y414 w300",
             "Don't show this disclaimer again")
 
-        ; Botao
+        ; Button
         btnOk := g.Add("Button", "x456 y410 w120 h30 Default", "I understand")
 
-        ; Handlers — closure compartilha o objeto choice por referencia
+        ; Handlers — closure shares the choice object by reference
         dismissFn := (*) => (
             choice.dontShow := chkDontShow.Value = 1,
             choice.done := true,
@@ -960,38 +964,39 @@ If it helps your runs, great. If it doesn't fit your needs, that's fine too - th
         g.OnEvent("Close",  dismissFn)
         g.OnEvent("Escape", dismissFn)
 
-        ; Centraliza na tela
+        ; Center on the screen
         g.Show("w592 h460")
 
-        ; Bloqueia ate o user dismisse (mesmo padrao do _PromptHydratedRun)
+        ; Block until user dismisses (same pattern as _PromptHydratedRun)
         hwnd := g.Hwnd
         while (!choice.done && WinExist("ahk_id " hwnd))
             Sleep 50
 
-        ; Se user marcou checkbox, persiste o ack pra nao mostrar mais
+        ; If the user ticked the checkbox, persist the ack so it does
+        ; not show again
         if (choice.dontShow)
         {
             this._cfg.disclaimerAcknowledged := true
             try this._PersistSettings()
             if IsObject(this.log)
-                try this.log.Info("Disclaimer acknowledged pelo usuario", "App")
+                try this.log.Info("Disclaimer acknowledged by user", "App")
         }
     }
 
     ; ============================================================
     ; _PromptHydratedRun (v17.14 — F4)
     ;
-    ; Chamado no inicio do Start(). Se ha run ativa hidratada (vinda
-    ; do INI persistido), mostra GUI custom com 3 botoes:
-    ;   - Resume: no-op, app continua com a run hidratada normalmente
-    ;   - Finalize & save: chama FinalizeRun -> _SaveRunSnapshot salva
-    ;     via threshold (>=3min) e atualiza PBs
-    ;   - Discard: chama ResetRun -> limpa state sem salvar
+    ; Called at the start of Start(). If there is a hydrated active
+    ; run (from the persisted INI), shows a custom GUI with 3 buttons:
+    ;   - Resume: no-op, the app continues with the hydrated run normally
+    ;   - Finalize & save: calls FinalizeRun -> _SaveRunSnapshot saves
+    ;     via threshold (>=3min) and updates PBs
+    ;   - Discard: calls ResetRun -> clears state without saving
     ;
-    ; Headless mode: pula (default = Resume, comportamento de testes).
+    ; Headless mode: skipped (default = Resume, test behavior).
     ;
-    ; GUI bloqueia ate o user escolher (modal). Sem timeout — a decisao
-    ; precisa ser explicita pra evitar estado inconsistente.
+    ; GUI blocks until user picks (modal). No timeout — the decision
+    ; must be explicit to avoid inconsistent state.
     ; ============================================================
     _PromptHydratedRun()
     {
@@ -1000,16 +1005,16 @@ If it helps your runs, great. If it doesn't fit your needs, that's fine too - th
         if !IsObject(this.runService) || !this.runService.IsActive()
             return
 
-        ; v17.15 (Bug #5): pausa timer durante a decisao do usuario.
+        ; v17.15 (Bug #5): pause the timer during the user's decision.
         ;
-        ; Antes: loop Sleep 50 bloqueava thread principal sem desabilitar
-        ; o cronometro. Timer hidratado em "running" continuava contando
-        ; durante o tempo de decisao (potencialmente minutos) — dispatch:
-        ; pra speedrun onde 1s importa, eh inadmissivel.
+        ; Before: a Sleep 50 loop blocked the main thread without
+        ; disabling the timer. A timer hydrated as "running" kept
+        ; counting during the decision time (potentially minutes) —
+        ; in a speedrun where 1s matters, that's unacceptable.
         ;
-        ; Agora: pausa explicita antes do prompt. Se user escolher Resume,
-        ; o timer eh retomado. Discard/Finalize zeram o timer de qualquer
-        ; forma (via ResetRun/FinalizeRun).
+        ; Now: explicit pause before the prompt. If the user picks
+        ; Resume, the timer is resumed. Discard/Finalize clear the
+        ; timer anyway (via ResetRun/FinalizeRun).
         wasRunningBeforePrompt := IsObject(this.timer) && this.timer.IsRunning()
         if wasRunningBeforePrompt
             try this.timer.Pause()
@@ -1019,7 +1024,7 @@ If it helps your runs, great. If it doesn't fit your needs, that's fine too - th
         durStr := SpeedKalandraApp._FormatMsForMsg(runMs)
         startedAt := state.startedAt != "" ? state.startedAt : "unknown"
 
-        ; Choice via closure compartilhada
+        ; Choice via shared closure
         choice := { value: "" }
 
         g := Gui("+AlwaysOnTop -MinimizeBox -MaximizeBox +ToolWindow",
@@ -1034,7 +1039,7 @@ If it helps your runs, great. If it doesn't fit your needs, that's fine too - th
         g.SetFont("s10")
         g.Add("Text", "x20 y100 w360", "What do you want to do?")
 
-        ; Botoes
+        ; Buttons
         btnResume := g.Add("Button", "x20 y140 w110 h32 Default", "Resume")
         btnResume.OnEvent("Click", (*) => (choice.value := "resume", g.Destroy()))
 
@@ -1044,60 +1049,60 @@ If it helps your runs, great. If it doesn't fit your needs, that's fine too - th
         btnDiscard := g.Add("Button", "x270 y140 w110 h32", "Discard")
         btnDiscard.OnEvent("Click", (*) => (choice.value := "discard", g.Destroy()))
 
-        ; Fechar X = Resume (default seguro — nao perde dados)
+        ; Close X = Resume (safe default — does not lose data)
         g.OnEvent("Close", (*) => (choice.value := "resume", g.Destroy()))
         g.OnEvent("Escape", (*) => (choice.value := "resume", g.Destroy()))
 
         g.Show("w400 h190")
 
-        ; Aguarda escolha (bloqueia thread). g.Destroy() acima dispara
-        ; o exit do loop.
+        ; Wait for choice (blocks the thread). g.Destroy() above
+        ; triggers the loop exit.
         hwnd := g.Hwnd
         while (choice.value = "" && WinExist("ahk_id " hwnd))
             Sleep 50
 
-        ; Aplica escolha
+        ; Apply the choice
         if (choice.value = "discard")
         {
             try this.runService.ResetRun()
-            try this.log.Info("Run hidratada descartada pelo usuario (" . durStr . ", iniciada em " . startedAt . ")", "App")
+            try this.log.Info("Hydrated run discarded by user (" . durStr . ", started at " . startedAt . ")", "App")
             try TrayTip("SpeedKalandra", "Previous run discarded.", "Mute")
         }
         else if (choice.value = "finalize")
         {
-            ; FinalizeRun publica RunCompleted -> _SaveRunSnapshot("completed")
-            ; aplica threshold e salva ou descarta
+            ; FinalizeRun publishes RunCompleted -> _SaveRunSnapshot("completed")
+            ; applies threshold and saves or discards
             try this.runService.FinalizeRun()
-            try this.log.Info("Run hidratada finalizada pelo usuario (" . durStr . ", iniciada em " . startedAt . ")", "App")
+            try this.log.Info("Hydrated run finalized by user (" . durStr . ", started at " . startedAt . ")", "App")
         }
         else
         {
-            ; "resume" (botao ou close-X): retoma o timer se estava
-            ; running antes do prompt. Se estava paused, mantem paused.
+            ; "resume" (button or close-X): resume the timer if it was
+            ; running before the prompt. If it was paused, keep paused.
             if wasRunningBeforePrompt
                 try this.timer.Resume()
         }
     }
 
     ; ============================================================
-    ; _SaveRunSnapshot (v17.14 — sem MsgBox de confirmacao, F1)
+    ; _SaveRunSnapshot (v17.14 — no confirmation MsgBox, F1)
     ;
-    ; Chamado em DOIS eventos (subscritos no __New ANTES dos services
-    ; que zeram state):
+    ; Called on TWO events (subscribed in __New BEFORE the services
+    ; that clear state):
     ;   - Evt.RunCompleted  (Ctrl+Alt+F)  -> reason = "completed"
-    ;   - Evt.RunCancelled  (CancelRun direto) -> reason = "cancelled"
+    ;   - Evt.RunCancelled  (direct CancelRun) -> reason = "cancelled"
     ;
-    ; Threshold MIN_CANCELLED_SAVE_MS (3min) aplica pra AMBOS reasons:
-    ;   - Run < 3min: descarta silenciosamente (lixo de teste)
-    ;   - Run >= 3min: salva direto, sem MsgBox
+    ; The MIN_CANCELLED_SAVE_MS threshold (3min) applies to BOTH reasons:
+    ;   - Run < 3min: silently discarded (test garbage)
+    ;   - Run >= 3min: saved directly, no MsgBox
     ;
-    ; Apos save com sucesso de uma run completed, marca o save como
-    ; "undoable" por 60s via tray menu "Undo last save". User pode
-    ; clicar pra remover do historico (PBs nao sao revertidos — se
-    ; precisar limpar PB indevido, usar "Reset PBs" do tray menu).
+    ; After a successful save of a completed run, marks the save as
+    ; "undoable" for 60s via the tray menu "Undo last save". User can
+    ; click to remove it from history (PBs are not reverted — to clear
+    ; an incorrect PB, use "Reset PBs" in the tray menu).
     ;
-    ; Falhas silenciosas: nao queremos quebrar o fluxo de finalizacao
-    ; por erro de I/O no historico.
+    ; Silent failures: we don't want to break the finalize flow because
+    ; of an I/O error in history.
     ; ============================================================
     _SaveRunSnapshot(reason)
     {
@@ -1111,17 +1116,17 @@ If it helps your runs, great. If it doesn't fit your needs, that's fine too - th
                           : Map()
             runMs := IsObject(this.timer) ? this.timer.GetRunMs() : 0
 
-            ; Threshold uniforme pra completed E cancelled (F1)
+            ; Uniform threshold for completed AND cancelled (F1)
             if (runMs < SpeedKalandraApp.MIN_CANCELLED_SAVE_MS)
             {
                 if IsObject(this.log)
                 {
-                    try this.log.Info("Run muito curta descartada (< "
+                    try this.log.Info("Run too short, discarded (< "
                         . SpeedKalandraApp.MIN_CANCELLED_SAVE_MS . "ms): "
                         . runMs . " ms (reason=" . reason . ")", "App")
                 }
-                ; TrayTip soh pra completed — cancelled eh esperado
-                ; ser silencioso (usuario cancelou intencionalmente)
+                ; TrayTip only for completed — cancelled is expected
+                ; to be silent (user cancelled intentionally)
                 if (reason = "completed" && !this._headless)
                 {
                     try TrayTip("SpeedKalandra",
@@ -1137,14 +1142,15 @@ If it helps your runs, great. If it doesn't fit your needs, that's fine too - th
             snapshot := this.statsRecorder.GetSnapshot(zoneTotals, runMs)
             buildResult := this.plotBuilder.Build(snapshot)
 
-            ; v17.15.1: captura actCheckpoints AGORA e injeta no buildResult
-            ; antes do Save. Permite que PersonalBestService.RebuildFromHistory
-            ; reconstrua PBs por ato apos delete de runs. Runs salvas antes
-            ; dessa mudanca nao tem checkpoints persistidos — rebuild os
-            ; ignora silenciosamente (read retorna Map vazio).
+            ; v17.15.1: captures actCheckpoints NOW and injects into
+            ; buildResult before Save. Allows
+            ; PersonalBestService.RebuildFromHistory to rebuild per-act
+            ; PBs after run deletes. Runs saved before this change have
+            ; no persisted checkpoints — rebuild silently ignores them
+            ; (read returns an empty Map).
             ;
-            ; Captura aqui (nao mais abaixo) garante que o save ja persista
-            ; os mesmos checkpoints que UpdateFromRun vai consumir.
+            ; Capturing here (no longer below) ensures the save
+            ; persists the same checkpoints that UpdateFromRun consumes.
             actCheckpoints := Map()
             if IsObject(this.actCheckpoints)
             {
@@ -1157,18 +1163,18 @@ If it helps your runs, great. If it doesn't fit your needs, that's fine too - th
             rid := buildResult.Has("runId") ? buildResult["runId"] : ""
             if (saved && IsObject(this.log))
             {
-                this.log.Info("Run salva no historico (" . reason . "): " . rid
+                this.log.Info("Run saved to history (" . reason . "): " . rid
                     . " (" . runMs . " ms)", "App")
             }
 
             ; --- Personal bests (v17.13) ---
-            ; Atualiza PBs SOMENTE em runs completed. Cancelled nao conta
-            ; pra PB (mesmo se passar o threshold).
+            ; Updates PBs ONLY on completed runs. Cancelled does not
+            ; count toward PB (even if it crosses the threshold).
             pbChanged := false
             if (reason = "completed" && IsObject(this.personalBest))
             {
-                ; v17.15.1: usa actCheckpoints ja capturado acima (era
-                ; capturado 2x antes — desnecessario).
+                ; v17.15.1: uses the actCheckpoints already captured above
+                ; (it used to be captured twice — unnecessary).
                 try pbChanged := this.personalBest.UpdateFromRun(runMs, rid, zoneTotals, actCheckpoints)
                 if (pbChanged && IsObject(this.log))
                 {
@@ -1178,14 +1184,14 @@ If it helps your runs, great. If it doesn't fit your needs, that's fine too - th
                         if (_ms > 0)
                             nActs += 1
                     }
-                    try this.log.Info("PB atualizado em run " . rid
+                    try this.log.Info("PB updated on run " . rid
                         . " (runMs=" . runMs . ", checkpoints=" . nActs . ")", "App")
                 }
             }
 
             ; --- TrayTip + tray menu "Undo last save" ---
-            ; Soh pra completed. Cancelled (raro agora que NewRun nao chama
-            ; CancelRun) eh silencioso.
+            ; Only for completed. Cancelled (rare now that NewRun
+            ; doesn't call CancelRun) is silent.
             if (saved && reason = "completed" && !this._headless)
             {
                 durStr := SpeedKalandraApp._FormatMsForMsg(runMs)
@@ -1198,23 +1204,24 @@ If it helps your runs, great. If it doesn't fit your needs, that's fine too - th
         }
         catch as ex
         {
-            try this.log.Warn("Falha ao salvar run no historico: " ex.Message, "App")
+            try this.log.Warn("Failed to save run to history: " ex.Message, "App")
         }
     }
 
     ; ============================================================
     ; Undo last save (v17.14 — F1)
     ;
-    ; Fluxo:
-    ;   1. _SaveRunSnapshot salva run -> _MarkUndoableSave(runId)
-    ;   2. _MarkUndoableSave armazena runId + adiciona tray menu item
-    ;      + arma SetTimer 60s
-    ;   3a. User clica "Undo last save" -> UndoLastSave() apaga arquivo +
-    ;       limpa tudo
-    ;   3b. 60s passam -> _ExpireUndoableSave() remove menu item e limpa runId
+    ; Flow:
+    ;   1. _SaveRunSnapshot saves run -> _MarkUndoableSave(runId)
+    ;   2. _MarkUndoableSave stores runId + adds tray menu item
+    ;      + arms a 60s SetTimer
+    ;   3a. User clicks "Undo last save" -> UndoLastSave() deletes
+    ;       file + clears everything
+    ;   3b. 60s pass -> _ExpireUndoableSave() removes menu item and
+    ;       clears runId
     ;
-    ; PBs NAO sao revertidos no undo (decisao deliberada — vide F1).
-    ; Pra limpar PB indevido, usar "Reset PBs" do tray menu.
+    ; PBs are NOT reverted on undo (deliberate decision — see F1).
+    ; To clear an incorrect PB, use "Reset PBs" in the tray menu.
     ; ============================================================
     _MarkUndoableSave(runId)
     {
@@ -1222,33 +1229,33 @@ If it helps your runs, great. If it doesn't fit your needs, that's fine too - th
             return
         this._lastSavedRunId := runId
 
-        ; Cancela timer antigo se existia (save anterior ainda undoable)
+        ; Cancel the old timer if it existed (previous save still undoable)
         if (this._undoTimerFn != "")
         {
             try SetTimer(this._undoTimerFn, 0)
             this._undoTimerFn := ""
         }
 
-        ; Adiciona tray menu item (helper global em speedkalandra.ahk)
+        ; Adds tray menu item (global helper in speedkalandra.ahk)
         try SpeedKalandraTrayAddUndoItem()
 
-        ; Arma timer pra expirar apos 60s (negativo = roda 1 vez)
+        ; Arms a timer to expire after 60s (negative = run once)
         this._undoTimerFn := () => this._ExpireUndoableSave()
         try SetTimer(this._undoTimerFn, -60000)
     }
 
     UndoLastSave()
     {
-        ; v0.1.1: `runId` local colide com classe `RunId`. Usar `currentRunId`.
+        ; v0.1.1: local `runId` collides with the `RunId` class. Use `currentRunId`.
         currentRunId := this._lastSavedRunId
         if (currentRunId = "")
         {
-            ; Item de menu obsoleto — limpa por garantia
+            ; Stale menu item — clean up just in case
             try SpeedKalandraTrayRemoveUndoItem()
             return
         }
 
-        ; Apaga arquivo do historico
+        ; Delete the history file
         deleted := false
         try
         {
@@ -1258,7 +1265,7 @@ If it helps your runs, great. If it doesn't fit your needs, that's fine too - th
         catch
             deleted := false
 
-        ; Limpa state interno
+        ; Clear internal state
         this._lastSavedRunId := ""
         if (this._undoTimerFn != "")
         {
@@ -1270,7 +1277,7 @@ If it helps your runs, great. If it doesn't fit your needs, that's fine too - th
         if IsObject(this.log)
         {
             try this.log.Info("Undo last save: " . currentRunId
-                . (deleted ? " (removido)" : " (arquivo nao encontrado)"), "App")
+                . (deleted ? " (removed)" : " (file not found)"), "App")
         }
         if !this._headless
         {
@@ -1291,9 +1298,10 @@ If it helps your runs, great. If it doesn't fit your needs, that's fine too - th
     ; ============================================================
     ; _OnResetPersonalBestsRequested (v17.13)
     ;
-    ; Subscrito a Commands.ResetPersonalBestsRequested (tray menu).
-    ; Mostra MsgBox de confirmacao (acao destrutiva) e chama Reset() no
-    ; PersonalBestService. Em headless mode, reseta direto sem prompt.
+    ; Subscribed to Commands.ResetPersonalBestsRequested (tray menu).
+    ; Shows a confirmation MsgBox (destructive action) and calls
+    ; Reset() on PersonalBestService. In headless mode, resets directly
+    ; without prompting.
     ; ============================================================
     _OnResetPersonalBestsRequested()
     {
@@ -1306,7 +1314,7 @@ If it helps your runs, great. If it doesn't fit your needs, that's fine too - th
             return
         }
 
-        ; Mostra contexto do que vai ser perdido
+        ; Shows context of what will be lost
         runPbStr := this.personalBest.HasRunPb()
                     ? SpeedKalandraApp._FormatMsForMsg(this.personalBest.GetRunPbMs())
                     : "—"
@@ -1339,23 +1347,24 @@ If it helps your runs, great. If it doesn't fit your needs, that's fine too - th
             return
 
         this.personalBest.Reset()
-        try this.log.Info("PBs resetados pelo usuario (run PB: " . runPbStr
-            . ", " . actPbCount . " atos, " . zoneCount . " zonas)", "App")
+        try this.log.Info("PBs reset by user (run PB: " . runPbStr
+            . ", " . actPbCount . " acts, " . zoneCount . " zones)", "App")
         try TrayTip("SpeedKalandra", "Personal Bests reset.", "Mute")
     }
 
-    ; Helper static pra formatar ms em MM:SS ou H:MM:SS (pra mensagens).
-    ; v0.1.2 (auditoria #19): delega a Duration.FormatMs (era 4 copias
-    ; identicas espalhadas; consolidacao em domain/values/duration.ahk).
+    ; Static helper to format ms as MM:SS or H:MM:SS (for messages).
+    ; v0.1.2 (audit #19): delegates to Duration.FormatMs (used to be 4
+    ; identical copies scattered around; consolidated in
+    ; domain/values/duration.ahk).
     static _FormatMsForMsg(ms) => Duration.FormatMs(ms)
 
     _PersistRunData()
     {
         try this.runService.PersistTick()
 
-        ; v17.15 (Bug #8): catch explicito — ARCHITECTURE.md proibe
-        ; try silencioso. _PersistRunData roda a cada 5s; se algo
-        ; falhar (disco cheio, INI corrompido), precisamos saber.
+        ; v17.15 (Bug #8): explicit catch — ARCHITECTURE.md forbids
+        ; silent try. _PersistRunData runs every 5s; if something
+        ; fails (disk full, corrupt INI), we need to know.
         try
         {
             if IsObject(this.loadingTotals)
@@ -1372,7 +1381,7 @@ If it helps your runs, great. If it doesn't fit your needs, that's fine too - th
         }
         catch as ex
         {
-            try this.log.Warn("Falha ao persistir loading total: " . ex.Message, "App")
+            try this.log.Warn("Failed to persist loading total: " . ex.Message, "App")
         }
 
         try
@@ -1390,7 +1399,7 @@ If it helps your runs, great. If it doesn't fit your needs, that's fine too - th
         }
         catch as ex
         {
-            try this.log.Warn("Falha ao persistir zone totals: " . ex.Message, "App")
+            try this.log.Warn("Failed to persist zone totals: " . ex.Message, "App")
         }
     }
 
@@ -1398,10 +1407,10 @@ If it helps your runs, great. If it doesn't fit your needs, that's fine too - th
     {
         try this.runService.PersistTick()
 
-        ; v17.15 (Bug #8): catch explicito (mesma motivacao do _PersistRunData).
-        ; _PersistRunDataFull eh chamado em Stop()/OnExit — ultima chance
-        ; de salvar antes de fechar. Falhar silenciosamente significa perda
-        ; de dados sem feedback.
+        ; v17.15 (Bug #8): explicit catch (same motivation as
+        ; _PersistRunData). _PersistRunDataFull is called in Stop()/
+        ; OnExit — last chance to save before closing. Failing
+        ; silently means data loss with no feedback.
         try
         {
             if IsObject(this.loadingTotals)
@@ -1415,7 +1424,7 @@ If it helps your runs, great. If it doesn't fit your needs, that's fine too - th
         }
         catch as ex
         {
-            try this.log.Warn("Falha ao persistir loading total (Full): " . ex.Message, "App")
+            try this.log.Warn("Failed to persist loading total (Full): " . ex.Message, "App")
         }
 
         try
@@ -1429,7 +1438,7 @@ If it helps your runs, great. If it doesn't fit your needs, that's fine too - th
         }
         catch as ex
         {
-            try this.log.Warn("Falha ao persistir zone totals (Full): " . ex.Message, "App")
+            try this.log.Warn("Failed to persist zone totals (Full): " . ex.Message, "App")
         }
     }
 

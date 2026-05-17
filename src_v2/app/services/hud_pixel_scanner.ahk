@@ -1,28 +1,29 @@
 ; ============================================================
-; HudPixelScanner — detecta HUD do PoE2 via pixel sampling (Fase 9.2)
+; HudPixelScanner — detects the PoE2 HUD via pixel sampling (Phase 9.2)
 ; ============================================================
 ;
-; Port do GetVisualHudStats / IsHud*Pixel do legado (loading_visual.ahk).
-; Recebe coordenadas da janela do PoE2 e amostra pixels em 3 regioes:
+; Port of legacy GetVisualHudStats / IsHud*Pixel (loading_visual.ahk).
+; Takes PoE2 window coordinates and samples pixels in 3 regions:
 ;
-;   - Mana   (canto inferior direito):  rx 0.825-0.985, ry 0.760-0.985
-;   - Life   (canto inferior esquerdo): rx 0.025-0.170, ry 0.760-0.985
-;   - Hotbar (centro inferior):         rx 0.365-0.750, ry 0.835-0.990
+;   - Mana   (bottom-right corner):  rx 0.825-0.985, ry 0.760-0.985
+;   - Life   (bottom-left corner):   rx 0.025-0.170, ry 0.760-0.985
+;   - Hotbar (bottom center):        rx 0.365-0.750, ry 0.835-0.990
 ;
-; Threshold: HUD visivel se manaHits >= 2 OU lifeHits >= 2 OU
-;            (lifeHits + manaHits) >= 3 OU hotbarHits >= 8.
+; Threshold: HUD visible if manaHits >= 2 OR lifeHits >= 2 OR
+;            (lifeHits + manaHits) >= 3 OR hotbarHits >= 8.
 ;
-; Filosofia: pure logic, deps injetaveis pra teste:
+; Philosophy: pure logic, injectable deps for testing:
 ;   - pixelReader: closure (x, y) -> color RGB integer
 ;
-; Em prod, pixelReader sera (x, y) => PixelGetColor(x, y, "RGB").
-; Em teste, pode ser Map de coords -> cor pra simular HUD presente/ausente.
+; In prod, pixelReader will be (x, y) => PixelGetColor(x, y, "RGB").
+; In tests, can be a Map of coords -> color to simulate HUD
+; present/absent.
 
 class HudPixelScanner
 {
     _pixelReader := ""
 
-    ; Constantes de regiao (relativas a janela do jogo)
+    ; Region constants (relative to the game window)
     static MANA_RX1   := 0.825
     static MANA_RY1   := 0.760
     static MANA_RX2   := 0.985
@@ -43,7 +44,7 @@ class HudPixelScanner
     __New(pixelReader := "")
     {
         if (pixelReader != "" && !IsObject(pixelReader))
-            throw TypeError("HudPixelScanner: 'pixelReader' deve ser callable")
+            throw TypeError("HudPixelScanner: 'pixelReader' must be callable")
 
         if (pixelReader = "")
             pixelReader := (x, y) => HudPixelScanner._DefaultPixelReader(x, y)
@@ -53,8 +54,8 @@ class HudPixelScanner
 
     ; Scan(wx, wy, ww, wh) -> Map(visible, lifeHits, manaHits, hotbarHits)
     ;
-    ; Mesma logica do legado: mana primeiro (sinal mais estavel), early
-    ; exit se >=2; senao tenta life; senao hotbar como auxiliar.
+    ; Same logic as legacy: mana first (most stable signal), early
+    ; exit if >=2; otherwise tries life; otherwise hotbar as auxiliary.
     Scan(wx, wy, ww, wh)
     {
         if (ww <= 0 || wh <= 0)
@@ -87,7 +88,7 @@ class HudPixelScanner
     ; Pixel classifiers (pure)
     ; ============================================================
 
-    ; Life: vermelho dominante. r >= 55, r > g + 18, r > b + 12.
+    ; Life: dominant red. r >= 55, r > g + 18, r > b + 12.
     static IsLifePixel(color)
     {
         r := (color >> 16) & 0xFF
@@ -96,7 +97,7 @@ class HudPixelScanner
         return (r >= 55 && r > g + 18 && r > b + 12)
     }
 
-    ; Mana: azul/ciano dominante. b >= 55, b > r + 12, b >= g + 4.
+    ; Mana: dominant blue/cyan. b >= 55, b > r + 12, b >= g + 4.
     static IsManaPixel(color)
     {
         r := (color >> 16) & 0xFF
@@ -105,7 +106,7 @@ class HudPixelScanner
         return (b >= 55 && b > r + 12 && b >= g + 4)
     }
 
-    ; Hotbar: skill icons coloridos saturados. max >= 80, range >= 55.
+    ; Hotbar: saturated colorful skill icons. max >= 80, range >= 55.
     static IsHotbarPixel(color)
     {
         r := (color >> 16) & 0xFF
@@ -155,7 +156,8 @@ class HudPixelScanner
         return hits
     }
 
-    ; Le um pixel via reader injetado. Retorna -1 em erro pra caller skipar.
+    ; Reads a pixel via the injected reader. Returns -1 on error so
+    ; the caller can skip.
     _ReadPixel(x, y)
     {
         try

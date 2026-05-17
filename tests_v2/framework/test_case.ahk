@@ -1,21 +1,21 @@
 ; ============================================================
-; TestCase - classe base para suites de teste
+; TestCase - base class for test suites
 ; ============================================================
 ;
-; Cada suite eh uma classe que extende TestCase e define:
-;   - static Tests := ["nome_do_metodo_1", ...]  - lista explicita
-;   - Setup()    (opcional) - roda antes de cada teste
-;   - Teardown() (opcional) - roda depois de cada teste
-;   - Metodos de teste cujo nome consta em static Tests
+; Each suite is a class that extends TestCase and defines:
+;   - static Tests := ["method_name_1", ...]  - explicit list
+;   - Setup()    (optional) - runs before each test
+;   - Teardown() (optional) - runs after each test
+;   - Test methods whose names are listed in static Tests
 ;
-; O TestRunner cria UMA nova instancia da suite por teste, garantindo
-; isolamento de estado entre testes. Setup roda em estado limpo.
+; The TestRunner creates ONE new instance of the suite per test,
+; guaranteeing state isolation between tests. Setup runs in a clean state.
 ;
-; Discovery eh explicita (static Tests array) em vez de reflection
-; porque enumerar metodos de uma classe em AHK v2 e' flaky, e porque
-; queremos que adicionar um teste seja uma acao visivel no diff.
+; Discovery is explicit (static Tests array) instead of reflection
+; because enumerating methods of a class in AHK v2 is flaky, and
+; because we want adding a test to be a visible action in the diff.
 ;
-; Exemplo:
+; Example:
 ;
 ;   class FooTests extends TestCase
 ;   {
@@ -41,12 +41,12 @@
 
 class TestCase
 {
-    ; Hook opcional - sobrescrito por subclasses
+    ; Optional hook - overridden by subclasses
     Setup()
     {
     }
 
-    ; Hook opcional - sobrescrito por subclasses
+    ; Optional hook - overridden by subclasses
     Teardown()
     {
     }

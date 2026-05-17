@@ -2,12 +2,12 @@
 ; HotkeyServiceTests
 ; ============================================================
 ;
-; HotkeyService registra hotkeys globais via Hotkey() builtin. Em modo
-; headless=true (usado em testes), Hotkey()/Send() nao sao chamados —
-; o service so registra internamente em _bound, e TriggerAction
-; publica diretamente no bus.
+; HotkeyService registers global hotkeys via the Hotkey() builtin.
+; In headless=true mode (used in tests), Hotkey()/Send() are not
+; called — the service only registers internally in _bound, and
+; TriggerAction publishes directly on the bus.
 ;
-; ACTIONS suportadas (cada uma mapeia 1:1 pra um Command):
+; Supported ACTIONS (each maps 1:1 to a Command):
 ;   StartPause       -> Cmd.TimerToggleRequested
 ;   NewRun           -> Cmd.NewRunRequested
 ;   ResetRun         -> Cmd.ResetRunRequested
@@ -18,8 +18,8 @@
 ;   ToggleSteveLock  -> Cmd.ToggleSteveLockRequested
 ;   PlotRunStats     -> Cmd.OpenRunStatsPlotRequested
 ;
-; FocusChangingActions (Settings, PlotRunStats) tem cleanup de modifier
-; antes de publicar (Bug v17.14: stuck Ctrl/Alt apos abrir dialog).
+; FocusChangingActions (Settings, PlotRunStats) have modifier cleanup
+; before publishing (Bug v17.14: stuck Ctrl/Alt after opening dialog).
 
 
 class HotkeyServiceTests extends TestCase
@@ -43,7 +43,7 @@ class HotkeyServiceTests extends TestCase
     }
 
     static Tests := [
-        ; --- Construtor ---
+        ; --- Constructor ---
         "constructor_throws_when_bus_not_event_bus",
         "constructor_default_headless_false",
         "constructor_accepts_headless_true",
@@ -118,7 +118,7 @@ class HotkeyServiceTests extends TestCase
     }
 
     ; ============================================================
-    ; Construtor
+    ; Constructor
     ; ============================================================
 
     constructor_throws_when_bus_not_event_bus()
@@ -128,15 +128,15 @@ class HotkeyServiceTests extends TestCase
 
     constructor_default_headless_false()
     {
-        ; Default headless=false — mas nao vamos chamar Start() aqui
-        ; pra evitar Hotkey() real. So instancia e ve que nao crasha.
+        ; Default headless=false — but we won't call Start() here to
+        ; avoid real Hotkey(). Just instantiate and see it doesn't crash.
         svc2 := HotkeyService(this.bus)
         Assert.False(svc2.IsRunning())
     }
 
     constructor_accepts_headless_true()
     {
-        Assert.False(this.svc.IsRunning())   ; nao Start() ainda
+        Assert.False(this.svc.IsRunning())   ; not Start()-ed yet
     }
 
     ; ============================================================
@@ -159,7 +159,7 @@ class HotkeyServiceTests extends TestCase
 
     hydrate_coerces_values_to_string()
     {
-        ; Integer key value vira string
+        ; Integer key value becomes string
         this.svc.Hydrate(Map("StartPause", 123))
         this.svc.Start()
         bound := this.svc.GetBoundKeys()
@@ -171,7 +171,7 @@ class HotkeyServiceTests extends TestCase
         this.svc.Hydrate(Map("StartPause", "^!t"))
         this.svc.Hydrate(Map("NewRun", "^!n"))
         this.svc.Start()
-        Assert.Equal(1, this.svc.Count(), "Hydrate substitui, nao acumula")
+        Assert.Equal(1, this.svc.Count(), "Hydrate replaces, doesn't accumulate")
         Assert.True(this.svc.GetBoundKeys().Has("^!n"))
     }
 
@@ -212,7 +212,7 @@ class HotkeyServiceTests extends TestCase
 
     focus_changing_actions_does_not_include_start_pause()
     {
-        ; StartPause eh frequente, cleanup quebraria combos do PoE2
+        ; StartPause is frequent, cleanup would break PoE2 combos
         Assert.False(HotkeyService.FocusChangingActions.Has("StartPause"))
     }
 
@@ -231,7 +231,7 @@ class HotkeyServiceTests extends TestCase
     {
         this.svc.Hydrate(Map(
             "StartPause",      "^!t",
-            "UnknownAction",   "^!x"   ; nao tem entry no ActionToCommand
+            "UnknownAction",   "^!x"   ; no entry in ActionToCommand
         ))
         this.svc.Start()
         Assert.Equal(1, this.svc.Count(), "UnknownAction skipped")
@@ -271,7 +271,7 @@ class HotkeyServiceTests extends TestCase
         ))
         this.svc.Start()
         Assert.Equal(2, this.svc.Count(),
-            "StartPause + Settings validos; Unknown + ResetRun(empty) skipped")
+            "StartPause + Settings valid; Unknown + ResetRun(empty) skipped")
     }
 
     ; ============================================================
@@ -366,7 +366,7 @@ class HotkeyServiceTests extends TestCase
 
     trigger_action_all_9_actions_publish_correctly()
     {
-        ; Verifica que cada action publica no command correto
+        ; Verifies that each action publishes to the correct command
         cases := [
             ["StartPause",      Commands.TimerToggleRequested],
             ["NewRun",          Commands.NewRunRequested],
@@ -385,7 +385,7 @@ class HotkeyServiceTests extends TestCase
             capturedEvents := []
             this.bus.Subscribe(cmdName, (data) => capturedEvents.Push(data))
             this.svc.TriggerAction(actionName)
-            Assert.Equal(1, capturedEvents.Length, "Action " actionName " nao publicou")
+            Assert.Equal(1, capturedEvents.Length, "Action " actionName " did not publish")
         }
     }
 }

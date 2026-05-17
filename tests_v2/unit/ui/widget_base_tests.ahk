@@ -2,20 +2,21 @@
 ; WidgetBaseTests
 ; ============================================================
 ;
-; WidgetBase eh classe base de todos os widgets. Testavel logica:
-;   - Construtor validations
-;   - Subscribe automatico a Evt.CtrlStateChanged
-;   - Queries (IsVisible/IsRendered/IsModeVisible/GetPosition/GetScale/GetSize)
-;   - Mutators (SetVisible/SetModeVisible/SetActivePosition/SetScale/SetPosition)
-;     com clamp e callback _Persist
+; WidgetBase is the base class for all widgets. Testable logic:
+;   - Constructor validations
+;   - Automatic subscribe to Evt.CtrlStateChanged
+;   - Queries (IsVisible/IsRendered/IsModeVisible/GetPosition/
+;     GetScale/GetSize)
+;   - Mutators (SetVisible/SetModeVisible/SetActivePosition/
+;     SetScale/SetPosition) with clamp and _Persist callback
 ;   - _OnCtrlStateChanged handler
 ;
-; NAO TESTAVEL EM HEADLESS: Show/Hide/ReRender (criam Gui real, chamam
-; WinSetTransparent etc). Tests evitam tocar nesses caminhos mantendo
-; position.visible=false (ReRender vira no-op).
+; NOT TESTABLE IN HEADLESS: Show/Hide/ReRender (create a real Gui,
+; call WinSetTransparent etc). Tests avoid these paths by keeping
+; position.visible=false (ReRender becomes a no-op).
 ;
-; STUB: _WidgetBaseStub extends WidgetBase implementa _BuildGui minimal
-; pra satisfazer o template method abstrato.
+; STUB: _WidgetBaseStub extends WidgetBase implements minimal
+; _BuildGui to satisfy the abstract template method.
 
 
 class _WidgetBaseStub extends WidgetBase
@@ -39,7 +40,7 @@ class WidgetBaseTests extends TestCase
     Setup()
     {
         this.bus := Fixtures.MakeBus()
-        ; Posicao com visible=false pra evitar Show real durante mutators
+        ; Position with visible=false to avoid real Show during mutators
         this.position := OverlayPosition.FromMap(Map(
             "left",     10.0,
             "top",      20.0,
@@ -65,7 +66,7 @@ class WidgetBaseTests extends TestCase
     }
 
     static Tests := [
-        ; --- Construtor ---
+        ; --- Constructor ---
         "constructor_throws_when_id_empty",
         "constructor_throws_when_name_empty",
         "constructor_throws_when_bus_not_event_bus",
@@ -130,7 +131,7 @@ class WidgetBaseTests extends TestCase
     ]
 
     ; ============================================================
-    ; Construtor
+    ; Constructor
     ; ============================================================
 
     constructor_throws_when_id_empty()
@@ -170,7 +171,7 @@ class WidgetBaseTests extends TestCase
     {
         b := this.bus
         p := this.position
-        ; Sem onPersist (string vazia eh OK)
+        ; No onPersist (empty string is OK)
         wg := _WidgetBaseStub("id", "Name", b, p, "")
         Assert.Equal("id", wg.id)
     }
@@ -209,10 +210,10 @@ class WidgetBaseTests extends TestCase
 
     get_position_returns_ref()
     {
-        ; Ref nao copia
+        ; Ref doesn't copy
         p := this.widget.GetPosition()
         Assert.Equal(this.position, p)
-        p.scale := 2.5   ; muta via ref
+        p.scale := 2.5   ; mutate via ref
         Assert.Equal(2.5, this.position.scale)
     }
 
@@ -241,7 +242,7 @@ class WidgetBaseTests extends TestCase
 
     set_visible_false_updates_position()
     {
-        this.position.visible := true   ; setup pra ter algo pra mudar
+        this.position.visible := true   ; setup to have something to change
         this.widget.SetVisible(false)
         Assert.False(this.position.visible)
     }
@@ -250,7 +251,7 @@ class WidgetBaseTests extends TestCase
     {
         this.widget.SetVisible(1)
         Assert.True(this.position.visible)
-        Assert.True(this.position.visible is Integer, "Coercao pra bool primitivo (true=1)")
+        Assert.True(this.position.visible is Integer, "Coerced to primitive bool (true=1)")
     }
 
     set_visible_persists_on_change()
@@ -262,10 +263,10 @@ class WidgetBaseTests extends TestCase
 
     set_visible_no_op_when_same()
     {
-        ; position.visible ja eh false
+        ; position.visible is already false
         before := this.persistCallCount
         this.widget.SetVisible(false)
-        Assert.Equal(before, this.persistCallCount, "Mesmo valor: no-op")
+        Assert.Equal(before, this.persistCallCount, "Same value: no-op")
     }
 
     set_visible_does_not_persist_when_same()
@@ -295,7 +296,7 @@ class WidgetBaseTests extends TestCase
 
     set_mode_visible_no_op_when_same()
     {
-        ; _modeVisible default eh true
+        ; _modeVisible default is true
         this.widget.SetModeVisible(true)
         Assert.True(this.widget.IsModeVisible())
     }
@@ -305,7 +306,7 @@ class WidgetBaseTests extends TestCase
         before := this.persistCallCount
         this.widget.SetModeVisible(false)
         Assert.Equal(before, this.persistCallCount,
-            "SetModeVisible NAO persiste (flag temporario do modo)")
+            "SetModeVisible does NOT persist (temporary mode flag)")
     }
 
     ; ============================================================
@@ -333,7 +334,7 @@ class WidgetBaseTests extends TestCase
         before := this.persistCallCount
         this.widget.SetActivePosition(this.position)
         Assert.Equal(before, this.persistCallCount,
-            "Mesma ref: no-op (e SetActivePosition nao persiste mesmo quando muda)")
+            "Same ref: no-op (and SetActivePosition does not persist even when changing)")
     }
 
     ; ============================================================
@@ -385,7 +386,7 @@ class WidgetBaseTests extends TestCase
 
     set_scale_no_op_when_same()
     {
-        ; scale eh 1.0 inicialmente
+        ; scale is 1.0 initially
         before := this.persistCallCount
         this.widget.SetScale(1.0)
         Assert.Equal(before, this.persistCallCount)
@@ -457,11 +458,11 @@ class WidgetBaseTests extends TestCase
 
     ctrl_state_changed_event_received()
     {
-        ; So testa que nao crasha quando publish com payload valido.
-        ; Internamente o handler chama _SetCtrlHighlightVisible que eh
-        ; no-op se !_gui (caso atual: nao renderizado).
+        ; Just tests that it doesn't crash when publishing with valid
+        ; payload. Internally the handler calls _SetCtrlHighlightVisible
+        ; which is a no-op if !_gui (current case: not rendered).
         this.bus.Publish(Events.CtrlStateChanged, Map("active", true))
-        Assert.True(true, "Handler tolerou evento sem crashar")
+        Assert.True(true, "Handler tolerated event without crashing")
     }
 
     ctrl_state_changed_with_non_object_no_crash()

@@ -1,14 +1,14 @@
 ﻿; ============================================================
-; Clock — abstracao de tempo
+; Clock — time abstraction
 ; ============================================================
 ;
-; Por que isso existe?
-;   - Services que dependem de A_Now / A_TickCount viram intestaveis
-;     ("teste passa as 23h59 e falha as 00h01")
-;   - Services recebem `clock` por construtor; no app real eh RealClock,
-;     em testes eh FakeClock que voce avanca manualmente
+; Why does this exist?
+;   - Services that depend on A_Now / A_TickCount become untestable
+;     ("test passes at 23:59 and fails at 00:01")
+;   - Services receive `clock` via constructor; in the real app it's
+;     RealClock, in tests it's FakeClock that you advance manually
 ;
-; Uso em servico:
+; Usage in a service:
 ;     class TimerService {
 ;         _clock := ""
 ;         __New(bus, clock) {
@@ -19,7 +19,7 @@
 ;         }
 ;     }
 ;
-; Uso em teste:
+; Usage in a test:
 ;     clock := FakeClock()
 ;     service := TimerService(bus, clock)
 ;     service.Start()
@@ -27,9 +27,9 @@
 ;     Assert.Equals(5000, service.GetElapsedMs())
 
 ; ------------------------------------------------------------
-; Interface implicita (duck-typed):
-;   Now()    -> string YYYYMMDDHH24MISS (compativel com A_Now)
-;   NowMs()  -> integer ms desde epoch arbitrario (monotono)
+; Implicit interface (duck-typed):
+;   Now()    -> string YYYYMMDDHH24MISS (compatible with A_Now)
+;   NowMs()  -> integer ms since arbitrary epoch (monotonic)
 ; ------------------------------------------------------------
 
 class RealClock
@@ -39,12 +39,12 @@ class RealClock
 }
 
 ; ------------------------------------------------------------
-; FakeClock — controle manual para testes
+; FakeClock — manual control for tests
 ;
-; - Now() retorna um timestamp ajustavel via SetNow()
-; - NowMs() comeca em 0 e avanca via AdvanceMs / AdvanceSeconds / AdvanceMinutes
-; - Ambos sao independentes (avancar NowMs nao avanca Now); se quiser
-;   sincronizar use SyncNowFromMs() (avanca Now de acordo com NowMs ms)
+; - Now() returns a timestamp adjustable via SetNow()
+; - NowMs() starts at 0 and advances via AdvanceMs / AdvanceSeconds / AdvanceMinutes
+; - The two are independent (advancing NowMs does not advance Now); if you want
+;   to sync them use SyncNowFromMs() (advances Now according to NowMs ms)
 ; ------------------------------------------------------------
 class FakeClock
 {
@@ -80,12 +80,12 @@ class FakeClock
         this.AdvanceMs(m * 60 * 1000)
     }
 
-    ; Avanca _now de acordo com o tick atual.
-    ; Util quando voce quer que Now() reflita o tempo simulado.
+    ; Advances _now according to the current tick.
+    ; Useful when you want Now() to reflect simulated time.
     SyncNowFromMs()
     {
-        ; converte _tickMs (ms desde inicio) em offset YYYYMMDDHH24MISS
-        ; eh aproximado, suficiente para testes
+        ; converts _tickMs (ms since start) into YYYYMMDDHH24MISS offset
+        ; it's approximate, sufficient for tests
         seconds := this._tickMs // 1000
         baseTime := this._now
         baseTime := DateAdd(baseTime, seconds, "Seconds")
@@ -94,13 +94,13 @@ class FakeClock
 }
 
 ; ------------------------------------------------------------
-; v17.15 (Bug #18): ReplayClock removido.
+; v17.15 (Bug #18): ReplayClock removed.
 ;
-; Era um clock simulado pro modo replay (CampaignReplayCore +
-; CampaignReplayService). Esses services foram demolidos na Onda 1
-; e agora vivem em _LIXEIRA/. Sem callers no codigo vivo, a classe
-; era 100+ linhas de codigo morto.
+; It was a simulated clock for replay mode (CampaignReplayCore +
+; CampaignReplayService). Those services were demolished in Wave 1
+; and now live in _LIXEIRA/. With no callers in live code, the class
+; was 100+ lines of dead code.
 ;
-; Se voltar a precisar de replay no futuro, recuperar da historia
-; do git ou do _LIXEIRA/.
+; If replay is needed again in the future, recover from git history
+; or from _LIXEIRA/.
 ; ------------------------------------------------------------

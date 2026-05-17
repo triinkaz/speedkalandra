@@ -1,10 +1,10 @@
 ; ============================================================
-; RunStateRepository - RunState <-> INI + arquivo TXT (Onda 6)
+; RunStateRepository - RunState <-> INI + TXT file (Wave 6)
 ; ============================================================
 ;
-; Persiste estado de run pra crash recovery e resume entre sessoes.
+; Persists run state for crash recovery and resume between sessions.
 ;
-; LAYOUT EM DISCO:
+; ON-DISK LAYOUT:
 ;   speedkalandra.ini:
 ;     [RunState]
 ;       RunId=20260512_142345
@@ -13,35 +13,35 @@
 ;       RunBaseMs=187432
 ;       LoadingTotalMs=24500
 ;
-;   speedkalandra_zones.txt (arquivo separado):
+;   speedkalandra_zones.txt (separate file):
 ;     The Riverbank=125000
 ;     Clearfell=234000
 ;     The Grelwood=456000
 ;
-; POR QUE 2 ARQUIVOS:
-;   IniWrite no Windows precisa parsear o arquivo inteiro a cada
-;   chamada. Pra N=20 zonas, eram N+1 IniWrites = 5-10s de bloqueio
-;   do thread principal a cada 5s. Isso travava o pause-detection.
+; WHY 2 FILES:
+;   IniWrite on Windows needs to parse the entire file on each call.
+;   For N=20 zones, that was N+1 IniWrites = 5-10s of main-thread
+;   blocking every 5s. It froze pause-detection.
 ;
-;   Trocando zone totals pra arquivo texto plano com AtomicWriter
-;   (um unico FileWrite + FileMove atomico), a operacao cai pra
-;   ~20-50ms. Resolve o lag completamente.
+;   Switching zone totals to a plain text file with AtomicWriter
+;   (a single FileWrite + atomic FileMove), the operation drops to
+;   ~20-50ms. Solves the lag completely.
 ;
-;   RunState continua INI porque tem so 5 campos pequenos — IniWrite
-;   ali eh aceitavel (~50ms cada).
+;   RunState stays as INI because it has only 5 small fields — IniWrite
+;   there is acceptable (~50ms each).
 ;
-; OPERACOES:
-;   Load()              -> RunState (Empty se nao houver)
-;   Save(state)         -> escreve 4 campos canonicos em [RunState]
-;   SaveRunBaseMs(ms)   -> escreve so RunBaseMs (1 IniWrite, rapido)
-;   Clear()             -> remove [RunState]
+; OPERATIONS:
+;   Load()              -> RunState (Empty if none)
+;   Save(state)         -> writes 4 canonical fields to [RunState]
+;   SaveRunBaseMs(ms)   -> writes only RunBaseMs (1 IniWrite, fast)
+;   Clear()             -> removes [RunState]
 ;
 ;   LoadLoadingTotal()  -> Int
 ;   SaveLoadingTotal(ms)
 ;
-;   LoadZoneTotals()    -> Map<zoneName, ms> (le do .txt)
-;   SaveZoneTotals(map) -> sobrescreve .txt atomicamente
-;   ClearZoneTotals()   -> apaga .txt
+;   LoadZoneTotals()    -> Map<zoneName, ms> (reads from .txt)
+;   SaveZoneTotals(map) -> overwrites .txt atomically
+;   ClearZoneTotals()   -> deletes .txt
 
 
 class RunStateRepository
@@ -54,11 +54,11 @@ class RunStateRepository
     __New(iniFileObj)
     {
         if !(iniFileObj is IniFile)
-            throw TypeError("RunStateRepository: 'iniFileObj' deve ser IniFile")
+            throw TypeError("RunStateRepository: 'iniFileObj' must be IniFile")
         this._ini := iniFileObj
 
-        ; Deriva path do arquivo de zone totals a partir do INI path
-        ; Ex: "C:\...\speedkalandra.ini" -> "C:\...\speedkalandra_zones.txt"
+        ; Derives the zone totals file path from the INI path
+        ; e.g. "C:\...\speedkalandra.ini" -> "C:\...\speedkalandra_zones.txt"
         iniPath := iniFileObj.GetPath()
         SplitPath(iniPath, , &dir, , &nameNoExt)
         this._zoneTotalsPath := (dir != "" ? dir "\" : "") nameNoExt "_zones.txt"
@@ -67,8 +67,8 @@ class RunStateRepository
     Load()
     {
         ini := this._ini
-        ; v0.1.0: renomeado de `runId` pra `currentRunId` (case-insensitive
-        ; collision com classe `RunId` do domain disparava #Warn).
+        ; v0.1.0: renamed from `runId` to `currentRunId` (case-insensitive
+        ; collision with the domain class `RunId` was triggering #Warn).
         currentRunId := ini.Read(RunStateRepository.SECTION, "RunId", "")
         startedAt    := ini.Read(RunStateRepository.SECTION, "StartedAt", "")
         status       := ini.Read(RunStateRepository.SECTION, "Status", "idle")
@@ -88,7 +88,7 @@ class RunStateRepository
     Save(state)
     {
         if !(state is RunState)
-            throw TypeError("RunStateRepository.Save: 'state' deve ser RunState")
+            throw TypeError("RunStateRepository.Save: 'state' must be RunState")
         ini := this._ini
         ini.Write(state.runId,     RunStateRepository.SECTION, "RunId")
         ini.Write(state.startedAt, RunStateRepository.SECTION, "StartedAt")
@@ -97,7 +97,7 @@ class RunStateRepository
     }
 
     ; ============================================================
-    ; SaveRunBaseMs - persiste APENAS o runBaseMs (1 IniWrite)
+    ; SaveRunBaseMs - persists ONLY runBaseMs (1 IniWrite)
     ; ============================================================
     SaveRunBaseMs(runBaseMs)
     {
@@ -127,14 +127,14 @@ class RunStateRepository
     }
 
     ; ============================================================
-    ; LoadZoneTotals - le arquivo TXT plano (key=value por linha)
+    ; LoadZoneTotals - reads plain TXT file (key=value per line)
     ;
-    ; Formato:
+    ; Format:
     ;   The Riverbank=125000
     ;   Clearfell=234000
     ;
-    ; Retorna Map() vazio se arquivo nao existir ou estiver vazio.
-    ; Linhas malformadas sao ignoradas (defensivo).
+    ; Returns an empty Map() if the file does not exist or is empty.
+    ; Malformed lines are ignored (defensive).
     ; ============================================================
     LoadZoneTotals()
     {
@@ -152,7 +152,7 @@ class RunStateRepository
         if (content = "")
             return out
 
-        ; Normaliza CRLF e separa em linhas
+        ; Normalize CRLF and split into lines
         content := StrReplace(content, "`r`n", "`n")
         for _, line in StrSplit(content, "`n")
         {
@@ -174,27 +174,27 @@ class RunStateRepository
     }
 
     ; ============================================================
-    ; SaveZoneTotals - escreve TXT atomicamente
+    ; SaveZoneTotals - writes TXT atomically
     ;
-    ; Single FileWrite via AtomicWriter (.tmp + FileMove no NTFS).
-    ; ~20-50ms tipico, independente do tamanho do Map. Muito mais
-    ; rapido que IniWrite que era ~80ms POR ZONA.
+    ; Single FileWrite via AtomicWriter (.tmp + FileMove on NTFS).
+    ; Typical ~20-50ms regardless of Map size. Much faster than
+    ; IniWrite which was ~80ms PER ZONE.
     ;
-    ; Se totalsMap vazio, escreve arquivo vazio (preserva existencia
-    ; pra consistencia, mas LoadZoneTotals retorna Map vazio).
+    ; If totalsMap is empty, writes an empty file (preserves existence
+    ; for consistency, but LoadZoneTotals returns an empty Map).
     ; ============================================================
     SaveZoneTotals(totalsMap)
     {
         if !(totalsMap is Map)
-            throw TypeError("RunStateRepository.SaveZoneTotals: 'totalsMap' deve ser Map")
+            throw TypeError("RunStateRepository.SaveZoneTotals: 'totalsMap' must be Map")
 
-        ; Gera conteudo em uma string so
+        ; Builds content in a single string
         content := ""
         for zoneName, ms in totalsMap
         {
             if (zoneName = "" || ms <= 0)
                 continue
-            ; Sanitiza zoneName: remove qualquer "=" ou newline (defesa)
+            ; Sanitize zoneName: remove any "=" or newlines (defense)
             cleanName := StrReplace(zoneName, "=", "")
             cleanName := StrReplace(cleanName, "`n", "")
             cleanName := StrReplace(cleanName, "`r", "")
@@ -214,9 +214,9 @@ class RunStateRepository
         }
         catch as ex
         {
-            ; v17.15 (Bug #8): registra falha em vez de engolir silente.
-            ; Sem logger injetado, usa OutputDebug.
-            OutputDebug("RunStateRepository.ClearZoneTotals falhou: " ex.Message)
+            ; v17.15 (Bug #8): records failure instead of silently swallowing.
+            ; Without an injected logger, uses OutputDebug.
+            OutputDebug("RunStateRepository.ClearZoneTotals failed: " ex.Message)
         }
     }
 

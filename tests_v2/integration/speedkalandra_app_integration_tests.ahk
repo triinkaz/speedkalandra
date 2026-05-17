@@ -2,25 +2,25 @@
 ; SpeedKalandraAppIntegrationTests
 ; ============================================================
 ;
-; Wave 8: integration test do composition root (SpeedKalandraApp).
+; Wave 8: integration test of the composition root (SpeedKalandraApp).
 ;
-; Estrategia:
-;   - headless=true: pula disclaimer, prompts, TrayTip
-;   - clock injetado (FakeClock) pra controlar tempo de runs
-;   - NAO chama app.Start(): isso renderiza widgets (Gui real).
-;     Em vez disso, exercita o bus diretamente publicando Commands
-;     (NewRunRequested, FinalizeRunRequested) que sao consumidos
-;     pelo RunService via subscribers registrados no construtor.
-;   - Setup cria diretorio temp com zones.csv minimal, ini vazio,
-;     runHistory dir, personal_bests.ini vazio.
+; Strategy:
+;   - headless=true: skips disclaimer, prompts, TrayTip
+;   - injected clock (FakeClock) to control run timing
+;   - Does NOT call app.Start(): that would render widgets (real Gui).
+;     Instead, exercises the bus directly by publishing Commands
+;     (NewRunRequested, FinalizeRunRequested) consumed by RunService
+;     via subscribers registered in the constructor.
+;   - Setup creates a temp directory with a minimal zones.csv, an
+;     empty ini, runHistory dir, and empty personal_bests.ini.
 ;
-; Cobertura:
-;   - Construtor inicializa todos os services principais
-;   - NewRunRequested -> runService.NewRun -> RunState persistido
-;   - FinalizeRunRequested em run curta (<3min) -> NAO salva no historico
-;   - FinalizeRunRequested em run longa (>=3min) -> salva
-;   - PB atualizado em run completed
-;   - Crash recovery: segunda instancia hidrata state da primeira
+; Coverage:
+;   - Constructor initializes all main services
+;   - NewRunRequested -> runService.NewRun -> RunState persisted
+;   - FinalizeRunRequested on short run (<3min) -> NOT saved to history
+;   - FinalizeRunRequested on long run (>=3min) -> saved
+;   - PB updated on completed run
+;   - Crash recovery: second instance hydrates state from the first
 
 
 class SpeedKalandraAppIntegrationTests extends TestCase
@@ -43,7 +43,7 @@ class SpeedKalandraAppIntegrationTests extends TestCase
         this.runHistoryDir := this.tmpDir "\runs"
         this.pbPath        := this.tmpDir "\pb.ini"
 
-        ; Cria zones.csv minimal valido (formato real do projeto)
+        ; Create a minimal valid zones.csv (real project format)
         FileAppend(
             "name;internal_id;act;is_town`n"
             . "Clearfell Encampment;G1_town;1;1`n"
@@ -56,11 +56,11 @@ class SpeedKalandraAppIntegrationTests extends TestCase
         Fixtures.RegisterTempPath(this.logPath)
         Fixtures.RegisterTempPath(this.pbPath)
 
-        ; Cria dir runs (RunHistoryRepository nao cria automaticamente)
+        ; Create runs dir (RunHistoryRepository doesn't create it automatically)
         try DirCreate(this.runHistoryDir)
         Fixtures.RegisterTempPath(this.runHistoryDir)
 
-        ; FakeClock com base 1000000ms (arbitrario, longe de 0)
+        ; FakeClock with base 1000000ms (arbitrary, far from 0)
         this.stubClock := Fixtures.MakeFakeClock(1000000)
 
         this.app := SpeedKalandraApp(Map(
@@ -84,7 +84,7 @@ class SpeedKalandraAppIntegrationTests extends TestCase
     }
 
     static Tests := [
-        ; --- Construtor / componentes ---
+        ; --- Constructor / components ---
         "constructor_creates_all_main_components",
         "constructor_subscribes_run_history_handlers",
         "constructor_loads_zones_catalog",
@@ -97,7 +97,7 @@ class SpeedKalandraAppIntegrationTests extends TestCase
         "new_run_starts_timer",
         "cancel_run_via_command_stops_run",
 
-        ; --- Finalize: threshold de 3min ---
+        ; --- Finalize: 3min threshold ---
         "short_run_finalize_does_not_save_to_history",
         "long_run_finalize_saves_to_history",
         "long_run_finalize_updates_personal_best",
@@ -111,20 +111,20 @@ class SpeedKalandraAppIntegrationTests extends TestCase
         "stop_does_not_throw_when_never_started",
         "stop_is_idempotent",
 
-        ; --- Wave 9: regression tests bugs catalogaÝos sem cobertura direta ---
-        ; Bug #9 (AUDITORIA): Riverbank reseta level a cada entry. Fix:
-        ; nome exato "The Riverbank" + flag _riverbankSeenInRun que
-        ; reseta em RunStarted/RunReset/RunCancelled.
+        ; --- Wave 9: regression tests for cataloged bugs without direct coverage ---
+        ; Bug #9 (AUDIT): Riverbank resets level on every entry. Fix:
+        ; exact match "The Riverbank" + _riverbankSeenInRun flag that
+        ; resets on RunStarted/RunReset/RunCancelled.
         "bug9_first_riverbank_entry_resets_level_to_1",
         "bug9_second_riverbank_entry_does_not_reset_level",
         "bug9_non_exact_match_does_not_trigger_reset",
         "bug9_new_run_clears_riverbank_flag",
         "bug9_run_reset_clears_riverbank_flag",
 
-        ; --- v0.1.3: Death penalty no timer real-time ---
-        ; Handler _OnDeathApplyTimerPenalty subscrito a Evt.DeathDetected.
-        ; Verifica cfg.deathPenaltyEnabled + timer.IsActive() antes de
-        ; chamar timer.AddPenaltyMs. Cobre os 4 caminhos do guard.
+        ; --- v0.1.3: Death penalty on the real-time timer ---
+        ; _OnDeathApplyTimerPenalty handler subscribed to Evt.DeathDetected.
+        ; Checks cfg.deathPenaltyEnabled + timer.IsActive() before
+        ; calling timer.AddPenaltyMs. Covers all 4 guard paths.
         "death_penalty_applies_to_timer_when_enabled_and_run_active",
         "death_penalty_does_not_apply_when_disabled",
         "death_penalty_does_not_apply_when_no_run_active",
@@ -145,11 +145,11 @@ class SpeedKalandraAppIntegrationTests extends TestCase
         return files
     }
 
-    ; Simula tempo em uma zona pra que ZoneTrackingService.GetTotalsForSnapshot
-    ; retorne totals nao-vazio. RunHistoryRepository.Save rejeita buildResult
-    ; com totalMs<1000ms (filtro de "lixo de teste"), e o builder calcula
-    ; totalMs como soma das categorias do totals — sem zona ativa nem
-    ; loading, totals fica vazio e Save retorna false silenciosamente.
+    ; Simulates time in a zone so that ZoneTrackingService.GetTotalsForSnapshot
+    ; returns a non-empty totals. RunHistoryRepository.Save rejects buildResult
+    ; with totalMs<1000ms (filter for "test garbage"), and the builder computes
+    ; totalMs as the sum of categories from totals — without an active zone or
+    ; loading, totals stays empty and Save silently returns false.
     _EnterZoneAndAdvance(zoneName, advanceMs)
     {
         this.app.bus.Publish(Events.ZoneChanged, Map(
@@ -160,13 +160,13 @@ class SpeedKalandraAppIntegrationTests extends TestCase
     }
 
     ; ============================================================
-    ; Construtor / componentes
+    ; Constructor / components
     ; ============================================================
 
     constructor_creates_all_main_components()
     {
-        Assert.True(this.app.bus is EventBus, "bus existe")
-        Assert.True(this.app.clock = this.stubClock, "clock injetado preservado")
+        Assert.True(this.app.bus is EventBus, "bus exists")
+        Assert.True(this.app.clock = this.stubClock, "injected clock preserved")
         Assert.True(this.app.timer is TimerService)
         Assert.True(this.app.runService is RunService)
         Assert.True(this.app.runState is RunStateRepository)
@@ -181,24 +181,24 @@ class SpeedKalandraAppIntegrationTests extends TestCase
 
     constructor_subscribes_run_history_handlers()
     {
-        ; RunCompleted e RunCancelled tem handlers de _SaveRunSnapshot,
-        ; alem dos handlers que widgets/services inscrevem.
-        ; Verifica que pelo menos 1 subscriber existe.
+        ; RunCompleted and RunCancelled have _SaveRunSnapshot handlers,
+        ; in addition to handlers that widgets/services subscribe.
+        ; Verifies that at least 1 subscriber exists.
         Assert.True(this.app.bus.Subscribers(Events.RunCompleted) >= 1)
         Assert.True(this.app.bus.Subscribers(Events.RunCancelled) >= 1)
     }
 
     constructor_loads_zones_catalog()
     {
-        ; Setup criou zones.csv com 5 linhas (4 zonas + header). Catalog
-        ; deve ter 4 entradas.
+        ; Setup created zones.csv with 5 lines (4 zones + header). Catalog
+        ; must have 4 entries.
         Assert.Equal(4, this.app.zonesCatalog.Count())
     }
 
     constructor_does_not_throw_with_empty_ini()
     {
-        ; Setup nao cria settings.ini explicitamente — o app deve aceitar
-        ; arquivo inexistente e usar defaults.
+        ; Setup doesn't explicitly create settings.ini — the app must accept
+        ; a non-existent file and use defaults.
         Assert.True(IsObject(this.app))
     }
 
@@ -222,10 +222,10 @@ class SpeedKalandraAppIntegrationTests extends TestCase
     {
         this.app.bus.Publish(Commands.NewRunRequested, Map())
         producedId := this.app.runService.GetRunId()
-        Assert.True(StrLen(producedId) > 0, "RunId gerado")
+        Assert.True(StrLen(producedId) > 0, "RunId generated")
 
-        ; Verifica persistencia: instancia nova de RunStateRepository
-        ; sobre o mesmo INI le o state salvo
+        ; Verifies persistence: a new RunStateRepository instance over
+        ; the same INI reads the saved state
         ini := IniFile(this.iniPath)
         repo := RunStateRepository(ini)
         loaded := repo.Load()
@@ -248,39 +248,39 @@ class SpeedKalandraAppIntegrationTests extends TestCase
     }
 
     ; ============================================================
-    ; Finalize: threshold de 3min
+    ; Finalize: 3min threshold
     ; ============================================================
 
     short_run_finalize_does_not_save_to_history()
     {
         this.app.bus.Publish(Commands.NewRunRequested, Map())
-        ; Avanca clock 30s (muito menos que 3min threshold)
+        ; Advance clock 30s (much less than the 3min threshold)
         this.stubClock.AdvanceMs(30000)
         this.app.bus.Publish(Commands.FinalizeRunRequested, Map())
 
         files := this._ListRunFiles()
         Assert.Equal(0, files.Length,
-            "Run < 3min nao deve ser salva no historico")
+            "Run < 3min must not be saved to history")
     }
 
     long_run_finalize_saves_to_history()
     {
         this.app.bus.Publish(Commands.NewRunRequested, Map())
-        ; Helper: simula zona ativa por 5min pra que totals tenha tempo
-        ; (sem isso, buildResult.totalMs=0 e Save rejeita).
+        ; Helper: simulates an active zone for 5min so totals has time
+        ; (without it, buildResult.totalMs=0 and Save rejects).
         this._EnterZoneAndAdvance("The Riverbank", 300000)
         producedId := this.app.runService.GetRunId()
         this.app.bus.Publish(Commands.FinalizeRunRequested, Map())
 
         files := this._ListRunFiles()
-        Assert.Equal(1, files.Length, "Run >= 3min salva no historico")
-        ; Filename eh "{runId}.ini"
+        Assert.Equal(1, files.Length, "Run >= 3min saved to history")
+        ; Filename is "{runId}.ini"
         Assert.Equal(producedId ".ini", files[1])
     }
 
     long_run_finalize_updates_personal_best()
     {
-        ; Sem PB inicial
+        ; No initial PB
         Assert.False(this.app.personalBest.HasRunPb())
 
         this.app.bus.Publish(Commands.NewRunRequested, Map())
@@ -289,7 +289,7 @@ class SpeedKalandraAppIntegrationTests extends TestCase
         this.app.bus.Publish(Commands.FinalizeRunRequested, Map())
 
         Assert.True(this.app.personalBest.HasRunPb(),
-            "PB atualizado apos finalize de run >= 3min")
+            "PB updated after finalize of run >= 3min")
         Assert.Equal(producedId, this.app.personalBest.GetRunPbRunId())
         Assert.Equal(300000, this.app.personalBest.GetRunPbMs())
     }
@@ -301,7 +301,7 @@ class SpeedKalandraAppIntegrationTests extends TestCase
         this.stubClock.AdvanceMs(30000)   ; 30s < 3min threshold
         this.app.bus.Publish(Commands.FinalizeRunRequested, Map())
         Assert.False(this.app.personalBest.HasRunPb(),
-            "Run < 3min nao atualiza PB")
+            "Run < 3min doesn't update PB")
     }
 
     ; ============================================================
@@ -310,18 +310,18 @@ class SpeedKalandraAppIntegrationTests extends TestCase
 
     second_app_instance_hydrates_active_run_from_disk()
     {
-        ; Primeira instancia: cria run e persiste
+        ; First instance: create run and persist
         this.app.bus.Publish(Commands.NewRunRequested, Map())
         firstRunId := this.app.runService.GetRunId()
-        this.stubClock.AdvanceMs(60000)   ; 1min na run
-        ; Forca persistencia do timer (normalmente seria via SetTimer)
+        this.stubClock.AdvanceMs(60000)   ; 1min into the run
+        ; Force timer persistence (normally via SetTimer)
         this.app.runService.PersistTick()
 
-        ; "Crash": destroi primeira instancia
+        ; "Crash": destroy first instance
         try this.app.Stop()
         this.app := ""
 
-        ; Segunda instancia: deve hidratar a run ativa do INI
+        ; Second instance: must hydrate the active run from the INI
         secondClock := Fixtures.MakeFakeClock(2000000)
         app2 := SpeedKalandraApp(Map(
             "iniPath",          this.iniPath,
@@ -334,16 +334,16 @@ class SpeedKalandraAppIntegrationTests extends TestCase
         ))
 
         Assert.True(app2.runService.IsActive(),
-            "Run ativa hidratada do INI")
+            "Active run hydrated from INI")
         Assert.Equal(firstRunId, app2.runService.GetRunId(),
-            "Mesmo runId preservado")
+            "Same runId preserved")
 
         try app2.Stop()
     }
 
     second_instance_resumes_timer_with_correct_base_ms()
     {
-        ; Primeira: 1min na run
+        ; First: 1min into the run
         this.app.bus.Publish(Commands.NewRunRequested, Map())
         this.stubClock.AdvanceMs(60000)
         this.app.runService.PersistTick()
@@ -351,7 +351,7 @@ class SpeedKalandraAppIntegrationTests extends TestCase
         try this.app.Stop()
         this.app := ""
 
-        ; Segunda: timer deve continuar com base = 60000ms
+        ; Second: timer must continue with base = 60000ms
         secondClock := Fixtures.MakeFakeClock(2000000)
         app2 := SpeedKalandraApp(Map(
             "iniPath",          this.iniPath,
@@ -363,8 +363,8 @@ class SpeedKalandraAppIntegrationTests extends TestCase
             "clock",            secondClock
         ))
 
-        ; Timer hidratado em running com 60s ja contados.
-        ; Avancar 30s deve resultar em 90s total.
+        ; Timer hydrated as running with 60s already counted.
+        ; Advancing 30s must result in 90s total.
         secondClock.AdvanceMs(30000)
         Assert.Equal(90000, app2.timer.GetRunMs())
 
@@ -377,7 +377,7 @@ class SpeedKalandraAppIntegrationTests extends TestCase
 
     stop_does_not_throw_when_never_started()
     {
-        ; Setup nao chamou Start; Stop deve ser no-op silencioso
+        ; Setup didn't call Start; Stop must be a silent no-op
         this.app.Stop()
         Assert.True(true)
     }
@@ -393,103 +393,103 @@ class SpeedKalandraAppIntegrationTests extends TestCase
     ; Wave 9 — Regression: Bug #9 (Riverbank single-reset)
     ; ============================================================
     ;
-    ; AUDITORIA #9: "Riverbank reseta level a cada entry".
+    ; AUDIT #9: "Riverbank resets level on every entry".
     ;
-    ; Comportamento PRE-fix:
-    ;   InStr(zone, "Riverbank") + reset incondicional.
-    ;   Problema 1: substring match (qualquer zona com "Riverbank" no
-    ;               nome casava).
-    ;   Problema 2: re-entrada (death respawn, portal, party invite)
-    ;               resetava level cacheado pra 1, causando XP display
-    ;               errado ate o proximo CharacterLevelUp.
+    ; PRE-fix behavior:
+    ;   InStr(zone, "Riverbank") + unconditional reset.
+    ;   Problem 1: substring match (any zone with "Riverbank" in the
+    ;              name would match).
+    ;   Problem 2: re-entry (death respawn, portal, party invite) reset
+    ;              the cached level to 1, causing wrong XP display
+    ;              until the next CharacterLevelUp.
     ;
     ; Fix (v17.15):
-    ;   Match exato "The Riverbank" + flag _riverbankSeenInRun. Flag
-    ;   resetada em RunStarted (nova run libera novo reset) e em
+    ;   Exact match "The Riverbank" + _riverbankSeenInRun flag. Flag
+    ;   reset on RunStarted (new run unlocks new reset) and on
     ;   RunReset/RunCancelled.
     ;
-    ; Os testes chamam `_OnZoneEnteredForLevel` direto na instancia
-    ; (handler eh subscribed em app.Start() que nao chamamos aqui).
-    ; Isso cobre a logica de unica vez sem precisar do widget Show.
+    ; The tests call `_OnZoneEnteredForLevel` directly on the instance
+    ; (handler is subscribed in app.Start() which we don't call here).
+    ; That covers the once-only logic without needing the widget Show.
 
     bug9_first_riverbank_entry_resets_level_to_1()
     {
-        ; Run ativa + level setado a 50
+        ; Active run + level set to 50
         this.app.bus.Publish(Commands.NewRunRequested, Map())
         this.app.xpService.SetCharacter("Olaf", "Warrior", 50)
         Assert.Equal(50, this.app.xpService.GetCharacterLevel())
 
-        ; Primeira entrada em "The Riverbank" deve resetar level pra 1
+        ; First entry into "The Riverbank" must reset level to 1
         this.app._OnZoneEnteredForLevel(Map("zoneName", "The Riverbank"))
         Assert.Equal(1, this.app.xpService.GetCharacterLevel(),
-            "Bug #9: primeira entrada em The Riverbank reseta level pra 1")
+            "Bug #9: first entry into The Riverbank resets level to 1")
     }
 
     bug9_second_riverbank_entry_does_not_reset_level()
     {
-        ; Setup: run ativa, primeira entrada em Riverbank ja aconteceu
+        ; Setup: active run, first entry into Riverbank already happened
         this.app.bus.Publish(Commands.NewRunRequested, Map())
         this.app.xpService.SetCharacter("Olaf", "Warrior", 50)
         this.app._OnZoneEnteredForLevel(Map("zoneName", "The Riverbank"))
         Assert.Equal(1, this.app.xpService.GetCharacterLevel())
 
-        ; Simula progressao: jogador subiu pra level 5 desde a primeira
-        ; entrada (e.g. via CharacterLevelUp event que setou o level)
+        ; Simulate progression: player leveled up to 5 since the first
+        ; entry (e.g. via CharacterLevelUp event that set the level)
         this.app.xpService.SetCharacter("Olaf", "Warrior", 5)
         Assert.Equal(5, this.app.xpService.GetCharacterLevel())
 
-        ; Segunda entrada em Riverbank (death respawn / portal / invite):
-        ; NAO deve resetar (Bug #9 fix)
+        ; Second entry into Riverbank (death respawn / portal / invite):
+        ; must NOT reset (Bug #9 fix)
         this.app._OnZoneEnteredForLevel(Map("zoneName", "The Riverbank"))
         Assert.Equal(5, this.app.xpService.GetCharacterLevel(),
-            "Bug #9: re-entrada em Riverbank NAO reseta level (flag bloqueia)")
+            "Bug #9: re-entry into Riverbank does NOT reset level (flag blocks)")
     }
 
     bug9_non_exact_match_does_not_trigger_reset()
     {
-        ; Pre-fix, "InStr(zone, \"Riverbank\")" casaria qualquer substring.
-        ; Fix usa match exato, entao zonas similares mas nao exatas nao
-        ; resetam (defensivo contra mudancas hipoteticas de nome em PoE2).
+        ; Pre-fix, "InStr(zone, \"Riverbank\")" would match any substring.
+        ; Fix uses exact match, so similar but non-exact zones don't
+        ; reset (defensive against hypothetical PoE2 name changes).
         this.app.bus.Publish(Commands.NewRunRequested, Map())
         this.app.xpService.SetCharacter("Olaf", "Warrior", 50)
 
-        ; Zonas com "Riverbank" no nome mas nao exato
-        this.app._OnZoneEnteredForLevel(Map("zoneName", "Riverbank"))           ; sem "The"
-        this.app._OnZoneEnteredForLevel(Map("zoneName", "The Riverbank East"))  ; sufixo
-        this.app._OnZoneEnteredForLevel(Map("zoneName", "Old Riverbank"))       ; prefixo
+        ; Zones with "Riverbank" in the name but not exact
+        this.app._OnZoneEnteredForLevel(Map("zoneName", "Riverbank"))           ; no "The"
+        this.app._OnZoneEnteredForLevel(Map("zoneName", "The Riverbank East"))  ; suffix
+        this.app._OnZoneEnteredForLevel(Map("zoneName", "Old Riverbank"))       ; prefix
 
         Assert.Equal(50, this.app.xpService.GetCharacterLevel(),
-            "Bug #9: match exato 'The Riverbank' — substrings nao casam")
+            "Bug #9: exact match 'The Riverbank' — substrings don't match")
     }
 
     bug9_new_run_clears_riverbank_flag()
     {
-        ; Setup: run 1 com Riverbank ja visitado
+        ; Setup: run 1 with Riverbank already visited
         this.app.bus.Publish(Commands.NewRunRequested, Map())
         this.app.xpService.SetCharacter("Olaf", "Warrior", 50)
         this.app._OnZoneEnteredForLevel(Map("zoneName", "The Riverbank"))
-        ; Level resetado pra 1, _riverbankSeenInRun = true
+        ; Level reset to 1, _riverbankSeenInRun = true
 
-        ; Set level pra 10 (simulando progressao na run)
+        ; Set level to 10 (simulating progression in the run)
         this.app.xpService.SetCharacter("Olaf", "Warrior", 10)
 
-        ; Nova run: dispara RunStarted -> _OnRunStartedForXp limpa flag
-        ; (handler eh subscribed em __New via _WireEventHandlers, ativo
-        ; mesmo sem Start)
+        ; New run: fires RunStarted -> _OnRunStartedForXp clears flag
+        ; (handler is subscribed in __New via _WireEventHandlers, active
+        ; even without Start)
         this.app.bus.Publish(Commands.NewRunRequested, Map())
-        ; Set level de novo (NewRun zera area mas nao character level)
+        ; Set level again (NewRun zeroes area but not character level)
         this.app.xpService.SetCharacter("Olaf", "Warrior", 10)
 
-        ; Primeira entrada em Riverbank na nova run: DEVE resetar
+        ; First entry into Riverbank in the new run: MUST reset
         this.app._OnZoneEnteredForLevel(Map("zoneName", "The Riverbank"))
         Assert.Equal(1, this.app.xpService.GetCharacterLevel(),
-            "Bug #9: NewRun limpa flag, permitindo novo reset na nova run")
+            "Bug #9: NewRun clears flag, allowing new reset in the new run")
     }
 
     bug9_run_reset_clears_riverbank_flag()
     {
-        ; Mesmo cenario do _new_run mas via Reset em vez de NewRun.
-        ; _OnRunEndedClearZones esta subscribed em RunReset e RunCancelled.
+        ; Same scenario as _new_run but via Reset instead of NewRun.
+        ; _OnRunEndedClearZones is subscribed on RunReset and RunCancelled.
         this.app.bus.Publish(Commands.NewRunRequested, Map())
         this.app.xpService.SetCharacter("Olaf", "Warrior", 50)
         this.app._OnZoneEnteredForLevel(Map("zoneName", "The Riverbank"))
@@ -501,36 +501,38 @@ class SpeedKalandraAppIntegrationTests extends TestCase
         this.app.xpService.SetCharacter("Olaf", "Warrior", 10)
         this.app._OnZoneEnteredForLevel(Map("zoneName", "The Riverbank"))
         Assert.Equal(1, this.app.xpService.GetCharacterLevel(),
-            "Bug #9: Reset tambem limpa flag (via _OnRunEndedClearZones)")
+            "Bug #9: Reset also clears flag (via _OnRunEndedClearZones)")
     }
 
     ; ============================================================
-    ; v0.1.3 — Death penalty no timer real-time
+    ; v0.1.3 — Death penalty on the real-time timer
     ; ============================================================
     ;
-    ; Antes de v0.1.3, death penalty (cfg.deathPenaltyMs) so aparecia
-    ; no plot post-finalize (categoria "Deaths" em RunStatsPlotBuilder).
-    ; O timer da run em tempo real ficava sem refletir a penalty,
-    ; criando inconsistencia visual: usuario via 1:05:00 no overlay
-    ; mas 1:07:30 no plot apos finalize.
+    ; Before v0.1.3, the death penalty (cfg.deathPenaltyMs) only
+    ; appeared in the post-finalize plot ("Deaths" category in
+    ; RunStatsPlotBuilder). The real-time run timer didn't reflect
+    ; the penalty, creating a visual inconsistency: the user would
+    ; see 1:05:00 in the overlay but 1:07:30 in the plot after
+    ; finalize.
     ;
-    ; Fix: handler _OnDeathApplyTimerPenalty subscrito a Evt.DeathDetected.
-    ; Quando dispara e cfg.deathPenaltyEnabled + timer.IsActive(),
-    ; chama timer.AddPenaltyMs(cfg.deathPenaltyMs). Usuario ve o
-    ; ponteiro saltar pra frente no overlay assim que morre.
+    ; Fix: _OnDeathApplyTimerPenalty handler subscribed to
+    ; Evt.DeathDetected. When it fires and cfg.deathPenaltyEnabled +
+    ; timer.IsActive(), calls timer.AddPenaltyMs(cfg.deathPenaltyMs).
+    ; The user sees the pointer jump forward in the overlay the
+    ; moment they die.
     ;
-    ; AppSettings defaults relevantes:
+    ; Relevant AppSettings defaults:
     ;   cfg.deathPenaltyEnabled = true
     ;   cfg.deathPenaltyMs      = 150000  (2min30s)
     ;
-    ; Estes testes publicam Evt.DeathDetected direto no bus pra simular
-    ; o evento que normalmente vem do LogMonitorService (ao parsear
-    ; linha de morte no Client.txt).
+    ; These tests publish Evt.DeathDetected directly on the bus to
+    ; simulate the event that normally comes from LogMonitorService
+    ; (when parsing a death line in Client.txt).
 
     death_penalty_applies_to_timer_when_enabled_and_run_active()
     {
-        ; Start run, advance 1min, dispara DeathDetected
-        ; → timer deve pular pra 1min + 150s (default penalty) = 3min30s
+        ; Start run, advance 1min, fire DeathDetected
+        ; -> timer must jump to 1min + 150s (default penalty) = 3min30s
         this.app.bus.Publish(Commands.NewRunRequested, Map())
         this.stubClock.AdvanceMs(60000)   ; 1min
         Assert.Equal(60000, this.app.timer.GetRunMs())
@@ -539,13 +541,13 @@ class SpeedKalandraAppIntegrationTests extends TestCase
 
         ; 60000 (clock) + 150000 (default penalty) = 210000
         Assert.Equal(210000, this.app.timer.GetRunMs(),
-            "Death penalty (150s) somada ao timer em tempo real")
+            "Death penalty (150s) added to the real-time timer")
     }
 
     death_penalty_does_not_apply_when_disabled()
     {
-        ; cfg.deathPenaltyEnabled := false desabilita o handler.
-        ; Publish DeathDetected e o timer nao deve mexer.
+        ; cfg.deathPenaltyEnabled := false disables the handler.
+        ; Publish DeathDetected and the timer must not move.
         this.app._cfg.deathPenaltyEnabled := false
 
         this.app.bus.Publish(Commands.NewRunRequested, Map())
@@ -555,26 +557,26 @@ class SpeedKalandraAppIntegrationTests extends TestCase
         this.app.bus.Publish(Events.DeathDetected, Map("character", "Olaf"))
 
         Assert.Equal(before, this.app.timer.GetRunMs(),
-            "Com flag off, DeathDetected nao move o timer")
+            "With flag off, DeathDetected doesn't move the timer")
     }
 
     death_penalty_does_not_apply_when_no_run_active()
     {
-        ; Sem NewRun, timer.IsActive() = false. Handler retorna early.
+        ; Without NewRun, timer.IsActive() = false. Handler returns early.
         Assert.False(this.app.timer.IsActive())
         before := this.app.timer.GetRunMs()   ; 0
 
         this.app.bus.Publish(Events.DeathDetected, Map("character", "Olaf"))
 
         Assert.Equal(before, this.app.timer.GetRunMs(),
-            "Sem run ativa, DeathDetected eh ignorado")
+            "Without active run, DeathDetected is ignored")
         Assert.False(this.app.timer.IsActive(),
-            "Timer continua IDLE apos morte fora de run")
+            "Timer stays IDLE after a death outside a run")
     }
 
     death_penalty_accumulates_with_multiple_deaths()
     {
-        ; 3 mortes na mesma run → timer ganha 3 * penalty
+        ; 3 deaths in the same run -> timer gains 3 * penalty
         this.app.bus.Publish(Commands.NewRunRequested, Map())
         this.stubClock.AdvanceMs(60000)   ; 1min
 
@@ -584,12 +586,12 @@ class SpeedKalandraAppIntegrationTests extends TestCase
 
         ; 60s + 3 * 150s = 60 + 450 = 510s
         Assert.Equal(510000, this.app.timer.GetRunMs(),
-            "3 mortes acumulam 3 * 150s no timer")
+            "3 deaths accumulate 3 * 150s on the timer")
     }
 
     death_penalty_uses_configured_ms_value()
     {
-        ; cfg.deathPenaltyMs customizado (90s) deve ser respeitado.
+        ; Custom cfg.deathPenaltyMs (90s) must be respected.
         this.app._cfg.deathPenaltyMs := 90000
 
         this.app.bus.Publish(Commands.NewRunRequested, Map())
@@ -602,9 +604,9 @@ class SpeedKalandraAppIntegrationTests extends TestCase
 
     death_penalty_does_not_apply_when_configured_ms_is_zero()
     {
-        ; Edge case defensivo: se cfg.deathPenaltyMs = 0 (usuario
-        ; configurou "sem penalty" explicitamente), handler retorna
-        ; early sem mexer no timer. Cobre o ultimo guard do handler.
+        ; Defensive edge case: if cfg.deathPenaltyMs = 0 (the user
+        ; explicitly configured "no penalty"), handler returns early
+        ; without touching the timer. Covers the handler's last guard.
         this.app._cfg.deathPenaltyMs := 0
 
         this.app.bus.Publish(Commands.NewRunRequested, Map())
@@ -614,7 +616,7 @@ class SpeedKalandraAppIntegrationTests extends TestCase
         this.app.bus.Publish(Events.DeathDetected, Map("character", "Olaf"))
 
         Assert.Equal(before, this.app.timer.GetRunMs(),
-            "deathPenaltyMs=0 nao mexe no timer")
+            "deathPenaltyMs=0 doesn't move the timer")
     }
 }
 

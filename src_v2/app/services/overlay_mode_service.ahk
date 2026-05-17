@@ -1,40 +1,41 @@
 ; ============================================================
-; OverlayModeService - state machine simplificada (Onda 4)
+; OverlayModeService - simplified state machine (Wave 4)
 ; ============================================================
 ;
-; VERSAO POS-DEMOLICAO: removidos NORMAL e CUSTOM. Apenas dois modos:
+; POST-DEMOLITION VERSION: NORMAL and CUSTOM removed. Only two modes:
 ;
-;   COMPACT - layout reduzido com info essencial. Default.
-;   MICRO   - barra minima, dois sub-modos:
-;             - LOCKED : sempre micro (toggle via Cmd.ToggleMicroLockRequested)
-;             - AUTO   : ativo enquanto pelo menos uma "panel key" segurada
-;                        (i/v/c/g/p/u/m = paineis de PoE). Some quando
-;                        soltar todas as keys.
+;   COMPACT - reduced layout with essential info. Default.
+;   MICRO   - minimal bar, two sub-modes:
+;             - LOCKED : always micro (toggle via Cmd.ToggleMicroLockRequested)
+;             - AUTO   : active while at least one "panel key" is held
+;                        (i/v/c/g/p/u/m = PoE panels). Disappears when
+;                        all keys are released.
 ;
-; FILOSOFIA:
-;   - Service NAO toca GUI. So muda state e publica Evt.OverlayModeChanged.
-;   - State machine pura: testavel sem GUI.
-;   - Auto-modo do MICRO eh entrada temporaria sobre COMPACT — sai e
-;     volta pra COMPACT quando todas panels fecharem.
+; PHILOSOPHY:
+;   - Service does NOT touch the GUI. It only changes state and
+;     publishes Evt.OverlayModeChanged.
+;   - Pure state machine: testable without a GUI.
+;   - MICRO auto-mode is a temporary entry over COMPACT — leaves and
+;     returns to COMPACT when all panels close.
 ;
 ; SUBSCRIPTIONS:
 ;   Cmd.ToggleMicroLockRequested -> ToggleMicroLock()
 ;   Cmd.ToggleSteveLockRequested -> ToggleSteveLock()
 ;   Cmd.SetOverlayModeRequested  -> SetMode(mode)
 ;
-;   v17.15 (Bug #31): subscribes a Cmd.PanelKeyPressed/Released
-;   removidos — PanelKeyService foi desconectado em v17.2 e ja nao
-;   ha publisher. Os metodos OnPanelKeyDown/Up + ClearHeldKeys ficam
-;   no codigo (ainda chamaveis externamente se necessario) mas o
-;   fluxo automatico via bus eh oficialmente morto. _heldKeys fica
-;   sempre vazio.
+;   v17.15 (Bug #31): subscribes to Cmd.PanelKeyPressed/Released
+;   removed — PanelKeyService was disconnected in v17.2 and there is
+;   no publisher anymore. The OnPanelKeyDown/Up + ClearHeldKeys
+;   methods remain in the code (still callable externally if needed)
+;   but the automatic bus-based flow is officially dead. _heldKeys
+;   stays permanently empty.
 ;
 ; PUBLISHES:
 ;   Evt.OverlayModeChanged { mode, prevMode, locked, heldKeys }
 ;
-; CONSTRUCAO:
+; CONSTRUCTION:
 ;   svc := OverlayModeService(bus, cfg)
-;   svc.Hydrate()    ; le window.microLocked do cfg
+;   svc.Hydrate()    ; reads window.microLocked from cfg
 
 class OverlayModes
 {
@@ -61,9 +62,9 @@ class OverlayModeService
     __New(bus, cfg)
     {
         if !(bus is EventBus)
-            throw TypeError("OverlayModeService: 'bus' deve ser EventBus")
+            throw TypeError("OverlayModeService: 'bus' must be EventBus")
         if !(cfg is AppSettings)
-            throw TypeError("OverlayModeService: 'cfg' deve ser AppSettings")
+            throw TypeError("OverlayModeService: 'cfg' must be AppSettings")
 
         this._bus      := bus
         this._settings := cfg
@@ -77,8 +78,8 @@ class OverlayModeService
         bus.Subscribe(Commands.ToggleMicroLockRequested, this._handlerToggleMicroLock)
         bus.Subscribe(Commands.ToggleSteveLockRequested, this._handlerToggleSteveLock)
         bus.Subscribe(Commands.SetOverlayModeRequested,  this._handlerSetOverlayMode)
-        ; v17.15 (Bug #31): subscribes a Cmd.PanelKeyPressed/Released
-        ; removidos — PanelKeyService desconectado em v17.2.
+        ; v17.15 (Bug #31): subscribes to Cmd.PanelKeyPressed/Released
+        ; removed — PanelKeyService disconnected in v17.2.
     }
 
     Dispose()
@@ -101,11 +102,11 @@ class OverlayModeService
     }
 
     ; ============================================================
-    ; Hydrate - carrega state inicial do AppSettings
+    ; Hydrate - loads initial state from AppSettings
     ;
-    ; v17.14: steveLocked tem precedencia sobre microLocked se ambos
-    ; estiverem true no INI (acidente de edicao manual). ToggleX garante
-    ; que so um fica ativo de cada vez, mas Hydrate eh defensivo.
+    ; v17.14: steveLocked takes precedence over microLocked if both
+    ; are true in the INI (manual edit accident). ToggleX guarantees
+    ; only one is active at a time, but Hydrate is defensive.
     ; ============================================================
     Hydrate()
     {
@@ -142,9 +143,9 @@ class OverlayModeService
     HasHeldKey(key)   => this._heldKeys.Has(OverlayModeService._NormKey(key))
 
     ; ============================================================
-    ; ToggleMicroLock - alterna COMPACT <-> MICRO LOCKED
+    ; ToggleMicroLock - alternates COMPACT <-> MICRO LOCKED
     ;
-    ; Se Steve estiver ativo, desativa Steve antes (modos exclusivos).
+    ; If Steve is active, deactivates Steve first (modes are exclusive).
     ; ============================================================
     ToggleMicroLock()
     {
@@ -156,7 +157,7 @@ class OverlayModeService
         }
         else
         {
-            ; v17.14: ativa micro — desativa steve se estava ativo
+            ; v17.14: enable micro — disable steve if it was on
             this._steveLocked := false
             this._microLocked := true
             this._mode        := OverlayModes.MICRO
@@ -167,10 +168,10 @@ class OverlayModeService
     }
 
     ; ============================================================
-    ; ToggleSteveLock - alterna COMPACT <-> STEVE LOCKED (v17.14)
+    ; ToggleSteveLock - alternates COMPACT <-> STEVE LOCKED (v17.14)
     ;
-    ; Modos micro e steve sao MUTUAMENTE EXCLUSIVOS — ativar steve
-    ; desativa micro automaticamente. Idem ToggleMicroLock.
+    ; Modes micro and steve are MUTUALLY EXCLUSIVE — enabling steve
+    ; automatically disables micro. Same for ToggleMicroLock.
     ; ============================================================
     ToggleSteveLock()
     {
@@ -191,7 +192,7 @@ class OverlayModeService
         return true
     }
 
-    ; Sincroniza flags no AppSettings.window pra persistir entre runs.
+    ; Syncs flags on AppSettings.window to persist across runs.
     _SyncWindowFlags()
     {
         if !IsObject(this._settings.window)
@@ -201,20 +202,20 @@ class OverlayModeService
     }
 
     ; ============================================================
-    ; SetMode(target) - forca o modo
+    ; SetMode(target) - forces the mode
     ;
-    ; target = COMPACT: limpa locks, _mode := COMPACT
-    ; target = MICRO:   _microLocked := true, _mode := MICRO (limpa steve)
-    ; target = STEVE:   _steveLocked := true, _mode := STEVE (limpa micro)
+    ; target = COMPACT: clear locks, _mode := COMPACT
+    ; target = MICRO:   _microLocked := true, _mode := MICRO (clear steve)
+    ; target = STEVE:   _steveLocked := true, _mode := STEVE (clear micro)
     ;
-    ; Idempotente: chamar com modo atual eh no-op.
+    ; Idempotent: calling with the current mode is a no-op.
     ; ============================================================
     SetMode(target)
     {
         if (target != OverlayModes.COMPACT
            && target != OverlayModes.MICRO
            && target != OverlayModes.STEVE)
-            throw ValueError("OverlayModeService.SetMode: target invalido: '" String(target) "'")
+            throw ValueError("OverlayModeService.SetMode: invalid target: '" String(target) "'")
 
         prev            := this._mode
         prevMicroLocked := this._microLocked
@@ -252,13 +253,13 @@ class OverlayModeService
     ; ============================================================
     ; OnPanelKeyDown - TOGGLE semantics
     ;
-    ; Cada DOWN alterna o state da panel:
-    ;   - key NAO em _heldKeys: panel "abriu" -> adiciona
-    ;   - key JA em _heldKeys:  panel "fechou" -> remove
+    ; Each DOWN toggles the panel state:
+    ;   - key NOT in _heldKeys: panel "opened" -> add
+    ;   - key ALREADY in _heldKeys: panel "closed" -> remove
     ;
-    ; Recomputa modo: Count > 0 -> MICRO AUTO; Count = 0 -> volta COMPACT.
-    ; LOCKED: panel keys nao mudam mode (mas registram held set).
-    ; Esc/focus loss limpam tudo via ClearHeldKeys.
+    ; Recomputes mode: Count > 0 -> MICRO AUTO; Count = 0 -> back to COMPACT.
+    ; LOCKED: panel keys do not change mode (but register the held set).
+    ; Esc/focus loss clear everything via ClearHeldKeys.
     ; ============================================================
     OnPanelKeyDown(keyName)
     {
@@ -272,7 +273,7 @@ class OverlayModeService
         else
             this._heldKeys[key] := true
 
-        ; Qualquer lock ativo (micro ou steve, v17.14) ignora auto-mode
+        ; Any active lock (micro or steve, v17.14) ignores auto-mode
         if (this._microLocked || this._steveLocked)
             return false
 
@@ -296,7 +297,7 @@ class OverlayModeService
 
     OnPanelKeyUp(keyName)
     {
-        ; TOGGLE semantics: UP eh no-op. Toggle acontece em DOWN.
+        ; TOGGLE semantics: UP is a no-op. Toggle happens on DOWN.
         return false
     }
 
@@ -305,7 +306,7 @@ class OverlayModeService
         if (this._heldKeys.Count = 0)
             return false
         this._heldKeys := Map()
-        ; v17.14: auto-mode so volta pra compact se nao tem nenhum lock
+        ; v17.14: auto-mode only returns to compact if there is no lock
         if (!this._microLocked && !this._steveLocked && this.IsMicroAuto())
         {
             prev := this._mode
@@ -362,7 +363,7 @@ class OverlayModeService
                 label := this.IsSteve() ? "STEVE"
                        : this.IsMicro() ? "MICRO"
                        : "COMPACT"
-                try TrayTip("SpeedKalandra", "Modo: " label, "Mute")
+                try TrayTip("SpeedKalandra", "Mode: " label, "Mute")
             }
         }
     }

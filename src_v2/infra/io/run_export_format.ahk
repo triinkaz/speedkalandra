@@ -1,16 +1,16 @@
 ; ============================================================
-; RunExportFormat - schema de export/import de runs (v0.1.0)
+; RunExportFormat - run export/import schema (v0.1.0)
 ; ============================================================
 ;
-; Classe pura sem I/O. Converte entre:
-;   - buildResult interno (Map produzido por RunStatsPlotBuilder.Build)
-;   - estrutura JSON-ready (Map normalizado p/ JsonFile.Stringify)
+; Pure class with no I/O. Converts between:
+;   - internal buildResult (Map produced by RunStatsPlotBuilder.Build)
+;   - JSON-ready structure (Map normalized for JsonFile.Stringify)
 ;
-; FILOSOFIA:
-;   - Serialize/Deserialize sao inversos (roundtrip preserva dados)
-;   - ValidateSchema eh estrito: rejeita input ambiguo ao inves de
-;     adivinhar (preferimos um erro claro do que silenciar corrupcao)
-;   - schemaVersion existe pra que mudancas futuras sejam detectaveis
+; PHILOSOPHY:
+;   - Serialize/Deserialize are inverses (roundtrip preserves data)
+;   - ValidateSchema is strict: rejects ambiguous input instead of
+;     guessing (we prefer a clear error over silently corrupt data)
+;   - schemaVersion exists so that future changes are detectable
 ;
 ; SCHEMA v1:
 ;   {
@@ -21,7 +21,7 @@
 ;     "runs": [
 ;       {
 ;         "runId": "20260515_103045_873",
-;         "profile": "Default" (ou "Anonymous" se anonimizado),
+;         "profile": "Default" (or "Anonymous" if anonymized),
 ;         "patch": "Unknown",
 ;         "firstTs": "2026-05-15 10:30:45",
 ;         "totalMs": 7665873,
@@ -37,7 +37,7 @@
 ;       },
 ;       ...
 ;     ],
-;     "personalBests": {     // opcional, presente se options.includePbs
+;     "personalBests": {     // optional, present if options.includePbs
 ;       "runPbMs": 7100000,
 ;       "runPbRunId": "20260512_142345_012",
 ;       "runPbByAct": { "1": 1100000, ... },
@@ -46,25 +46,25 @@
 ;   }
 ;
 ; CAVEATS:
-;   - JSON object keys sao sempre strings, entao Map<int, int> de
-;     actCheckpoints/runPbByAct/zonePbs eh serializado como
-;     Map<string, int>. Deserialize converte de volta.
-;   - "categoryLabel" de details NAO eh exportado (eh derivado).
-;     Re-derivado no Deserialize via RunStatsPlotBuilder.CategoryLabel.
+;   - JSON object keys are always strings, so Map<int, int> for
+;     actCheckpoints/runPbByAct/zonePbs is serialized as
+;     Map<string, int>. Deserialize converts back.
+;   - "categoryLabel" of details is NOT exported (it's derived).
+;     Re-derived in Deserialize via RunStatsPlotBuilder.CategoryLabel.
 ;
-; USO:
+; USAGE:
 ;   payload := RunExportFormat.Serialize([buildResult1, buildResult2],
 ;                                        pbData, Map("anonymized", true))
 ;   jsonStr := JsonFile.Stringify(payload)
 ;
-;   ; ... na importacao:
+;   ; ... on import:
 ;   parsed := JsonFile.Parse(jsonStr)
 ;   validation := RunExportFormat.ValidateSchema(parsed)
 ;   if !validation["valid"]
 ;       throw Error(validation["errors"][1])
 ;   decoded := RunExportFormat.Deserialize(parsed)
 ;   ; decoded["runs"] = Array<buildResult>
-;   ; decoded["personalBests"] = Map ou ""
+;   ; decoded["personalBests"] = Map or ""
 ;   ; decoded["meta"] = Map<exportedAt, exportedBy, anonymized>
 
 
@@ -75,21 +75,21 @@ class RunExportFormat
     static EXPORTER_NAME := "SpeedKalandra"
 
     ; ============================================================
-    ; Serialize(runs, pbData, options) -> Map JSON-ready
+    ; Serialize(runs, pbData, options) -> JSON-ready Map
     ;
-    ;   runs    : Array<buildResult> (Maps no formato do builder)
-    ;   pbData  : Map com runPbMs/runPbRunId/runPbByAct/zonePbs,
-    ;             ou "" pra omitir
-    ;   options : Map com:
-    ;     "anonymized" : bool (default false) - se true, blank profile
-    ;     "exporterVersion" : string (ex: "v0.1.0") opcional
+    ;   runs    : Array<buildResult> (Maps in the builder's format)
+    ;   pbData  : Map with runPbMs/runPbRunId/runPbByAct/zonePbs,
+    ;             or "" to omit
+    ;   options : Map with:
+    ;     "anonymized" : bool (default false) - if true, blank profile
+    ;     "exporterVersion" : string (e.g. "v0.1.0") optional
     ;
-    ; Throws TypeError em input invalido (runs nao array, etc).
+    ; Throws TypeError on invalid input (runs not array, etc.).
     ; ============================================================
     static Serialize(runs, pbData := "", options := "")
     {
         if !IsObject(runs) || !(runs is Array)
-            throw TypeError("RunExportFormat.Serialize: 'runs' deve ser Array")
+            throw TypeError("RunExportFormat.Serialize: 'runs' must be an Array")
 
         opts := IsObject(options) ? options : Map()
         anonymize := opts.Has("anonymized") && opts["anonymized"]
@@ -103,8 +103,8 @@ class RunExportFormat
         )
 
         serializedRuns := []
-        ; v0.1.0: renomeado de `run` pra `runItem` (case-insensitive
-        ; collision com builtin function `Run` disparava #Warn).
+        ; v0.1.0: renamed from `run` to `runItem` (case-insensitive
+        ; collision with the builtin function `Run` was triggering #Warn).
         for _, runItem in runs
         {
             if !IsObject(runItem)
@@ -122,9 +122,9 @@ class RunExportFormat
     ; ============================================================
     ; ValidateSchema(parsed) -> Map{valid, errors[], warnings[]}
     ;
-    ; Verifica estrutura do JSON parseado ANTES de tentar
-    ; deserializar. Erros graves bloqueiam import. Warnings sao
-    ; informativos.
+    ; Checks the parsed JSON structure BEFORE attempting to
+    ; deserialize. Serious errors block import. Warnings are
+    ; informational.
     ; ============================================================
     static ValidateSchema(parsed)
     {
@@ -133,21 +133,21 @@ class RunExportFormat
 
         if !IsObject(parsed) || !(parsed is Map)
         {
-            errors.Push("Root nao eh um JSON object")
+            errors.Push("Root is not a JSON object")
             return Map("valid", false, "errors", errors, "warnings", warnings)
         }
 
-        ; schemaVersion (obrigatorio)
+        ; schemaVersion (required)
         if !parsed.Has("schemaVersion")
         {
-            errors.Push("Campo 'schemaVersion' ausente — not a valid SpeedKalandra export")
+            errors.Push("'schemaVersion' field missing — not a valid SpeedKalandra export")
         }
         else
         {
             v := parsed["schemaVersion"]
             if !IsNumber(v)
             {
-                errors.Push("schemaVersion deve ser numero, achou: " v)
+                errors.Push("schemaVersion must be a number, got: " v)
             }
             else
             {
@@ -169,14 +169,14 @@ class RunExportFormat
             }
         }
 
-        ; runs (obrigatorio)
+        ; runs (required)
         if !parsed.Has("runs")
         {
-            errors.Push("Campo 'runs' ausente")
+            errors.Push("'runs' field missing")
         }
         else if !IsObject(parsed["runs"]) || !(parsed["runs"] is Array)
         {
-            errors.Push("Campo 'runs' deve ser array")
+            errors.Push("'runs' field must be an array")
         }
         else
         {
@@ -188,7 +188,7 @@ class RunExportFormat
             }
         }
 
-        ; personalBests (opcional)
+        ; personalBests (optional)
         if parsed.Has("personalBests")
         {
             pbErrors := RunExportFormat._ValidatePbs(parsed["personalBests"])
@@ -196,11 +196,11 @@ class RunExportFormat
                 errors.Push(e)
         }
 
-        ; Warnings (nao bloqueia mas informa)
+        ; Warnings (do not block but inform)
         if !parsed.Has("exportedAt")
-            warnings.Push("Campo 'exportedAt' ausente (informativo)")
+            warnings.Push("'exportedAt' field missing (informational)")
         if !parsed.Has("exportedBy")
-            warnings.Push("Campo 'exportedBy' ausente (informativo)")
+            warnings.Push("'exportedBy' field missing (informational)")
 
         valid := errors.Length = 0
         return Map("valid", valid, "errors", errors, "warnings", warnings)
@@ -209,14 +209,14 @@ class RunExportFormat
     ; ============================================================
     ; Deserialize(parsed) -> Map{runs, personalBests, meta}
     ;
-    ; Converte JSON parseado em estrutura interna. ASSUME que ja
-    ; passou por ValidateSchema com valid=true. Se nao passou, pode
-    ; lancar exception.
+    ; Converts parsed JSON into the internal structure. ASSUMES that
+    ; it has already passed ValidateSchema with valid=true. If it did
+    ; not, it may throw an exception.
     ; ============================================================
     static Deserialize(parsed)
     {
         if !IsObject(parsed) || !(parsed is Map)
-            throw TypeError("RunExportFormat.Deserialize: input deve ser Map")
+            throw TypeError("RunExportFormat.Deserialize: input must be a Map")
 
         runs := []
         if parsed.Has("runs") && IsObject(parsed["runs"])
@@ -249,17 +249,17 @@ class RunExportFormat
     ; ============================================================
     ; SelfTest() -> Map{passed, message, details[]}
     ;
-    ; Roundtrip test: monta buildResult fake -> Serialize -> JSON
-    ; -> Parse -> ValidateSchema -> Deserialize -> compara.
+    ; Roundtrip test: build a fake buildResult -> Serialize -> JSON
+    ; -> Parse -> ValidateSchema -> Deserialize -> compare.
     ;
-    ; Retorna detalhes pra MsgBox de debug.
+    ; Returns details for a debug MsgBox.
     ; ============================================================
     static SelfTest()
     {
         details := []
         try
         {
-            ; --- Cria buildResult de teste ---
+            ; --- Create test buildResult ---
             originalRun := Map(
                 "runId", "20260515_103045_873",
                 "profile", "TestProfile",
@@ -284,24 +284,24 @@ class RunExportFormat
                 "zonePbs", Map("Mud Burrow", 175000, "Clearfell", 220000)
             )
 
-            ; --- Serializa ---
+            ; --- Serialize ---
             payload := RunExportFormat.Serialize([originalRun], originalPbs,
                 Map("anonymized", false, "exporterVersion", "v0.1.0-test"))
             details.Push("Serialize OK")
 
-            ; --- Stringify pra JSON ---
-            jsonStr := JsonFile.Stringify(payload, 0)   ; minified pra teste
+            ; --- Stringify to JSON ---
+            jsonStr := JsonFile.Stringify(payload, 0)   ; minified for test
             details.Push("Stringify OK (" StrLen(jsonStr) " chars)")
 
-            ; --- Parse de volta ---
+            ; --- Parse back ---
             parsed := JsonFile.Parse(jsonStr)
             details.Push("Parse OK")
 
-            ; --- Valida ---
+            ; --- Validate ---
             validation := RunExportFormat.ValidateSchema(parsed)
             if !validation["valid"]
             {
-                msg := "ValidateSchema FALHOU:"
+                msg := "ValidateSchema FAILED:"
                 for _, e in validation["errors"]
                     msg .= "`n  - " e
                 return Map("passed", false, "message", msg, "details", details)
@@ -312,10 +312,10 @@ class RunExportFormat
             decoded := RunExportFormat.Deserialize(parsed)
             details.Push("Deserialize OK")
 
-            ; --- Compara campos da run ---
+            ; --- Compare run fields ---
             if (decoded["runs"].Length != 1)
                 return Map("passed", false,
-                    "message", "Esperava 1 run, achou " decoded["runs"].Length,
+                    "message", "Expected 1 run, got " decoded["runs"].Length,
                     "details", details)
             decodedRun := decoded["runs"][1]
 
@@ -334,49 +334,49 @@ class RunExportFormat
                 if (expected != actual)
                 {
                     return Map("passed", false,
-                        "message", "Campo '" field "': esperado='" expected
-                                 . "' atual='" actual "'",
+                        "message", "Field '" field "': expected='" expected
+                                 . "' actual='" actual "'",
                         "details", details)
                 }
             }
-            details.Push("Campos basicos: 7/7 OK")
+            details.Push("Basic fields: 7/7 OK")
 
-            ; --- Compara totals ---
+            ; --- Compare totals ---
             for k, v in originalRun["totals"]
             {
                 if !decodedRun["totals"].Has(k) || decodedRun["totals"][k] != v
                 {
                     return Map("passed", false,
-                        "message", "totals['" k "']: esperado=" v
-                                 . " atual=" (decodedRun["totals"].Has(k)
-                                            ? decodedRun["totals"][k] : "ausente"),
+                        "message", "totals['" k "']: expected=" v
+                                 . " actual=" (decodedRun["totals"].Has(k)
+                                            ? decodedRun["totals"][k] : "missing"),
                         "details", details)
                 }
             }
             details.Push("Totals: " originalRun["totals"].Count "/"
                 . originalRun["totals"].Count " OK")
 
-            ; --- Compara actCheckpoints ---
+            ; --- Compare actCheckpoints ---
             for k, v in originalRun["actCheckpoints"]
             {
                 if !decodedRun["actCheckpoints"].Has(k) || decodedRun["actCheckpoints"][k] != v
                 {
                     return Map("passed", false,
-                        "message", "actCheckpoints[" k "]: esperado=" v
-                                 . " atual=" (decodedRun["actCheckpoints"].Has(k)
-                                            ? decodedRun["actCheckpoints"][k] : "ausente"),
+                        "message", "actCheckpoints[" k "]: expected=" v
+                                 . " actual=" (decodedRun["actCheckpoints"].Has(k)
+                                            ? decodedRun["actCheckpoints"][k] : "missing"),
                         "details", details)
                 }
             }
             details.Push("ActCheckpoints: " originalRun["actCheckpoints"].Count "/"
                 . originalRun["actCheckpoints"].Count " OK")
 
-            ; --- Compara details (array) ---
+            ; --- Compare details (array) ---
             if (decodedRun["details"].Length != originalRun["details"].Length)
             {
                 return Map("passed", false,
-                    "message", "details.Length: esperado=" originalRun["details"].Length
-                             . " atual=" decodedRun["details"].Length,
+                    "message", "details.Length: expected=" originalRun["details"].Length
+                             . " actual=" decodedRun["details"].Length,
                     "details", details)
             }
             for i, expectedDetail in originalRun["details"]
@@ -387,22 +387,22 @@ class RunExportFormat
                     if (expectedDetail[field] != actualDetail[field])
                     {
                         return Map("passed", false,
-                            "message", "details[" i "]." field ": esperado='"
-                                     . expectedDetail[field] "' atual='"
+                            "message", "details[" i "]." field ": expected='"
+                                     . expectedDetail[field] "' actual='"
                                      . actualDetail[field] "'",
                             "details", details)
                     }
                 }
             }
-            details.Push("Details: " originalRun["details"].Length " rows, todos campos OK")
+            details.Push("Details: " originalRun["details"].Length " rows, all fields OK")
 
-            ; --- Compara PBs ---
+            ; --- Compare PBs ---
             decodedPbs := decoded["personalBests"]
             if (decodedPbs["runPbMs"] != originalPbs["runPbMs"])
             {
                 return Map("passed", false,
-                    "message", "PB runPbMs: esperado=" originalPbs["runPbMs"]
-                             . " atual=" decodedPbs["runPbMs"],
+                    "message", "PB runPbMs: expected=" originalPbs["runPbMs"]
+                             . " actual=" decodedPbs["runPbMs"],
                     "details", details)
             }
             if (decodedPbs["runPbRunId"] != originalPbs["runPbRunId"])
@@ -429,26 +429,26 @@ class RunExportFormat
                         "details", details)
                 }
             }
-            details.Push("PBs: 4 categorias OK")
+            details.Push("PBs: 4 categories OK")
 
-            ; --- Teste de anonymize ---
+            ; --- Anonymize test ---
             anonPayload := RunExportFormat.Serialize([originalRun], "",
                 Map("anonymized", true))
             anonRun := anonPayload["runs"][1]
             if (anonRun["profile"] != RunExportFormat.ANON_PROFILE)
             {
                 return Map("passed", false,
-                    "message", "Anonymize: profile deveria ser '"
+                    "message", "Anonymize: profile should be '"
                              . RunExportFormat.ANON_PROFILE
-                             . "', virou '" anonRun["profile"] "'",
+                             . "', became '" anonRun["profile"] "'",
                     "details", details)
             }
             details.Push("Anonymize: OK")
 
-            ; --- Tudo passou ---
+            ; --- All passed ---
             return Map(
                 "passed", true,
-                "message", "Todos os " details.Length " sub-testes passaram",
+                "message", "All " details.Length " sub-tests passed",
                 "details", details
             )
         }
@@ -465,12 +465,12 @@ class RunExportFormat
     }
 
     ; ============================================================
-    ; Helpers privados
+    ; Private helpers
     ; ============================================================
 
     static _NowIso()
     {
-        ; "YYYY-MM-DD HH:MM:SS" (ISO-like, sem Z porque eh local time)
+        ; "YYYY-MM-DD HH:MM:SS" (ISO-like, no Z because it's local time)
         return FormatTime(A_Now, "yyyy-MM-dd HH:mm:ss")
     }
 
@@ -496,7 +496,7 @@ class RunExportFormat
         }
         out["totals"] := totals
 
-        ; actCheckpoints: Map<int, int> -> Map<str, int> (JSON keys sao str)
+        ; actCheckpoints: Map<int, int> -> Map<str, int> (JSON keys are strings)
         ckpts := Map()
         if run.Has("actCheckpoints") && IsObject(run["actCheckpoints"])
         {
@@ -558,7 +558,7 @@ class RunExportFormat
         }
         out["runPbByAct"] := ba
 
-        ; zonePbs: Map<str, int> -> mesmo formato
+        ; zonePbs: Map<str, int> -> same format
         zp := Map()
         if pbData.Has("zonePbs") && IsObject(pbData["zonePbs"])
         {
@@ -673,23 +673,23 @@ class RunExportFormat
         errors := []
         if !IsObject(run) || !(run is Map)
         {
-            errors.Push("runs[" idx "]: nao eh um object")
+            errors.Push("runs[" idx "]: is not an object")
             return errors
         }
         if !run.Has("runId") || String(run["runId"]) = ""
-            errors.Push("runs[" idx "]: 'runId' ausente ou vazio")
+            errors.Push("runs[" idx "]: 'runId' missing or empty")
         if !run.Has("totalMs")
-            errors.Push("runs[" idx "]: 'totalMs' ausente")
+            errors.Push("runs[" idx "]: 'totalMs' missing")
         else if !IsNumber(run["totalMs"]) || Integer(run["totalMs"]) <= 0
-            errors.Push("runs[" idx "]: 'totalMs' deve ser inteiro positivo")
+            errors.Push("runs[" idx "]: 'totalMs' must be a positive integer")
 
-        ; Optional fields: type-check se presentes
+        ; Optional fields: type-check if present
         if run.Has("totals") && (!IsObject(run["totals"]) || !(run["totals"] is Map))
-            errors.Push("runs[" idx "]: 'totals' deve ser object")
+            errors.Push("runs[" idx "]: 'totals' must be an object")
         if run.Has("actCheckpoints") && (!IsObject(run["actCheckpoints"]) || !(run["actCheckpoints"] is Map))
-            errors.Push("runs[" idx "]: 'actCheckpoints' deve ser object")
+            errors.Push("runs[" idx "]: 'actCheckpoints' must be an object")
         if run.Has("details") && (!IsObject(run["details"]) || !(run["details"] is Array))
-            errors.Push("runs[" idx "]: 'details' deve ser array")
+            errors.Push("runs[" idx "]: 'details' must be an array")
 
         return errors
     }
@@ -699,26 +699,27 @@ class RunExportFormat
         errors := []
         if !IsObject(pbs) || !(pbs is Map)
         {
-            errors.Push("personalBests: nao eh um object")
+            errors.Push("personalBests: is not an object")
             return errors
         }
         if pbs.Has("runPbMs") && (!IsNumber(pbs["runPbMs"]) || Integer(pbs["runPbMs"]) < 0)
-            errors.Push("personalBests.runPbMs: deve ser inteiro >= 0")
+            errors.Push("personalBests.runPbMs: must be an integer >= 0")
         if pbs.Has("runPbByAct") && (!IsObject(pbs["runPbByAct"]) || !(pbs["runPbByAct"] is Map))
-            errors.Push("personalBests.runPbByAct: deve ser object")
+            errors.Push("personalBests.runPbByAct: must be an object")
         if pbs.Has("zonePbs") && (!IsObject(pbs["zonePbs"]) || !(pbs["zonePbs"] is Map))
-            errors.Push("personalBests.zonePbs: deve ser object")
+            errors.Push("personalBests.zonePbs: must be an object")
         return errors
     }
 
-    ; Deriva categoryLabel sem precisar instanciar RunStatsPlotBuilder.
-    ; Replica a logica de RunStatsPlotBuilder.CategoryLabel mas defensiva
-    ; (se o builder mudar o mapping, atualizar aqui tambem).
+    ; Derives categoryLabel without needing to instantiate RunStatsPlotBuilder.
+    ; Replicates the RunStatsPlotBuilder.CategoryLabel logic but defensively
+    ; (if the builder changes the mapping, update here too).
     ;
-    ; v0.1.0: lookup dinamico via %"..."% pra evitar #Warn quando o
-    ; builder nao esta no escopo (ex: testes isolados do RunExportFormat
-    ; sem incluir o builder). O try/catch externo cobre o caso em que
-    ; o lookup falha (UnsetError) ou o builder mudou de assinatura.
+    ; v0.1.0: dynamic lookup via %"..."% to avoid #Warn when the
+    ; builder is not in scope (e.g. isolated RunExportFormat tests
+    ; without including the builder). The outer try/catch covers the
+    ; case where the lookup fails (UnsetError) or the builder changed
+    ; its signature.
     static _SafeCategoryLabel(cat)
     {
         try
@@ -728,9 +729,9 @@ class RunExportFormat
         }
         catch
         {
-            ; Fallback se RunStatsPlotBuilder nao estiver disponivel
-            ; (ex: SelfTest rodando antes do builder, ou em testes
-            ; isolados sem o builder no #Include path).
+            ; Fallback if RunStatsPlotBuilder is not available
+            ; (e.g. SelfTest running before the builder, or in
+            ; isolated tests without the builder on the #Include path).
             switch String(cat)
             {
                 case "mapa":    return "Map"

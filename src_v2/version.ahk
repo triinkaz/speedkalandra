@@ -1,52 +1,52 @@
 ; ============================================================
-; Version - constante global de versao do SpeedKalandra
+; Version - global version constant for SpeedKalandra
 ; ============================================================
 ;
-; v17.15 (Bug #30): introduzido pra dar surface ao numero de versao.
+; v17.15 (Bug #30): introduced to surface the version number.
 ;
-; v0.1.0 (primeira release publica): adotada SemVer pra versionamento
-; externo. Pre-1.0 sinaliza "funcional mas ainda evoluindo, sem
-; compromisso de estabilidade de API". Combina com o disclaimer.
+; v0.1.0 (first public release): adopted SemVer for external
+; versioning. Pre-1.0 signals "functional but still evolving, no
+; commitment to API stability". Pairs with the disclaimer.
 ;
-; v0.1.1: Bug #2 (TextEncoding) - API ConvertUtf16ToUtf8 e
-;   MigrateIniToUtf8 removidas (quebravam IniRead em UTF-8 BOM).
+; v0.1.1: Bug #2 (TextEncoding) - ConvertUtf16ToUtf8 and
+;   MigrateIniToUtf8 APIs removed (they broke IniRead on UTF-8 BOM).
 ;
-; v0.1.2: Bug #5 (LoadingDetectionService) - timeouts agora publicam
-;   LoadingMeasured com duracao real (antes eram descartados pelo
-;   filtro `> maxMs`, causando loading-time subestimado em PCs lentos).
-;   Tambem #19 (Duration.FormatMs consolidacao), #26 (log multi-linha
-;   hygiene), #30 (version embed em 3 superficies UI).
+; v0.1.2: Bug #5 (LoadingDetectionService) - timeouts now publish
+;   LoadingMeasured with the real duration (previously discarded by
+;   the `> maxMs` filter, causing underestimated loading time on
+;   slow PCs). Also #19 (Duration.FormatMs consolidation), #26
+;   (multi-line log hygiene), #30 (version embed in 3 UI surfaces).
 ;
-; v0.1.3: 4 features de UX:
-;   1. Setup dialog do Client.txt na primeira execucao (app nao roda
-;      sem path valido).
-;   2. Fix bug visual no Edit do Settings (altura fixa h22 pra evitar
-;      auto-expansao quando o path eh longo).
-;   3. Death penalty agora aplica no timer real-time (antes so aparecia
-;      no plot post-finalize). Novo TimerService.AddPenaltyMs(ms) +
-;      handler _OnDeathApplyTimerPenalty subscrito a Evt.DeathDetected.
-;   4. Removido campo Patch do Settings dialog (mantido internamente
-;      como cfg.gamePatch="Unknown" pra retrocompat com runs antigas).
-;   +19 tests novos (13 unit TimerService.AddPenaltyMs + 6 integration
-;   do handler), suite total ~1557 verdes.
+; v0.1.3: 4 UX features:
+;   1. Client.txt setup dialog on first run (app doesn't run without
+;      a valid path).
+;   2. Fix visual bug in the Settings Edit (fixed h22 height to avoid
+;      auto-expand when the path is long).
+;   3. Death penalty now applies to the timer in real time (previously
+;      only shown in the post-finalize plot). New TimerService.AddPenaltyMs(ms)
+;      + _OnDeathApplyTimerPenalty handler subscribed to Evt.DeathDetected.
+;   4. Removed Patch field from the Settings dialog (kept internally
+;      as cfg.gamePatch="Unknown" for back-compat with old runs).
+;   +19 new tests (13 unit TimerService.AddPenaltyMs + 6 integration
+;   of the handler), total suite ~1557 green.
 ;
-; Tags internas no codigo (v17.15.x) sao historicas e ficam pra
-; rastreabilidade de mudancas — nao sao usadas em release publica.
+; Internal tags in the code (v17.15.x) are historical and remain for
+; change traceability — they are not used in public releases.
 ;
-; Onde aparece:
-;   - Tray tooltip (A_IconTip em speedkalandra.ahk)
-;   - Settings dialog (titulo da janela)
-;   - Plot da run (footer)
+; Where it appears:
+;   - Tray tooltip (A_IconTip in speedkalandra.ahk)
+;   - Settings dialog (window title)
+;   - Run plot (footer)
 ;
-; ATUALIZACAO MANUAL:
-;   Antes de cada release, bumpa STRING aqui. Nao ha automacao no
-;   build script ainda.
+; MANUAL UPDATE:
+;   Before each release, bump STRING here. There is no automation in
+;   the build script yet.
 ;
 ;   SemVer: MAJOR.MINOR.PATCH
-;     - PATCH (0.1.0 -> 0.1.1): bug fixes que nao adicionam features
-;     - MINOR (0.1.0 -> 0.2.0): features novas, backward-compatible
-;     - MAJOR (0.x -> 1.0): primeiro release "estavel". Depois disso,
-;       bumpa MAJOR so quando quebra compat de algo publico.
+;     - PATCH (0.1.0 -> 0.1.1): bug fixes that don't add features
+;     - MINOR (0.1.0 -> 0.2.0): new features, backward-compatible
+;     - MAJOR (0.x -> 1.0): first "stable" release. After that, bump
+;       MAJOR only when public compatibility breaks.
 
 class Version
 {

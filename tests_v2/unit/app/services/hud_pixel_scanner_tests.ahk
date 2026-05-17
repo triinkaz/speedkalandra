@@ -2,25 +2,25 @@
 ; HudPixelScannerTests
 ; ============================================================
 ;
-; HudPixelScanner detecta o HUD do PoE2 amostrando pixels em 3
-; regioes (mana / life / hotbar). E' puro com dep injetavel:
+; HudPixelScanner detects the PoE2 HUD by sampling pixels in 3
+; regions (mana / life / hotbar). It's pure with an injectable dep:
 ;   pixelReader: closure (x, y) -> color RGB integer
 ;
-; Em prod, default pixelReader usa PixelGetColor (OS hook).
-; Em testes, injetamos closure que retorna cor fixa pra simular
-; HUD presente/ausente.
+; In prod, the default pixelReader uses PixelGetColor (OS hook).
+; In tests, we inject a closure that returns a fixed color to
+; simulate HUD present/absent.
 ;
-; Cobertura:
-;   - Classifiers static (IsLifePixel/IsManaPixel/IsHotbarPixel)
-;   - Construtor (default, callable, rejeicao de invalidos)
-;   - Scan: regioes individuais, combined threshold, edge cases
+; Coverage:
+;   - Static classifiers (IsLifePixel/IsManaPixel/IsHotbarPixel)
+;   - Constructor (default, callable, invalid rejection)
+;   - Scan: individual regions, combined threshold, edge cases
 ;
-; NOTA SOBRE CORES TESTAVEIS:
-;   0xFF0000 (puro vermelho) -> SO life
-;   0x0000FF (puro azul)     -> SO mana
-;   0xFFFF00 (puro amarelo)  -> SO hotbar
-;   0x000000 (preto)         -> nada
-;   0xFFFFFF (branco)        -> nada (max=255 mas range=0)
+; NOTE ON TESTABLE COLORS:
+;   0xFF0000 (pure red)     -> ONLY life
+;   0x0000FF (pure blue)    -> ONLY mana
+;   0xFFFF00 (pure yellow)  -> ONLY hotbar
+;   0x000000 (black)        -> nothing
+;   0xFFFFFF (white)        -> nothing (max=255 but range=0)
 
 
 class HudPixelScannerTests extends TestCase
@@ -59,7 +59,7 @@ class HudPixelScannerTests extends TestCase
         "is_hotbar_pixel_pure_white_fails",
         "is_hotbar_pixel_pure_black_fails",
 
-        ; --- Construtor ---
+        ; --- Constructor ---
         "constructor_with_no_args_accepts_default_reader",
         "constructor_accepts_arrow_lambda",
         "constructor_throws_on_string_reader",
@@ -72,7 +72,7 @@ class HudPixelScannerTests extends TestCase
         "scan_returns_map_with_required_keys",
         "scan_returns_all_zero_hits_on_black",
 
-        ; --- Scan: regioes ---
+        ; --- Scan: regions ---
         "scan_detects_mana_hits_for_all_blue_pixels",
         "scan_detects_life_hits_when_no_mana",
         "scan_detects_hotbar_hits_when_no_life_no_mana",
@@ -81,7 +81,7 @@ class HudPixelScannerTests extends TestCase
         "scan_visible_true_when_hotbar_hits_geq_8",
         "scan_invisible_when_all_white",
 
-        ; --- Scan: reader robusto ---
+        ; --- Scan: robust reader ---
         "scan_with_throwing_pixel_reader_returns_invisible"
     ]
 
@@ -97,7 +97,7 @@ class HudPixelScannerTests extends TestCase
 
     is_life_pixel_threshold_at_55_passes()
     {
-        ; r=55, g=0, b=0 -> passa por pouco
+        ; r=55, g=0, b=0 -> just passes
         Assert.True(HudPixelScanner.IsLifePixel(0x370000))
     }
 
@@ -109,13 +109,13 @@ class HudPixelScannerTests extends TestCase
 
     is_life_pixel_red_too_close_to_green_fails()
     {
-        ; r=100, g=85, b=0 -> r-g=15 < 18 (precisa > 18)
+        ; r=100, g=85, b=0 -> r-g=15 < 18 (needs > 18)
         Assert.False(HudPixelScanner.IsLifePixel(0x645500))
     }
 
     is_life_pixel_red_too_close_to_blue_fails()
     {
-        ; r=100, g=0, b=92 -> r-b=8 < 12 (precisa > 12)
+        ; r=100, g=0, b=92 -> r-b=8 < 12 (needs > 12)
         Assert.False(HudPixelScanner.IsLifePixel(0x64005C))
     }
 
@@ -126,7 +126,7 @@ class HudPixelScannerTests extends TestCase
 
     is_life_pixel_pure_white_fails()
     {
-        ; r-g=0, r-b=0 -> falha em ambos
+        ; r-g=0, r-b=0 -> fails on both
         Assert.False(HudPixelScanner.IsLifePixel(0xFFFFFF))
     }
 
@@ -175,7 +175,7 @@ class HudPixelScannerTests extends TestCase
 
     is_mana_pixel_pure_white_fails()
     {
-        ; b-r=0 -> falha em b > r+12
+        ; b-r=0 -> fails b > r+12
         Assert.False(HudPixelScanner.IsManaPixel(0xFFFFFF))
     }
 
@@ -215,7 +215,7 @@ class HudPixelScannerTests extends TestCase
 
     is_hotbar_pixel_pure_white_fails()
     {
-        ; max=255 mas range=0
+        ; max=255 but range=0
         Assert.False(HudPixelScanner.IsHotbarPixel(0xFFFFFF))
     }
 
@@ -225,14 +225,14 @@ class HudPixelScannerTests extends TestCase
     }
 
     ; ============================================================
-    ; Construtor
+    ; Constructor
     ; ============================================================
 
     constructor_with_no_args_accepts_default_reader()
     {
         scanner := HudPixelScanner()
-        ; Apenas verifica que nao explode. Default usa PixelGetColor real,
-        ; nao testavel aqui.
+        ; Just verifies it doesn't explode. Default uses real
+        ; PixelGetColor, not testable here.
         Assert.True(IsObject(scanner))
     }
 
@@ -301,23 +301,23 @@ class HudPixelScannerTests extends TestCase
     }
 
     ; ============================================================
-    ; Scan: regioes individuais
+    ; Scan: individual regions
     ; ============================================================
 
     scan_detects_mana_hits_for_all_blue_pixels()
     {
-        ; All pixels = puro azul -> mana classifier hit em qualquer pixel
-        ; Mana eh procurada primeiro, early-exit em >=2 hits.
+        ; All pixels = pure blue -> mana classifier hits any pixel.
+        ; Mana is searched first, early-exit at >=2 hits.
         scanner := HudPixelScanner((x, y) => 0x0000FF)
         result := scanner.Scan(0, 0, 1920, 1080)
         Assert.True(result["visible"])
-        Assert.True(result["manaHits"] >= 2, "manaHits deve atingir threshold")
+        Assert.True(result["manaHits"] >= 2, "manaHits must reach threshold")
     }
 
     scan_detects_life_hits_when_no_mana()
     {
-        ; Puro vermelho -> nao bate mana, bate life. Mana procurada primeiro
-        ; e retorna 0; entao algoritmo procura life.
+        ; Pure red -> doesn't hit mana, hits life. Mana searched
+        ; first and returns 0; then algorithm searches life.
         scanner := HudPixelScanner((x, y) => 0xFF0000)
         result := scanner.Scan(0, 0, 1920, 1080)
         Assert.True(result["visible"])
@@ -327,7 +327,7 @@ class HudPixelScannerTests extends TestCase
 
     scan_detects_hotbar_hits_when_no_life_no_mana()
     {
-        ; Puro amarelo -> nao bate life nem mana, bate hotbar
+        ; Pure yellow -> hits neither life nor mana, hits hotbar
         scanner := HudPixelScanner((x, y) => 0xFFFF00)
         result := scanner.Scan(0, 0, 1920, 1080)
         Assert.True(result["visible"])
@@ -337,7 +337,7 @@ class HudPixelScannerTests extends TestCase
     }
 
     ; ============================================================
-    ; Scan: thresholds de visibilidade
+    ; Scan: visibility thresholds
     ; ============================================================
 
     scan_visible_true_when_mana_hits_geq_2()
@@ -366,7 +366,7 @@ class HudPixelScannerTests extends TestCase
 
     scan_invisible_when_all_white()
     {
-        ; Branco: nem mana (b-r=0), nem life (r-g=0), nem hotbar (range=0)
+        ; White: no mana (b-r=0), no life (r-g=0), no hotbar (range=0)
         scanner := HudPixelScanner((x, y) => 0xFFFFFF)
         result := scanner.Scan(0, 0, 1920, 1080)
         Assert.False(result["visible"])
@@ -376,12 +376,12 @@ class HudPixelScannerTests extends TestCase
     }
 
     ; ============================================================
-    ; Scan: reader robusto (throws -> retorna -1, skipa)
+    ; Scan: robust reader (throws -> returns -1, skip)
     ; ============================================================
 
     scan_with_throwing_pixel_reader_returns_invisible()
     {
-        ; _ReadPixel pega exceptions e retorna -1, _CountInRegion skipa.
+        ; _ReadPixel catches exceptions and returns -1, _CountInRegion skips.
         ThrowingReader(x, y)
         {
             throw Error("simulated read failure")

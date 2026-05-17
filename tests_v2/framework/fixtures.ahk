@@ -1,8 +1,8 @@
 ; ============================================================
-; Fixtures - helpers compartilhados entre testes
+; Fixtures - helpers shared between tests
 ; ============================================================
 ;
-; Padrao de uso:
+; Usage pattern:
 ;
 ;   Setup()
 ;   {
@@ -17,20 +17,20 @@
 ;       Fixtures.CleanupAll()
 ;   }
 ;
-; TempDir / TempFile / TempPath registram o caminho num pool.
-; CleanupAll apaga tudo do pool (recursivamente pra dirs).
-; Chamar CleanupAll em todo Teardown evita lixo em A_Temp quando
-; uma suite cresce.
+; TempDir / TempFile / TempPath register the path in a pool.
+; CleanupAll wipes everything from the pool (recursively for dirs).
+; Calling CleanupAll in every Teardown avoids leftover junk in A_Temp
+; as a suite grows.
 ;
-; MakeBus retorna EventBus(NullLogger) - o EventBus eh suficiente
-; para a maioria dos testes; quando precisa inspecionar o log, troca
-; pelo InMemoryLogger no Setup:
+; MakeBus returns EventBus(NullLogger) - the EventBus is enough for
+; most tests; when you need to inspect the log, swap in the
+; InMemoryLogger in Setup:
 ;
 ;   this.memLog := InMemoryLogger()
 ;   this.bus    := EventBus(this.memLog)
 ;
-; (NOTA: nao usar nome `log` como local em testes - colide com global
-; em algum arquivo do projeto e dispara #Warn LocalSameAsGlobal.
+; (NOTE: do not use `log` as a local in tests - it collides with a
+; global in some project file and triggers #Warn LocalSameAsGlobal.
 ; Use `memLog`, `srvLog`, `nullLog`.)
 
 class Fixtures
@@ -41,7 +41,7 @@ class Fixtures
     ; Tempfiles / tempdirs / temppaths
     ; ============================================================
 
-    ; Cria um diretorio temporario, registra para cleanup, retorna path.
+    ; Creates a temporary directory, registers it for cleanup, returns the path.
     static TempDir()
     {
         Loop
@@ -56,8 +56,8 @@ class Fixtures
         }
     }
 
-    ; Cria um arquivo temporario com conteudo opcional. Registra para
-    ; cleanup. Retorna path.
+    ; Creates a temporary file with optional content. Registers it for
+    ; cleanup. Returns the path.
     static TempFile(content := "", extension := "txt")
     {
         Loop
@@ -71,11 +71,12 @@ class Fixtures
         return path
     }
 
-    ; Gera um path unico SEM criar o arquivo. Util quando o SUT eh
-    ; quem deve criar o arquivo (ex: LogService cria no primeiro append,
-    ; rotation acontece no construtor antes do append). Registra para
-    ; cleanup mesmo assim - se o SUT nao criar, CleanupAll vira no-op
-    ; nesse path. Se criar, e' apagado.
+    ; Generates a unique path WITHOUT creating the file. Useful when
+    ; the SUT is the one that should create the file (e.g.: LogService
+    ; creates on the first append, rotation happens in the constructor
+    ; before the append). Registers it for cleanup anyway - if the SUT
+    ; doesn't create it, CleanupAll is a no-op on this path. If it
+    ; does, the file is deleted.
     static TempPath(extension := "tmp")
     {
         Loop
@@ -89,8 +90,8 @@ class Fixtures
         }
     }
 
-    ; Registra um path externo no pool de cleanup. Util quando o
-    ; SUT cria arquivos derivados (ex: LogService cria .log.old).
+    ; Registers an external path in the cleanup pool. Useful when the
+    ; SUT creates derived files (e.g.: LogService creates .log.old).
     static RegisterTempPath(path)
     {
         Fixtures._tempPaths.Push(path)
@@ -109,19 +110,19 @@ class Fixtures
             }
             catch
             {
-                ; ignora - tempfile pode ter sumido por outras causas
+                ; ignore - tempfile may have vanished for other reasons
             }
         }
         Fixtures._tempPaths := []
     }
 
     ; ============================================================
-    ; Inspecao de arquivos (uteis em testes de I/O)
+    ; File inspection (useful in I/O tests)
     ; ============================================================
 
-    ; Conta newlines (`n) no arquivo. LogService sempre termina cada
-    ; entry com `n, entao isso conta entries efetivas. Retorna 0 se
-    ; o arquivo nao existe ou esta vazio.
+    ; Counts newlines (`n) in the file. LogService always ends each
+    ; entry with `n, so this counts effective entries. Returns 0 if
+    ; the file doesn't exist or is empty.
     static FileLineCount(path)
     {
         if !FileExist(path)
@@ -138,7 +139,7 @@ class Fixtures
         return count
     }
 
-    ; Le o arquivo inteiro como string UTF-8. Retorna "" se nao existe.
+    ; Reads the whole file as a UTF-8 string. Returns "" if it doesn't exist.
     static FileReadAll(path)
     {
         if !FileExist(path)
@@ -147,7 +148,7 @@ class Fixtures
     }
 
     ; ============================================================
-    ; Factories de objetos comuns
+    ; Factories for common objects
     ; ============================================================
 
     static MakeBus()

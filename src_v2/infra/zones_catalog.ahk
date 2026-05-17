@@ -1,31 +1,31 @@
 ; ============================================================
-; ZonesCatalog - carrega data/zones.csv em memoria
+; ZonesCatalog - loads data/zones.csv into memory
 ; ============================================================
 ;
-; Catalogo estatico de zonas de campanha (77 zonas POE2 Early Access).
-; Substitui o legado town_zones_repository.ahk + data/town_zones.txt:
-; agora todas as info de zona vem de um arquivo unico no formato CSV
-; ponto-virgula, com is_town como flag.
+; Static catalog of campaign zones (77 zones, PoE2 Early Access).
+; Replaces the legacy town_zones_repository.ahk + data/town_zones.txt:
+; now all zone info comes from a single semicolon-CSV file with
+; is_town as a flag.
 ;
-; FORMATO data/zones.csv:
+; data/zones.csv FORMAT:
 ;
 ;   name;internal_id;act;is_town
 ;   Clearfell Encampment;G1_town;1;1
 ;   Cemetery of the Eternals;G1_7;1;0
 ;   ...
 ;
-;   - name        : nome de display (case-sensitive, mas matching faz lower)
-;   - internal_id : id do log do PoE2 (G1_..., G2_..., etc)
+;   - name        : display name (case-sensitive, but matching is lowercased)
+;   - internal_id : id used in the PoE2 log (G1_..., G2_..., etc.)
 ;   - act         : 1, 2, 3, 4
-;   - is_town     : 1 = cidade/hub, 0 = zona normal
+;   - is_town     : 1 = town/hub, 0 = normal zone
 ;
 ; LOG MATCHING:
-;   O Client.txt pode reportar zona por NAME (texto humano) ou via
-;   internal_id. ZonesCatalog suporta lookup pelos dois lados:
+;   Client.txt may report the zone by NAME (human text) or by
+;   internal_id. ZonesCatalog supports lookup from both sides:
 ;     IsTownName("Clearfell Encampment") => true
 ;     IsTownById("G1_town")              => true
 ;
-; CONSTRUCAO:
+; CONSTRUCTION:
 ;   catalog := ZonesCatalog(A_ScriptDir "\data\zones.csv")
 ;   catalog.Count()                  => 77
 ;   catalog.FindByName("Clearfell")  => ZoneEntry | ""
@@ -60,13 +60,13 @@ class ZonesCatalog
     __New(csvPath)
     {
         if (csvPath = "")
-            throw ValueError("ZonesCatalog: 'csvPath' obrigatorio")
+            throw ValueError("ZonesCatalog: 'csvPath' is required")
         this._path := csvPath
         this._Load()
     }
 
     ; ------------------------------------------------------------
-    ; Queries publicas
+    ; Public queries
     ; ------------------------------------------------------------
     All()             => this._zones
     Count()           => this._zones.Length
@@ -114,7 +114,7 @@ class ZonesCatalog
         return IsObject(z) ? z.act : 0
     }
 
-    ; Lista de zonas filtradas
+    ; Filtered zone list
     ByAct(actIndex)
     {
         out := []
@@ -136,7 +136,7 @@ class ZonesCatalog
     Reload() => this._Load()
 
     ; ------------------------------------------------------------
-    ; _Load — parse CSV manual
+    ; _Load — manual CSV parse
     ; ------------------------------------------------------------
     _Load()
     {
@@ -169,7 +169,7 @@ class ZonesCatalog
             line := Trim(rawLine)
             if (line = "")
                 continue
-            ; Skip header (case-insensitive). Tambem skipa comments.
+            ; Skip header (case-insensitive). Also skip comments.
             firstChar := SubStr(line, 1, 1)
             if (firstChar = "#" || firstChar = ";")
                 continue

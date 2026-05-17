@@ -2,18 +2,19 @@
 ; OverlayInteractionServiceTests
 ; ============================================================
 ;
-; Service controla click-through e drag/resize de widgets do overlay.
-; Em headless=true: Start()/Stop() nao instala SetTimer/OnMessage reais.
-; State machine (Register/Unregister/SetCtrlState) eh testavel.
+; Service controls click-through and drag/resize of overlay
+; widgets. In headless=true mode: Start()/Stop() doesn't install
+; real SetTimer/OnMessage. The state machine
+; (Register/Unregister/SetCtrlState) is testable.
 ;
-; OUT OF SCOPE (requer OnMessage/Win32 real):
+; OUT OF SCOPE (requires real OnMessage/Win32):
 ;   - _OnLButtonDown drag start
 ;   - _OnMouseWheel resize
-;   - _DragTick movimento
-;   - _UpdateHoverState (depende de WinGetPos/MouseGetPos)
+;   - _DragTick movement
+;   - _UpdateHoverState (depends on WinGetPos/MouseGetPos)
 ;
-; Singleton: OverlayInteractionService.Instance eh sobrescrita a cada
-; new() — esperado, Setup cria fresh instance.
+; Singleton: OverlayInteractionService.Instance is overwritten on
+; each new() — expected, Setup creates a fresh instance.
 
 
 class OverlayInteractionServiceTests extends TestCase
@@ -37,7 +38,7 @@ class OverlayInteractionServiceTests extends TestCase
     }
 
     static Tests := [
-        ; --- Construtor ---
+        ; --- Constructor ---
         "constructor_throws_when_bus_not_event_bus",
         "constructor_default_headless_false",
         "constructor_accepts_headless_true",
@@ -92,14 +93,15 @@ class OverlayInteractionServiceTests extends TestCase
 
     _WidgetCount()
     {
-        ; Acessa _widgets via reflexao indireta: registra e remove pra contar
-        ; eh chato. Em vez disso, exponho via incremental count:
-        ; (so consigo contar registrando e checando comportamento de duplicates)
+        ; Accesses _widgets via indirect reflection: register/remove to
+        ; count is awkward. Instead, expose via incremental count:
+        ; (the only way to count is by registering and checking
+        ; duplicate behavior).
         return this.svc._widgets.Length
     }
 
     ; ============================================================
-    ; Construtor
+    ; Constructor
     ; ============================================================
 
     constructor_throws_when_bus_not_event_bus()
@@ -109,8 +111,8 @@ class OverlayInteractionServiceTests extends TestCase
 
     constructor_default_headless_false()
     {
-        ; So testa que nao crasha; nao vamos chamar Start() pra evitar
-        ; SetTimer/OnMessage real.
+        ; Only tests that it doesn't crash; we won't call Start() to
+        ; avoid real SetTimer/OnMessage.
         svc2 := OverlayInteractionService(this.bus)
         Assert.False(svc2.IsEnabled())
     }
@@ -122,7 +124,7 @@ class OverlayInteractionServiceTests extends TestCase
 
     constructor_sets_static_instance()
     {
-        ; Singleton pattern: Instance aponta pra ultima construida.
+        ; Singleton pattern: Instance points to the last one constructed.
         Assert.True(OverlayInteractionService.Instance is OverlayInteractionService)
     }
 
@@ -170,7 +172,7 @@ class OverlayInteractionServiceTests extends TestCase
     stop_clears_drag_state()
     {
         this.svc.Start()
-        this.svc._dragHwnd := 12345   ; simula drag em andamento
+        this.svc._dragHwnd := 12345   ; simulates an ongoing drag
         this.svc.Stop()
         Assert.Equal(0, this.svc._dragHwnd)
     }
@@ -198,7 +200,7 @@ class OverlayInteractionServiceTests extends TestCase
         this.svc.Start()
         this.svc.RegisterHwnd(12345)
         this.svc.RegisterHwnd(12345)
-        Assert.Equal(1, this._WidgetCount(), "Duplicado: nao adiciona de novo")
+        Assert.Equal(1, this._WidgetCount(), "Duplicate: doesn't add again")
     }
 
     register_hwnd_with_callbacks_stores_them()
@@ -208,7 +210,7 @@ class OverlayInteractionServiceTests extends TestCase
         cbResize  := (steps) => "resize-" steps
         this.svc.RegisterHwnd(12345, cbDragEnd, cbResize)
         Assert.Equal(1, this._WidgetCount())
-        ; Verifica via _widgets diretamente (vista privada)
+        ; Verifies via _widgets directly (private view)
         Assert.Equal(cbDragEnd, this.svc._widgets[1]["onDragEnd"])
         Assert.Equal(cbResize,  this.svc._widgets[1]["onResize"])
     }
@@ -247,11 +249,11 @@ class OverlayInteractionServiceTests extends TestCase
     {
         this.svc.Start()
         this.svc.RegisterHwnd(12345)
-        ; Simula drag em andamento naquele hwnd
+        ; Simulates an ongoing drag on that hwnd
         this.svc._dragHwnd := 12345
         this.svc.UnregisterHwnd(12345)
         Assert.Equal(0, this.svc._dragHwnd,
-            "Cancela drag em andamento ao desregistrar o hwnd alvo")
+            "Cancels ongoing drag when unregistering the target hwnd")
     }
 
     ; ============================================================
@@ -283,7 +285,7 @@ class OverlayInteractionServiceTests extends TestCase
     {
         this.svc.SetCtrlState(true)
         Assert.False(this.svc.SetCtrlState(true),
-            "Mesmo state: retorna false (sem mudanca)")
+            "Same state: returns false (no change)")
     }
 
     set_ctrl_state_publishes_event_on_change()
@@ -295,9 +297,9 @@ class OverlayInteractionServiceTests extends TestCase
 
     set_ctrl_state_does_not_publish_on_no_change()
     {
-        this.svc.SetCtrlState(true)   ; primeira vez
+        this.svc.SetCtrlState(true)   ; first time
         capturedEvents := this._CaptureEvents(Events.CtrlStateChanged)
-        this.svc.SetCtrlState(true)   ; idempotente
+        this.svc.SetCtrlState(true)   ; idempotent
         Assert.Equal(0, capturedEvents.Length)
     }
 
@@ -315,7 +317,7 @@ class OverlayInteractionServiceTests extends TestCase
     static_poll_ms_is_50()
     {
         Assert.Equal(50, OverlayInteractionService.POLL_MS,
-            "Polling de Ctrl: ~20Hz")
+            "Ctrl polling: ~20Hz")
     }
 
     static_drag_tick_ms_is_16()
