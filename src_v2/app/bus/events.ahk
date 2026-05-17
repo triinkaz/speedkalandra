@@ -56,6 +56,13 @@ class Events
     static OverlayModeChanged   := "Evt.OverlayModeChanged"   ; data: {mode, prevMode, locked, heldKeys}
     static CtrlStateChanged     := "Evt.CtrlStateChanged"     ; data: {active}
 
+    ; --- Settings changes (v0.1.4) ---
+    ; Published by SettingsDialog._OnSave when cfg.logFile is changed
+    ; to a different (non-empty) value. App composition root reacts by
+    ; restarting LogMonitorService against the new path — no full app
+    ; reload required.
+    static LogFilePathChanged := "Evt.LogFilePathChanged"     ; data: {oldPath, newPath}
+
     ; --- App lifecycle ---
     static AppStarted  := "Evt.AppStarted"
     static AppStopping := "Evt.AppStopping"

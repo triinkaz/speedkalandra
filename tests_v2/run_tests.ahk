@@ -120,6 +120,7 @@
 #Include ..\src_v2\app\services\hotkey_service.ahk
 #Include ..\src_v2\app\services\focus_auto_pause_service.ahk
 #Include ..\src_v2\app\services\overlay_interaction_service.ahk
+#Include ..\src_v2\app\services\event_trace_logger.ahk
 #Include ..\src_v2\app\services\run_export_service.ahk
 #Include ..\src_v2\app\services\run_import_service.ahk
 

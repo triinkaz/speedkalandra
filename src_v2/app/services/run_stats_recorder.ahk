@@ -126,16 +126,22 @@ class RunStatsRecorder
 
     ; GetSnapshot - builds the Map snapshot consumed by the plot builder.
     ; zoneTotalsMap is provided by the caller (ZoneTrackingService.GetTotals()).
+    ; zoneFirstEnteredAt (v0.1.4): optional Map<zoneName, "YYYY-MM-DD HH:MM:SS">
+    ;   with the first-entry timestamp per zone. Used by the plot
+    ;   builder to populate `timestamp` on zone details, enabling
+    ;   chronological ordering. Empty = no timestamp for zones (legacy
+    ;   path for runs without this info).
     ; runDurationMs idem (TimerService.GetRunMs()).
-    GetSnapshot(zoneTotalsMap := "", runDurationMs := 0)
+    GetSnapshot(zoneTotalsMap := "", runDurationMs := 0, zoneFirstEnteredAt := "")
     {
         return Map(
-            "runId",         this._runId,
-            "firstTs",       this._firstTs,
-            "runDurationMs", runDurationMs,
-            "zoneTotals",    IsObject(zoneTotalsMap) ? zoneTotalsMap : Map(),
-            "loadingEvents", this._CopyArrayOfMaps(this._loadingEvents),
-            "deathCount",    this._deathCount
+            "runId",              this._runId,
+            "firstTs",            this._firstTs,
+            "runDurationMs",      runDurationMs,
+            "zoneTotals",         IsObject(zoneTotalsMap) ? zoneTotalsMap : Map(),
+            "zoneFirstEnteredAt", IsObject(zoneFirstEnteredAt) ? zoneFirstEnteredAt : Map(),
+            "loadingEvents",      this._CopyArrayOfMaps(this._loadingEvents),
+            "deathCount",         this._deathCount
         )
     }
 

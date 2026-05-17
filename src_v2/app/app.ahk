@@ -82,6 +82,7 @@ class SpeedKalandraApp
     hotkeyService   := ""
     overlayInter    := ""
     tickEmitter     := ""
+    eventTracer     := ""    ; v0.1.4 — EventTraceLogger (logs every Publish)
 
     compactWidget := ""
     microWidget   := ""
@@ -138,6 +139,11 @@ class SpeedKalandraApp
 
         this.log   := LogService(logPath, "INFO", headless ? 1 : 32)
         this.bus   := EventBus(this.log)
+        ; v0.1.4: register the event-trace interceptor BEFORE any service
+        ; subscribes — guarantees the trace captures every Publish from
+        ; the moment the app starts wiring. Start() is called below in
+        ; Start(), not here; construction only prepares the object.
+        this.eventTracer := EventTraceLogger(this.bus, this.log)
         ; v0.1.1: clock injectable via cfgMap so integration tests can use FakeClock.
         ; Default is RealClock (NowMs = A_TickCount).
         this.clock := cfgMap.Has("clock") ? cfgMap["clock"] : RealClock()
@@ -190,7 +196,9 @@ class SpeedKalandraApp
         hydratedState := this.runState.Load()
         try this.runService.Hydrate(hydratedState)
 
-        this.focusAutoPause := FocusAutoPauseService(this.bus, this.timer, this._cfg)
+        ; v0.1.4: pass the LogService so transitions (focus/process) are
+        ; surfaced in speedkalandra.log for diagnostics.
+        this.focusAutoPause := FocusAutoPauseService(this.bus, this.timer, this._cfg, this.log)
 
         ; GamePauseDetection DISCONNECTED in v17.5
 
@@ -400,6 +408,12 @@ class SpeedKalandraApp
 
         this.tickEmitter.Start()
 
+        ; v0.1.4: start the event-trace interceptor AFTER all wiring is
+        ; done. Volume will be high (every Tick at ~300ms plus all
+        ; gameplay events) — LogService size-based rotation (5MB) and
+        ; daily rotation handle file growth.
+        try this.eventTracer.Start()
+
         this._runPersistTimer := () => this._PersistRunData()
         try SetTimer(this._runPersistTimer, 5000)
 
@@ -446,6 +460,7 @@ class SpeedKalandraApp
             try SetTimer(this._runPersistTimer, 0)
 
         try this.tickEmitter.Stop()
+        try this.eventTracer.Stop()
         try this.loadingDetection.Stop()
         try this.overlayInter.Stop()
         try this.hotkeyService.Stop()
@@ -529,6 +544,11 @@ class SpeedKalandraApp
         ; was only visible post-finalize in the plot before).
         this.bus.Subscribe(Events.DeathDetected,
             (data) => this._OnDeathApplyTimerPenalty(data))
+
+        ; v0.1.4: hot-reload LogMonitor when the Client.txt path
+        ; changes via Settings — no full app reload needed.
+        this.bus.Subscribe(Events.LogFilePathChanged,
+            (data) => this._OnLogFilePathChanged(data))
     }
 
     ; ============================================================
@@ -559,6 +579,80 @@ class SpeedKalandraApp
         try this.timer.AddPenaltyMs(penaltyMs)
         if IsObject(this.log)
             try this.log.Info("Death penalty applied to timer: +" . penaltyMs . " ms", "App")
+    }
+
+    ; ============================================================
+    ; _OnLogFilePathChanged (v0.1.4)
+    ;
+    ; Handler for Evt.LogFilePathChanged. Published by SettingsDialog
+    ; when the user changes the Client.txt path. Restarts LogMonitor
+    ; against the new path so the user doesn't have to reload the app
+    ; (huge UX win on first install, when the path was empty and the
+    ; user just configured it).
+    ;
+    ; Steps:
+    ;   1. Stop the polling SetTimer (so Tick doesn't fire mid-restart)
+    ;   2. Stop the LogMonitor (closes the file handle / clears state)
+    ;   3. Reconfigure with the new path
+    ;   4. If the new path is valid, Start(seedFromTail=true) and
+    ;      re-arm the SetTimer
+    ;   5. If the new path is empty or invalid, leave it stopped —
+    ;      the user will see warn lines in the log but no crash.
+    ;
+    ; Also re-applies the character name (LogMonitor's Stop clears
+    ; nothing of its internal state, but this guarantees the death
+    ; filter remains active after the path swap).
+    ; ============================================================
+    _OnLogFilePathChanged(data)
+    {
+        if !IsObject(data)
+            return
+        newPath := data.Has("newPath") ? String(data["newPath"]) : ""
+        oldPath := data.Has("oldPath") ? String(data["oldPath"]) : ""
+
+        if IsObject(this.log)
+            try this.log.Info("Log file path changed: '" . oldPath . "' -> '" . newPath . "'", "App")
+
+        ; (1) Stop the polling SetTimer first — if a Tick fires between
+        ; LogMonitor.Stop and LogMonitor.Start it might try to read a
+        ; half-configured state.
+        if (this._logMonitorTimer != "")
+        {
+            try SetTimer(this._logMonitorTimer, 0)
+            this._logMonitorTimer := ""
+        }
+
+        ; (2) Stop the LogMonitor (idempotent if already stopped).
+        if IsObject(this.logMonitor)
+            try this.logMonitor.Stop()
+
+        ; (3) Reconfigure with the new path.
+        if IsObject(this.logMonitor)
+            try this.logMonitor.Configure(newPath)
+
+        ; (4) If the path is valid, restart the tail loop and arm the timer.
+        if (newPath != "" && FileExist(newPath))
+        {
+            try this.logMonitor.Start(true)
+            ; Re-apply character name so the DeathDetected filter remains active.
+            try this.logMonitor.SetCharacterName(this._cfg.characterName)
+            this._logMonitorTimer := () => this.logMonitor.Tick()
+            try SetTimer(this._logMonitorTimer, 250)
+            if IsObject(this.log)
+                try this.log.Info("Log monitor restarted with new path: " . newPath, "App")
+            if !this._headless
+                try TrayTip("SpeedKalandra", "Log monitor restarted with new path.", "Mute")
+        }
+        else if (newPath = "")
+        {
+            if IsObject(this.log)
+                try this.log.Info("Log file path cleared; log monitor stopped.", "App")
+        }
+        else
+        {
+            if IsObject(this.log)
+                try this.log.Warn("New log file path does not exist: " . newPath, "App")
+        }
     }
 
     ; ============================================================
@@ -1114,6 +1208,11 @@ If it helps your runs, great. If it doesn't fit your needs, that's fine too - th
             zoneTotals := IsObject(this.zoneTracker)
                           ? this.zoneTracker.GetTotalsForSnapshot()
                           : Map()
+            ; v0.1.4: collect per-zone first-entry timestamps for
+            ; chronological ordering in the plot details.
+            zoneFirstEnteredAt := IsObject(this.zoneTracker)
+                                  ? this.zoneTracker.GetFirstEnteredAtMap()
+                                  : Map()
             runMs := IsObject(this.timer) ? this.timer.GetRunMs() : 0
 
             ; Uniform threshold for completed AND cancelled (F1)
@@ -1139,7 +1238,7 @@ If it helps your runs, great. If it doesn't fit your needs, that's fine too - th
             if !IsObject(this.statsRecorder) || !IsObject(this.plotBuilder)
                 return
 
-            snapshot := this.statsRecorder.GetSnapshot(zoneTotals, runMs)
+            snapshot := this.statsRecorder.GetSnapshot(zoneTotals, runMs, zoneFirstEnteredAt)
             buildResult := this.plotBuilder.Build(snapshot)
 
             ; v17.15.1: captures actCheckpoints NOW and injects into

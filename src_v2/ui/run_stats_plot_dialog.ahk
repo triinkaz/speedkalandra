@@ -240,8 +240,11 @@ class RunStatsPlotDialog
     _BuildSnapshot()
     {
         zoneTotals := this._zoneTracker.GetTotals()
+        ; v0.1.4: include per-zone first-entry timestamps so the plot
+        ; details can be ordered chronologically.
+        zoneFirstEnteredAt := this._zoneTracker.GetFirstEnteredAtMap()
         runMs := this._timer.GetRunMs()
-        return this._recorder.GetSnapshot(zoneTotals, runMs)
+        return this._recorder.GetSnapshot(zoneTotals, runMs, zoneFirstEnteredAt)
     }
 
     ; ============================================================
@@ -1222,6 +1225,16 @@ class RunStatsPlotDialog
 
     ; ============================================================
     ; Details popup
+    ;
+    ; v0.1.4: splits details into TWO tabs to reduce cognitive load:
+    ;   - "Activities": map / town / death entries
+    ;   - "Loading": loading events isolated (high-volume — typical
+    ;     run has 50+ loadings vs ~30 zones)
+    ;
+    ; Entries within each tab are presented in chronological order
+    ; (ascending timestamp) so the user can read the run from
+    ; beginning to end. Entries without timestamp (legacy or aggregated)
+    ; appear at the end of their tab.
     ; ============================================================
     _OpenDetailsPopup()
     {
@@ -1247,31 +1260,75 @@ class RunStatsPlotDialog
         g.OnEvent("Escape", (*) => this._CloseDetailsPopup())
         this._detailsGui := g
 
-        g.SetFont("s9 c" Theme.Color("text"), Theme.FONT_UI)
-        lv := g.Add("ListView",
-            "x14 y14 w780 h360 Background" Theme.Color("surface2"),
-            ["Type", "Label", "Time", "Note", "When"])
-        lv.ModifyCol(1, 90)
-        lv.ModifyCol(2, 280)
-        lv.ModifyCol(3, 80)
-        lv.ModifyCol(4, 200)
-        lv.ModifyCol(5, 130)
-
+        ; Split details into activities + loading. The builder already
+        ; sorted them chronologically, so a single pass preserves order.
+        activityDetails := []
+        loadingDetails  := []
         if IsObject(details)
         {
             for _, row in details
             {
                 if !IsObject(row)
                     continue
-                lv.Add(,
-                    row.Has("categoryLabel") ? row["categoryLabel"] : "",
-                    row.Has("label")         ? row["label"]         : "",
-                    RunStatsPlotBuilder.FormatMs(row.Has("ms") ? row["ms"] : 0),
-                    row.Has("note")          ? row["note"]          : "",
-                    row.Has("timestamp")     ? row["timestamp"]     : ""
-                )
+                cat := row.Has("category") ? row["category"] : ""
+                if (cat = "loading")
+                    loadingDetails.Push(row)
+                else
+                    activityDetails.Push(row)
             }
         }
+
+        g.SetFont("s9 c" Theme.Color("text"), Theme.FONT_UI)
+        tab := g.Add("Tab3", "x14 y14 w780 h360",
+            ["Activities (" activityDetails.Length ")",
+             "Loading (" loadingDetails.Length ")"])
+
+        ; --- Tab 1: Activities (map + town + death) ---
+        tab.UseTab(1)
+        g.SetFont("s9 c" Theme.Color("text"), Theme.FONT_UI)
+        lvActivities := g.Add("ListView",
+            "x24 y44 w760 h318 Background" Theme.Color("surface2"),
+            ["Type", "Label", "Time", "Note", "When"])
+        lvActivities.ModifyCol(1, 90)
+        lvActivities.ModifyCol(2, 280)
+        lvActivities.ModifyCol(3, 80)
+        lvActivities.ModifyCol(4, 180)
+        lvActivities.ModifyCol(5, 130)
+        for _, row in activityDetails
+        {
+            lvActivities.Add(,
+                row.Has("categoryLabel") ? row["categoryLabel"] : "",
+                row.Has("label")         ? row["label"]         : "",
+                RunStatsPlotBuilder.FormatMs(row.Has("ms") ? row["ms"] : 0),
+                row.Has("note")          ? row["note"]          : "",
+                row.Has("timestamp")     ? row["timestamp"]     : ""
+            )
+        }
+
+        ; --- Tab 2: Loading (isolated) ---
+        tab.UseTab(2)
+        g.SetFont("s9 c" Theme.Color("text"), Theme.FONT_UI)
+        lvLoading := g.Add("ListView",
+            "x24 y44 w760 h318 Background" Theme.Color("surface2"),
+            ["Label", "Time", "When"])
+        ; Loading rows use the `label` field as "<from> -> <to>" already.
+        ; The `note` is typically empty for loading entries, so omitting
+        ; that column gives more room to the label/timestamp.
+        lvLoading.ModifyCol(1, 480)
+        lvLoading.ModifyCol(2, 100)
+        lvLoading.ModifyCol(3, 160)
+        for _, row in loadingDetails
+        {
+            lvLoading.Add(,
+                row.Has("label")     ? row["label"]     : "",
+                RunStatsPlotBuilder.FormatMs(row.Has("ms") ? row["ms"] : 0),
+                row.Has("timestamp") ? row["timestamp"] : ""
+            )
+        }
+
+        ; --- Reset tab context for the buttons (avoids them being
+        ; added inside the active tab) ---
+        tab.UseTab()
 
         btnClose := g.Add("Button", "x694 y386 w100 h28", "Close")
         btnClose.OnEvent("Click", (*) => this._CloseDetailsPopup())

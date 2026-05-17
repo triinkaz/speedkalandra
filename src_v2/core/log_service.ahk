@@ -61,6 +61,7 @@ class LogService
     _buffer     := ""  ; Array<string> of pending lines
     _warnCount  := 0   ; counter of WARNs logged since creation/ResetCounts
     _errorCount := 0   ; counter of ERRORs logged since creation/ResetCounts
+    _currentDate := "" ; v0.1.4: "YYYYMMDD" of last write — used for daily rotation
 
     __New(logFile, minLevel := "INFO", bufferSize := 1)
     {
@@ -70,10 +71,14 @@ class LogService
         this._minLevel   := this._ParseLevel(minLevel)
         this._bufferSize := bufferSize
         this._buffer     := []
+        this._currentDate := FormatTime(A_Now, "yyyyMMdd")
         this._EnsureLogDir()
         ; v17.15 (Bug #32): rotate log if it has exceeded MAX_LOG_SIZE
         ; before starting to write new lines.
         this._RotateIfTooBig()
+        ; v0.1.4: also rotate if the existing log was last touched on a
+        ; previous day. Keeps daily history under .log.YYYYMMDD names.
+        this._RotateIfNewDay()
     }
 
     Debug(msg, context := "") => this._Log(LogService.LEVEL_DEBUG, "DEBUG", msg, context)
@@ -131,6 +136,11 @@ class LogService
 
         if (numericLevel < this._minLevel)
             return
+
+        ; v0.1.4: check daily rotation on each write. Inexpensive
+        ; (FormatTime + string compare) and avoids depending on a
+        ; SetTimer to rotate at midnight.
+        this._RotateIfNewDay()
 
         ts   := FormatTime(A_Now, "yyyy-MM-dd HH:mm:ss")
         ctx  := (context != "") ? "[" context "] " : ""
@@ -231,6 +241,64 @@ class LogService
         catch as ex
         {
             OutputDebug("LogService._RotateIfTooBig failed: " ex.Message)
+        }
+    }
+
+    ; ============================================================
+    ; _RotateIfNewDay (v0.1.4)
+    ;
+    ; Rotates the active log when the date changes. Called on each
+    ; write — a string compare per line is negligible compared to the
+    ; FileAppend syscall.
+    ;
+    ; When the date stamp on disk is older than today, the log is
+    ; renamed to "<base>.log.YYYYMMDD" (the date of the previous
+    ; session) and a new log starts fresh. Old daily files stay on
+    ; disk — the user can clean them up manually. This is intentional
+    ; (history is cheap, accidental loss isn't).
+    ;
+    ; Date detection works from the file's last-modified timestamp,
+    ; not from the in-memory _currentDate cache. The cache only avoids
+    ; redundant FileGetTime calls on consecutive writes within the
+    ; same day.
+    ; ============================================================
+    _RotateIfNewDay()
+    {
+        if (this._logFile = "")
+            return
+        today := FormatTime(A_Now, "yyyyMMdd")
+        ; Fast path: same day as the last write — nothing to do.
+        if (today = this._currentDate)
+            return
+        this._currentDate := today
+
+        ; Slow path: only relevant when the file already exists. A
+        ; brand-new file on a brand-new day has no previous-day content.
+        if !FileExist(this._logFile)
+            return
+        try
+        {
+            ; Last-modified timestamp; AHK returns local "yyyyMMddHHmmss".
+            fileTime := FileGetTime(this._logFile, "M")
+            fileDate := SubStr(fileTime, 1, 8)
+            if (fileDate = today)
+                return   ; file is from today, do not rotate
+
+            ; Flush buffer BEFORE moving the file, otherwise pending
+            ; lines would be appended to the new (empty) log.
+            this._FlushInternal()
+
+            rotatedPath := this._logFile "." fileDate
+            ; If a rotated file with the same date already exists
+            ; (unlikely — means the app was already restarted today
+            ; with stale cache), delete to avoid FileMove failing.
+            if FileExist(rotatedPath)
+                try FileDelete(rotatedPath)
+            FileMove(this._logFile, rotatedPath)
+        }
+        catch as ex
+        {
+            OutputDebug("LogService._RotateIfNewDay failed: " ex.Message)
         }
     }
 }

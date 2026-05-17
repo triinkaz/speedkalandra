@@ -240,7 +240,11 @@ class SettingsRepository
                  : ""
             if (StrLen(v) > 50)
                 v := SubStr(v, 1, 50)
-            ini.Write(v, "VendorRegexes", "Slot" i)
+            ; v0.1.4: use WriteVerbatim to preserve leading/trailing
+            ; double-quotes (common in PoE2 vendor filters like
+            ; '"!(uiv)" "melee|mov"'). Regular Write loses outer quotes
+            ; on the next reload due to IniRead's quote-stripping.
+            ini.WriteVerbatim(v, "VendorRegexes", "Slot" i)
         }
     }
 

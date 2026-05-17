@@ -110,9 +110,68 @@ class RunStatsPlotBuilder
         this._AddLoadingDetails(data, snapshot)
         this._AddDeathDetails(data, snapshot)
 
+        ; v0.1.4: sort details chronologically by timestamp. Entries
+        ; without timestamp (legacy or aggregated like deaths) go to
+        ; the end so the chronologically-ordered ones stay grouped at
+        ; the top of the list.
+        RunStatsPlotBuilder._SortDetailsByTimestamp(data["details"])
+
         data["totalMs"] := RunStatsPlotBuilder._TotalFromTotals(data["totals"])
         data["maxActReached"] := RunStatsPlotBuilder._DeriveMaxAct(data["details"])
         return data
+    }
+
+    ; ============================================================
+    ; _SortDetailsByTimestamp (v0.1.4)
+    ;
+    ; Stable insertion sort over the details array. Sort key is the
+    ; "timestamp" field. Empty timestamps are pushed to the end
+    ; (treated as +infinity) so chronological entries appear first
+    ; in the popup. Stable order ensures that two entries with
+    ; identical timestamps (rare — happens when the same second
+    ; produced both events) keep their original insertion order.
+    ;
+    ; Insertion sort because details typically have < 50 entries
+    ; (one per unique zone, plus loadings, plus one death aggregate).
+    ; Avoids the complexity of an external sort routine in AHK.
+    ; ============================================================
+    static _SortDetailsByTimestamp(details)
+    {
+        if !IsObject(details) || details.Length < 2
+            return
+        n := details.Length
+        i := 2
+        while (i <= n)
+        {
+            j := i
+            while (j > 1)
+            {
+                tsA := RunStatsPlotBuilder._TimestampSortKey(details[j])
+                tsB := RunStatsPlotBuilder._TimestampSortKey(details[j - 1])
+                ; tsA < tsB means details[j] should come BEFORE details[j-1].
+                ; StrCompare returns negative when a < b.
+                if (StrCompare(tsA, tsB) >= 0)
+                    break
+                tmp := details[j]
+                details[j] := details[j - 1]
+                details[j - 1] := tmp
+                j -= 1
+            }
+            i += 1
+        }
+    }
+
+    ; Returns the sort key for a detail. Entries without a timestamp
+    ; (empty string) get a sentinel "~" which sorts AFTER all real
+    ; "YYYY-MM-DD HH:MM:SS" strings (since '~' > '9').
+    static _TimestampSortKey(detail)
+    {
+        if !IsObject(detail) || !detail.Has("timestamp")
+            return "~"
+        ts := detail["timestamp"]
+        if (ts = "")
+            return "~"
+        return String(ts)
     }
 
     ; Derives the MAX act reached from the details. Iterates notes
@@ -179,11 +238,20 @@ class RunStatsPlotBuilder
 
     ; ============================================================
     ; _AddZoneDetails - iterates zoneTotals; categorizes by isTown
+    ;
+    ; v0.1.4: populates `timestamp` on each detail using
+    ; snapshot["zoneFirstEnteredAt"] (Map<zoneName, ts>) when
+    ; available. Enables chronological ordering in the plot. Legacy
+    ; snapshots without this map leave timestamp empty.
     ; ============================================================
     _AddZoneDetails(data, snapshot)
     {
         if !snapshot.Has("zoneTotals") || !IsObject(snapshot["zoneTotals"])
             return
+        zoneFirstEnteredAt := snapshot.Has("zoneFirstEnteredAt")
+                              && IsObject(snapshot["zoneFirstEnteredAt"])
+                              ? snapshot["zoneFirstEnteredAt"]
+                              : Map()
         for zoneName, ms in snapshot["zoneTotals"]
         {
             if (ms <= 0)
@@ -201,7 +269,8 @@ class RunStatsPlotBuilder
                 }
             }
             note := act > 0 ? "Act " act : ""
-            this._AddDetail(data, category, zoneName, ms, note, "")
+            ts := zoneFirstEnteredAt.Has(zoneName) ? zoneFirstEnteredAt[zoneName] : ""
+            this._AddDetail(data, category, zoneName, ms, note, ts)
         }
     }
 

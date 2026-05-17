@@ -290,6 +290,10 @@ class SettingsDialog
         ; v0.1.3: gamePatch is no longer editable in the dialog. Keeps
         ; the value that was already in cfg (default "Unknown" on fresh
         ; install).
+
+        ; v0.1.4: track the previous logFile to detect a change and
+        ; trigger LogMonitorService restart — no full app reload needed.
+        oldLogFile := cfg.logFile
         cfg.logFile     := this._ctrls["logFile"].Value
         cfg.autoStartRegex    := this._ctrls["autoStartRegex"].Value
         cfg.autoFinalizeRegex := this._ctrls["autoFinalizeRegex"].Value
@@ -338,6 +342,16 @@ class SettingsDialog
         }
 
         try this._settingsRepo.Save(cfg)
+        ; v0.1.4: publish event when logFile actually changed so the
+        ; app composition root can restart LogMonitor against the new
+        ; path. Empty new path is also published (the user may want to
+        ; disable monitoring).
+        if (Trim(oldLogFile) != Trim(cfg.logFile))
+        {
+            try this._bus.Publish(Events.LogFilePathChanged, Map(
+                "oldPath", oldLogFile,
+                "newPath", cfg.logFile))
+        }
         try TrayTip("SpeedKalandra", "Settings saved.", "Mute")
         this.Close()
     }

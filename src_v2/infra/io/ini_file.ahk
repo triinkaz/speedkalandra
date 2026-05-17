@@ -133,6 +133,42 @@ class IniFile
     }
 
     ; ------------------------------------------------------------
+    ; WriteVerbatim(value, section, key)
+    ;
+    ; Like Write, but preserves values where the user typed leading/
+    ; trailing double-quotes (vendor regex strings being the canonical
+    ; case).
+    ;
+    ; AHK's IniRead has an undocumented-but-stable behavior: when a
+    ; value is enclosed in a SINGLE pair of double quotes
+    ; ("..." anywhere from start to end), IniRead strips that pair
+    ; on read. So:
+    ;
+    ;     IniWrite('"!(uiv)" "melee"', file, sec, key)
+    ;     -> file content: key="!(uiv)" "melee"
+    ;     -> IniRead returns: !(uiv)" "melee   <-- outer quotes stripped
+    ;
+    ; The fix is to ALWAYS wrap in an extra pair of quotes on write.
+    ; Then IniRead strips the pair WE added, returning the user's
+    ; original string intact (including its own quotes):
+    ;
+    ;     IniWrite('""!(uiv)" "melee""', ...)
+    ;     -> file content: key=""!(uiv)" "melee""
+    ;     -> IniRead returns: "!(uiv)" "melee"   <-- correct!
+    ;
+    ; The wrapping is idempotent on reload because the next Write
+    ; re-wraps from the already-unwrapped value.
+    ;
+    ; Read for a verbatim value uses the regular Read method — no
+    ; special read-side handling is needed since IniRead does the
+    ; un-wrap automatically.
+    ; ------------------------------------------------------------
+    WriteVerbatim(value, section, key)
+    {
+        IniWrite('"' . String(value) . '"', this.path, section, key)
+    }
+
+    ; ------------------------------------------------------------
     ; Delete(section, key := "")
     ;   If key is empty, deletes the entire section. No effect if
     ;   it does not exist (never throws).

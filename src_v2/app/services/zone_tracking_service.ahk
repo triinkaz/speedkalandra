@@ -93,6 +93,7 @@ class ZoneTrackingService
     _activeZone := ""
     _startMs    := 0
     _totals     := ""    ; Map<zoneName, totalMs>
+    _firstEnteredAt := ""   ; v0.1.4: Map<zoneName, "YYYY-MM-DD HH:MM:SS"> — first entry timestamp per zone in the current run
     _runActive  := false
     _timerPaused := false   ; v0.1.1 (Bug Lechtansi): tracks timer pause state
                             ; so ZoneChanged respects it. Without this, a
@@ -124,6 +125,7 @@ class ZoneTrackingService
         this._clock   := clock
         this._catalog := catalog
         this._totals  := Map()
+        this._firstEnteredAt := Map()
 
         this._handlerZoneChanged   := (data) => this._OnZoneChanged(data)
         this._handlerTimerPaused   := (data) => this._OnTimerPaused(data)
@@ -211,6 +213,11 @@ class ZoneTrackingService
         this._totals    := clean
         this._activeZone := ""
         this._startMs    := 0
+        ; v0.1.4: hydrated runs lose per-zone entry timestamps (the
+        ; old INI persistence didn't carry them). The map stays empty
+        ; — zones entered AFTER hydrate get fresh timestamps; pre-
+        ; hydrate zones simply have no timestamp in the final plot.
+        this._firstEnteredAt := Map()
     }
 
     ; ============================================================
@@ -266,6 +273,29 @@ class ZoneTrackingService
     {
         out := Map()
         for k, v in this._totals
+            out[k] := v
+        return out
+    }
+
+    ; ============================================================
+    ; GetFirstEnteredAtMap (v0.1.4)
+    ;
+    ; Returns a defensive copy of Map<zoneName, "YYYY-MM-DD HH:MM:SS">
+    ; with the FIRST entry timestamp per zone in the current run.
+    ;
+    ; Used by the composition root and the plot dialog to inject
+    ; timestamps into the snapshot, enabling chronological ordering
+    ; of zone details in the plot.
+    ;
+    ; The map is cleared on RunStarted/RunReset/RunCancelled. After
+    ; Hydrate (crash recovery) it starts empty — the old persistence
+    ; didn't carry per-zone timestamps; zones entered after hydrate
+    ; get fresh timestamps.
+    ; ============================================================
+    GetFirstEnteredAtMap()
+    {
+        out := Map()
+        for k, v in this._firstEnteredAt
             out[k] := v
         return out
     }
@@ -394,6 +424,7 @@ class ZoneTrackingService
         this._activeZone := ""
         this._startMs    := 0
         this._totals     := Map()
+        this._firstEnteredAt := Map()
         this._runActive  := false
         this._timerPaused := false   ; v0.1.1
     }
@@ -427,6 +458,14 @@ class ZoneTrackingService
         ; during alt-tab (background loading screens, portal animations,
         ; etc.) that become ZoneChanged via LogMonitor's _ProcessLine.
         this._startMs := (this._runActive && !this._timerPaused) ? this._clock.NowMs() : 0
+
+        ; v0.1.4: record FIRST entry timestamp per zone in the run.
+        ; Only writes if the zone was never entered before — re-entries
+        ; (death respawn, portals) do not overwrite. Stored only when
+        ; the run is active to avoid timestamps from the LogMonitor
+        ; seed before RunStarted.
+        if (this._runActive && !this._firstEnteredAt.Has(newZone))
+            this._firstEnteredAt[newZone] := FormatTime(A_Now, "yyyy-MM-dd HH:mm:ss")
 
         ; Publishes the event enriched with catalog metadata
         actIdx := 0
@@ -496,10 +535,16 @@ class ZoneTrackingService
         ; If there is already a registered zone (from the seed or a
         ; previous ZoneChanged), start counting from now.
         this._totals := Map()
+        this._firstEnteredAt := Map()   ; v0.1.4: fresh run, no zone seen yet
         this._runActive := true
         this._timerPaused := false   ; v0.1.1: fresh start
         if (this._activeZone != "")
+        {
             this._startMs := this._clock.NowMs()
+            ; v0.1.4: record the active zone (carried over from the
+            ; seed/previous state) as the first entry of the new run.
+            this._firstEnteredAt[this._activeZone] := FormatTime(A_Now, "yyyy-MM-dd HH:mm:ss")
+        }
     }
 
     _OnRunEnded(data)
@@ -510,6 +555,7 @@ class ZoneTrackingService
         ; a new map) before counting time. Practical behavior: when a
         ; run is cancelled, the tracker becomes fully idle.
         this._totals := Map()
+        this._firstEnteredAt := Map()   ; v0.1.4: clear per-zone entry timestamps
         this._activeZone := ""
         this._startMs := 0
         this._runActive := false
