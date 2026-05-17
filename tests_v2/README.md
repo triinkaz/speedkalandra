@@ -25,6 +25,17 @@ AutoHotkey64.exe tests_v2\run_tests.ahk publish_calls
 
 The argument is a case-insensitive substring of `ClassName::method`. Useful when you're iterating on a specific test.
 
+### Headless mode (CI, scripted runs)
+
+The final MsgBox can be suppressed by setting either environment variable:
+
+- `SPEEDKALANDRA_TEST_NO_GUI=1` — explicit opt-in for local scripted runs.
+- `CI=<anything truthy>` — universal convention; GitHub Actions, GitLab CI, CircleCI, Travis, Drone and AppVeyor all set this by default.
+
+When headless, the runner writes `(headless mode — MsgBox skipped)` at the end of `tests_output.log` and exits with the same code it would otherwise use (`0` on all-green, `1` on any failure or error). Useful when you want to chain the suite into another script.
+
+This project has a GitHub Actions workflow at `.github/workflows/test.yml` that runs the suite on every push and pull request against `windows-latest` with AutoHotkey v2.0.19. The runner downloads the official setup from `github.com/AutoHotkey/AutoHotkey/releases`, installs silently, and runs the suite headless. `tests_output.log` is always uploaded as an artifact (14-day retention).
+
 ## Structure
 
 ```

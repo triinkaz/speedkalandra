@@ -1,0 +1,84 @@
+name: Tests
+
+# Runs the AHK v2 test suite on Windows. Triggered on every push and
+# every pull request. Headless mode is activated automatically via
+# the CI=true env var that GitHub Actions sets by default — the test
+# runner's TestReporter._IsHeadless() picks that up and skips the
+# final MsgBox so the runner doesn't hang waiting for "OK".
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: AutoHotkey v2.0.19 on windows-latest
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install AutoHotkey v2.0.19
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $url = 'https://github.com/AutoHotkey/AutoHotkey/releases/download/v2.0.19/AutoHotkey_2.0.19_setup.exe'
+          $installer = "$env:RUNNER_TEMP\AutoHotkey_2.0.19_setup.exe"
+
+          Write-Host "Downloading $url"
+          Invoke-WebRequest -Uri $url -OutFile $installer -UseBasicParsing
+
+          Write-Host "Running silent installer"
+          $proc = Start-Process -FilePath $installer `
+            -ArgumentList '/SILENT','/SUPPRESSMSGBOXES','/NORESTART' `
+            -Wait -PassThru
+          if ($proc.ExitCode -ne 0) {
+            throw "Installer exited with code $($proc.ExitCode)"
+          }
+
+          $ahk = 'C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe'
+          if (-not (Test-Path $ahk)) {
+            throw "AutoHotkey64.exe not found at expected path: $ahk"
+          }
+          Write-Host "Installed: $ahk"
+
+      - name: Run test suite (headless)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $ahk = 'C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe'
+
+          # CI=true is set automatically by GitHub Actions; the runner
+          # honours it and skips the final MsgBox. Belt-and-braces: we
+          # also pass SPEEDKALANDRA_TEST_NO_GUI=1 so the headless
+          # behaviour is explicit and doesn't depend on a third party
+          # env var staying conventional.
+          $env:SPEEDKALANDRA_TEST_NO_GUI = '1'
+
+          & $ahk tests_v2\run_tests.ahk
+          $code = $LASTEXITCODE
+          Write-Host "Test runner exited with code $code"
+
+          # Surface the tail of the log so failures are visible in the
+          # Actions UI without needing to download the artifact.
+          $log = 'tests_v2\tests_output.log'
+          if (Test-Path $log) {
+            Write-Host "--- tests_output.log (last 80 lines) ---"
+            Get-Content $log -Tail 80
+            Write-Host "--- end of log ---"
+          }
+
+          if ($code -ne 0) { exit $code }
+
+      - name: Upload test log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tests_output
+          path: tests_v2/tests_output.log
+          if-no-files-found: warn
+          retention-days: 14

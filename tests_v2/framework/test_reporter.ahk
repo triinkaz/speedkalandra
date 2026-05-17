@@ -6,10 +6,20 @@
 ;   - File  tests_output.log  next to run_tests.ahk
 ;     (line-by-line, greppable, persists between runs)
 ;   - Final MsgBox with summary (passed/failed/errored + duration)
+;     skipped in headless mode (see _IsHeadless)
 ;   - ExitApp(N) where N = failed + errored (0 = all green)
 ;
 ; AHK v2 has no reliable stdout without AllocConsole. The log file
 ; covers the CI / post-inspection case, the MsgBox covers local dev.
+;
+; HEADLESS MODE:
+;   The MsgBox is skipped when EITHER env var is set:
+;     - SPEEDKALANDRA_TEST_NO_GUI=1   (explicit local headless run)
+;     - CI=<anything non-empty>       (universal CI convention; set
+;                                      automatically by GitHub Actions,
+;                                      GitLab CI, CircleCI, Travis,
+;                                      Drone, AppVeyor, etc.)
+;   Exit code is unchanged: 0 on all-green, 1 on any failure/error.
 
 class TestReporter
 {
@@ -100,10 +110,39 @@ class TestReporter
         )
 
         ; Simple MsgBox (no AlwaysOnTop to avoid inheriting overlay
-        ; issues when running tests with PoE open)
-        MsgBox(body, title)
+        ; issues when running tests with PoE open).
+        ; Skipped in headless mode (CI, scripted runs).
+        if TestReporter._IsHeadless()
+        {
+            TestReporter._Write("")
+            TestReporter._Write("(headless mode — MsgBox skipped)")
+        }
+        else
+        {
+            MsgBox(body, title)
+        }
 
         ExitApp(bad > 0 ? 1 : 0)
+    }
+
+    static _IsHeadless()
+    {
+        ; Explicit opt-in: SPEEDKALANDRA_TEST_NO_GUI=1
+        ; (EnvGet returns "" for an unset variable, no exception)
+        explicit := EnvGet("SPEEDKALANDRA_TEST_NO_GUI")
+        if (explicit = "1" || explicit = "true" || explicit = "TRUE")
+            return true
+
+        ; Universal CI convention: anything truthy in CI means "we're
+        ; in a CI runner". GitHub Actions sets CI=true; same for
+        ; GitLab/CircleCI/Travis/Drone/AppVeyor. Treating non-empty,
+        ; non-"0", non-"false" as truthy is conservative — a user
+        ; who happens to have CI=0 in their shell won't trigger this.
+        ci := EnvGet("CI")
+        if (ci != "" && ci != "0" && ci != "false" && ci != "FALSE")
+            return true
+
+        return false
     }
 
     static _Write(line)
