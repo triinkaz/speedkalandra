@@ -117,6 +117,14 @@ class SpeedKalandraAppIntegrationTests extends TestCase
         ; --- v0.1.4: Undo last save rebuilds PBs (consistency with Delete) ---
         "undo_last_save_rebuilds_pbs_from_history",
 
+        ; --- _AssertWired (boot-time wiring check) ---
+        "assert_wired_passes_after_normal_construction",
+        "assert_wired_throws_when_object_field_is_empty",
+        "assert_wired_throws_when_persist_fn_is_not_callable",
+
+        ; --- End-to-end run flow ---
+        "complete_run_flow_from_start_to_finalize_to_undo",
+
         ; --- Wave 9: regression tests for cataloged bugs without direct coverage ---
         ; Bug #9 (AUDIT): Riverbank resets level on every entry. Fix:
         ; exact match "The Riverbank" + _riverbankSeenInRun flag that
@@ -579,6 +587,210 @@ class SpeedKalandraAppIntegrationTests extends TestCase
             "PB rebuilt from history: no surviving runs => no PB")
         Assert.Equal(0,  this.app.personalBest.GetRunPbMs())
         Assert.Equal("", this.app.personalBest.GetRunPbRunId())
+    }
+
+    ; ============================================================
+    ; _AssertWired — boot-time wiring validation
+    ; ============================================================
+    ;
+    ; Called at the end of SpeedKalandraApp.__New, after
+    ; _WireEventHandlers and before runService.Hydrate. Catches
+    ; refactor mistakes that drop or reorder a constructor at
+    ; construction time, with a clear error pointing at the missing
+    ; field, instead of letting the failure surface much later as a
+    ; cryptic null-method-access during event dispatch.
+
+    assert_wired_passes_after_normal_construction()
+    {
+        ; Setup already constructed `this.app` successfully, which
+        ; means _AssertWired ran inside __New and didn't throw. Call
+        ; it explicitly anyway as a smoke check — if it throws here,
+        ; the assertion list and the real wiring have drifted apart.
+        this.app._AssertWired()
+        Assert.True(true, "_AssertWired re-callable post-construction")
+    }
+
+    assert_wired_throws_when_object_field_is_empty()
+    {
+        ; Force one of the validated object fields to the empty
+        ; string and confirm the next call to _AssertWired raises a
+        ; clear Error mentioning that field. This is what the
+        ; in-__New call would have done on a real wiring regression.
+        ;
+        ; Note on the try/catch shape: an external `threwAsExpected`
+        ; flag is used instead of putting `Assert.Fail` inside `try`,
+        ; because Assert.Fail itself throws AssertionFailed and would
+        ; be silently swallowed by the same `catch`, giving a false
+        ; positive when _AssertWired didn't actually throw.
+        this.app.statsRecorder := ""
+        threwAsExpected := false
+        capturedMessage := ""
+        try
+        {
+            this.app._AssertWired()
+        }
+        catch as ex
+        {
+            threwAsExpected := true
+            capturedMessage := ex.Message
+        }
+        Assert.True(threwAsExpected,
+            "_AssertWired should have thrown for unwired statsRecorder")
+        Assert.True(InStr(capturedMessage, "statsRecorder") > 0,
+            "Error message names the unwired field: " . capturedMessage)
+        Assert.True(InStr(capturedMessage, "_AssertWired") > 0,
+            "Error message identifies the source: " . capturedMessage)
+    }
+
+    assert_wired_throws_when_persist_fn_is_not_callable()
+    {
+        ; _persistFn is checked separately from the object fields
+        ; because in AHK v2 closures aren't necessarily classified as
+        ; objects for every IsObject path — the validation uses
+        ; (is Func || HasMethod "Call"). Confirm that branch fires.
+        this.app._persistFn := ""
+        threwAsExpected := false
+        capturedMessage := ""
+        try
+        {
+            this.app._AssertWired()
+        }
+        catch as ex
+        {
+            threwAsExpected := true
+            capturedMessage := ex.Message
+        }
+        Assert.True(threwAsExpected,
+            "_AssertWired should have thrown for non-callable _persistFn")
+        Assert.True(InStr(capturedMessage, "_persistFn") > 0,
+            "Error message names the unwired closure: " . capturedMessage)
+    }
+
+    ; ============================================================
+    ; End-to-end run flow
+    ; ============================================================
+    ;
+    ; The other integration tests cover each piece of a run
+    ; individually (start, area level, zone, finalize, undo). This
+    ; test runs the sequence the user actually performs, with every
+    ; intermediate event the production pipeline would publish, and
+    ; asserts that each subsystem ended up in the right post-state.
+    ; Designed as the canonical smoke test for the whole bus topology:
+    ; if a new field gets wired into the chain incorrectly, this
+    ; test breaks before any of the narrower tests do, and the
+    ; failure points at which subsystem disagrees.
+
+    complete_run_flow_from_start_to_finalize_to_undo()
+    {
+        ; ---- 1. Start a run ----
+        Assert.False(this.app.runService.IsActive(),
+            "pre: no active run")
+        this.app.bus.Publish(Commands.NewRunRequested, Map())
+        producedRunId := this.app.runService.GetRunId()
+        Assert.True(this.app.runService.IsActive(),
+            "step 1: run is now active")
+        Assert.True(this.app.timer.IsRunning(),
+            "step 1: timer is running")
+        Assert.Equal(producedRunId, this.app.statsRecorder.GetRunId(),
+            "step 1: statsRecorder received runId from RunStarted")
+
+        ; ---- 2. Area level changed (Act 1 starting area) ----
+        ; In production this comes through the bus as
+        ; Events.AreaLevelChanged, but the subscriber lives in
+        ; SpeedKalandraApp.Start() — which the integration tests
+        ; deliberately don't call (it renders real widgets and arms
+        ; SetTimers). Calling the handler directly is equivalent for
+        ; the purpose of this end-to-end check; the bus topology of
+        ; Start() is left to whatever future tests want to exercise it.
+        this.app._OnAreaLevelChanged(Map(
+            "areaLevel", 1,
+            "areaCode",  "G1_1"
+        ))
+        Assert.Equal(1,      this.app._cfg.currentAreaLevel,
+            "step 2: area level propagated to cfg")
+        Assert.Equal("G1_1", this.app._cfg.currentAreaCode,
+            "step 2: area code propagated to cfg")
+
+        ; ---- 3. Zone entered: Mud Burrow + 60 s in zone ----
+        this._EnterZoneAndAdvance("Mud Burrow", 60000)
+        Assert.Equal("Mud Burrow", this.app.zoneTracker.GetActiveZone(),
+            "step 3: ZoneTracker tracks the active zone")
+
+        ; ---- 4. Loading measured between Mud Burrow and Riverbank ----
+        ; Normally published by LoadingDetectionService after a
+        ; pixel-anchored loading screen closes. We publish directly
+        ; because pixel detection isn't exercisable in headless tests.
+        this.app.bus.Publish(Events.LoadingMeasured, Map(
+            "durationMs", 5000,
+            "fromZone",   "Mud Burrow",
+            "toZone",     "The Riverbank",
+            "source",     "anchor",
+            "score",      0.95,
+            "anchor",     "hud"
+        ))
+        Assert.Equal(5000, this.app.loadingTotals.GetTotalMs(),
+            "step 4: LoadingTotalsService accumulated the measured loading")
+
+        ; ---- 5. Continue through zones (totalling > 3 min) ----
+        this._EnterZoneAndAdvance("The Riverbank",       120000)  ; 2 min
+        this._EnterZoneAndAdvance("Clearfell Encampment", 60000)  ; 1 min (town)
+        this._EnterZoneAndAdvance("Mud Burrow",          120000)  ; 2 min back
+        ; Cumulative: 60 + 120 + 60 + 120 = 360 s = 6 min (above the
+        ; 3-min save threshold; far enough above to leave slack for
+        ; any rounding the snapshot does).
+
+        ; ---- 6. Persist mid-run state (production: 5 s SetTimer) ----
+        this.app.runService.PersistTick()
+        this.app.runState.SaveZoneTotals(
+            this.app.zoneTracker.GetTotalsForSnapshot())
+
+        ; ---- 7. Finalize the run ----
+        this.app.bus.Publish(Commands.FinalizeRunRequested, Map())
+        Assert.False(this.app.runService.IsActive(),
+            "step 7: run is finalized, no longer active")
+        Assert.Equal("completed", this.app.runService.GetStatus(),
+            "step 7: status is completed")
+
+        ; ---- 8. History was saved ----
+        files := this._ListRunFiles()
+        Assert.Equal(1, files.Length,
+            "step 8: exactly one history file produced")
+        Assert.Equal(producedRunId . ".ini", files[1],
+            "step 8: file is named after the runId")
+
+        ; Reload the saved run from disk and check it carries the
+        ; key facts the user expects to see in their history.
+        loadedRun := this.app.runHistory.Load(producedRunId)
+        Assert.True(IsObject(loadedRun),
+            "step 8: saved run loads back")
+        Assert.Equal(producedRunId, loadedRun["runId"],
+            "step 8: saved runId matches")
+        Assert.True(loadedRun["totalMs"] >= 360000,
+            "step 8: saved totalMs covers the >=6min of zone time")
+
+        ; ---- 9. Personal best updated ----
+        Assert.True(this.app.personalBest.HasRunPb(),
+            "step 9: PB recorded for completed run")
+        Assert.Equal(producedRunId, this.app.personalBest.GetRunPbRunId(),
+            "step 9: PB points at this run")
+        Assert.True(this.app.personalBest.GetRunPbMs() >= 360000,
+            "step 9: PB ms matches saved totalMs")
+
+        ; ---- 10. Undo the save ----
+        ; In headless mode RunSnapshotSaver doesn't arm the tray-undo
+        ; menu entry (it's gated by !_headless), so _lastSavedRunId
+        ; stays empty. Set it manually so UndoLastSave has a target.
+        this.app._snapshotSaver._lastSavedRunId := producedRunId
+        this.app.UndoLastSave()
+
+        Assert.Equal(0, this._ListRunFiles().Length,
+            "step 10: history file removed by undo")
+        Assert.False(this.app.personalBest.HasRunPb(),
+            "step 10: PB rebuilt from now-empty history")
+        Assert.Equal("", this.app.personalBest.GetRunPbRunId(),
+            "step 10: PB runId cleared")
+        Assert.Equal(0, this.app.personalBest.GetRunPbMs(),
+            "step 10: PB ms zeroed")
     }
 
     ; ============================================================

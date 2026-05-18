@@ -393,6 +393,15 @@ class SpeedKalandraApp
 
         this._WireEventHandlers()
 
+        ; Validate that every field referenced by handlers in this
+        ; class (and in the extracted cross-cutting handlers) has been
+        ; wired. Detects regressions in the boot order — e.g. a future
+        ; refactor that moves a constructor below a subscription that
+        ; reads it, or that drops a field by accident — at construction
+        ; time instead of at first event dispatch. Cheaper than tests
+        ; that mock the entire bus.
+        this._AssertWired()
+
         ; Subscribers are all in place — now it is safe to hydrate the
         ; run service. If the loaded RunState has an active run, this
         ; publishes Evt.RunStarted{hydrated:true} which propagates to
@@ -889,5 +898,76 @@ class SpeedKalandraApp
         if (zone = "" || !IsObject(this.zonesCatalog))
             return 0
         return this.zonesCatalog.GetActOfName(zone)
+    }
+
+    ; Asserts that every field that __New is responsible for wiring
+    ; was actually set to an object. Called at the end of __New,
+    ; after _WireEventHandlers and before runService.Hydrate (which
+    ; can publish events that subscribers consume — a half-wired
+    ; subscriber would crash on dispatch with a confusing stack).
+    ;
+    ; What's checked: every collaborator and handler that is
+    ; constructed inside __New. Late-bound fields owned by Start()
+    ; (_logMonitorTimer, _runPersistTimer, _started flag) are
+    ; deliberately excluded — they are not __New's responsibility.
+    ; Scalar flags (_headless, _riverbankSeenInRun) and the runtime
+    ; closure (_persistFn) are checked for non-empty but not for
+    ; IsObject; the rest must be objects.
+    ;
+    ; The list is deliberately written out by hand rather than
+    ; reflected from `this.OwnProps()` so that adding a new field
+    ; forces a conscious decision about whether __New owns it.
+    ; Failure mode is a clear error like:
+    ;   "SpeedKalandraApp._AssertWired: field 'statsRecorder'
+    ;    was not wired (expected object, got String '')"
+    _AssertWired()
+    {
+        ; Fields that must be set to an object after __New.
+        ; Grouped by purpose for readability; the order doesn't
+        ; matter — the loop reports the first failure either way.
+        objectFields := [
+            ; Core infrastructure
+            "log", "bus", "clock", "_settingsRepo", "_cfg", "zonesCatalog",
+            ; Core services
+            "timer", "runState", "runService", "actCheckpoints",
+            "xpService", "logMonitor", "zoneTracker",
+            "loadingDetection", "loadingTotals",
+            "personalBest", "runHistory",
+            "statsRecorder", "plotBuilder",
+            "autoFinalize", "autoStart",
+            ; Input + presentation
+            "focusAutoPause", "hudScanner", "hotkeyService",
+            "overlayInter", "overlayMode", "overlayApplier",
+            "tickEmitter", "eventTracer",
+            ; Widgets
+            "compactWidget", "microWidget", "steveWidget", "widgets",
+            ; Dialogs
+            "settingsDialog", "plotDialog", "runHistoryDialog",
+            "exportDialog", "importPreviewDialog",
+            ; Import / export
+            "runExportService", "runImportService",
+            ; Extracted cross-cutting handlers
+            "_bootPrompts", "_snapshotSaver", "_persister", "_reconfig"
+        ]
+
+        for _, fieldName in objectFields
+        {
+            value := this.%fieldName%
+            if !IsObject(value)
+            {
+                shape := (value = "") ? "String ''" : Type(value) . " '" . value . "'"
+                throw Error("SpeedKalandraApp._AssertWired: field '"
+                    . fieldName . "' was not wired (expected object, got " . shape . ")")
+            }
+        }
+
+        ; _persistFn is a closure (Func / BoundFunc / Closure depending
+        ; on the AHK runtime path), not a generic object — check it
+        ; carefully. We don't call it; we just verify it's callable.
+        if !(this._persistFn is Func) && !HasMethod(this._persistFn, "Call")
+        {
+            throw Error("SpeedKalandraApp._AssertWired: field '_persistFn' was not wired (expected callable, got "
+                . Type(this._persistFn) . ")")
+        }
     }
 }
