@@ -165,6 +165,8 @@ SpeedKalandraMsgBox(text, title := "", options := "") {
     return "Cancel"
 }
 
+#Include ..\src_v2\app\boot_prompts.ahk
+
 #Include ..\src_v2\app\app.ahk
 
 ; ------------------------------------------------------------
@@ -229,6 +231,11 @@ SpeedKalandraMsgBox(text, title := "", options := "") {
 #Include unit\app\services\hotkey_service_tests.ahk
 #Include unit\app\services\focus_auto_pause_service_tests.ahk
 #Include unit\app\services\overlay_interaction_service_tests.ahk
+
+; ------------------------------------------------------------
+; Suites - app/ (composition-root collaborators)
+; ------------------------------------------------------------
+#Include unit\app\boot_prompts_tests.ahk
 
 ; ------------------------------------------------------------
 ; Suites - ui/

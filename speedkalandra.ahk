@@ -244,6 +244,8 @@ SpeedKalandraRunImportDebug()
 #Include "src_v2\ui\export_options_dialog.ahk"
 #Include "src_v2\ui\import_preview_dialog.ahk"
 
+#Include "src_v2\app\boot_prompts.ahk"
+
 #Include "src_v2\app\app.ahk"
 
 global app := SpeedKalandraApp()
