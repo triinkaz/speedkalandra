@@ -166,6 +166,7 @@ SpeedKalandraMsgBox(text, title := "", options := "") {
 }
 
 #Include ..\src_v2\app\boot_prompts.ahk
+#Include ..\src_v2\app\run_snapshot_saver.ahk
 
 #Include ..\src_v2\app\app.ahk
 
@@ -236,6 +237,7 @@ SpeedKalandraMsgBox(text, title := "", options := "") {
 ; Suites - app/ (composition-root collaborators)
 ; ------------------------------------------------------------
 #Include unit\app\boot_prompts_tests.ahk
+#Include unit\app\run_snapshot_saver_tests.ahk
 
 ; ------------------------------------------------------------
 ; Suites - ui/

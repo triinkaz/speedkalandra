@@ -1,9 +1,9 @@
 ; SpeedKalandraApp — composition root.
 ;
 ; Persistence: timer base + loading total + per-zone totals are
-; written to the INI every 5s by _PersistRunData, with a hash cache
+; written to the INI every 5 s by _PersistRunData, with a hash cache
 ; that skips IniWrite when nothing has changed (a naive write was
-; blocking the thread for 1–2s every tick).
+; blocking the thread for 1–2 s every tick).
 ;
 ; Run history: every run is saved to data/runs/{runId}.ini, triggered
 ; by RunCompleted (always) or RunCancelled (only if >= 3 min). The
@@ -11,14 +11,14 @@
 ; ZoneTrackingService are constructed — the bus is FIFO, and those
 ; services clear their state on the same events. Subscribing later
 ; in Start() would hand the save handler an empty snapshot.
+; The handler itself lives in RunSnapshotSaver; the subscription is
+; late-bound (`(data) => this._snapshotSaver.Save(...)`) because the
+; saver depends on services that don't exist yet at subscription time
+; and gets constructed near the end of __New, once they do.
 
 
 class SpeedKalandraApp
 {
-    ; Cancelled runs shorter than this are NOT saved to history
-    ; (avoids test/quick-abort garbage). In milliseconds.
-    static MIN_CANCELLED_SAVE_MS := 180000   ; 3min
-
     _cfg          := ""
     _settingsRepo := ""
     log    := ""
@@ -73,6 +73,11 @@ class SpeedKalandraApp
     ; their own beyond the references handed in at construction.
     _bootPrompts := ""
 
+    ; Run-finalization + undo flow. Subscribed to RunCompleted /
+    ; RunCancelled in __New via a late-bound callback (the saver is
+    ; constructed later, after every collaborator it needs exists).
+    _snapshotSaver := ""
+
     _started   := false
     _persistFn := ""
     _logMonitorTimer  := ""
@@ -88,11 +93,6 @@ class SpeedKalandraApp
     ; portal, party invite) must NOT reset, or the cached level
     ; goes back to 1 until the next CharacterLevelUp line.
     _riverbankSeenInRun := false
-
-    ; runId of the most recent save that can still be undone via
-    ; the F1 tray menu. Cleared after 60s or once undo runs.
-    _lastSavedRunId := ""
-    _undoTimerFn    := ""
 
     __New(config := "")
     {
@@ -148,10 +148,13 @@ class SpeedKalandraApp
         ; clear their state on RunCancelled (zoneTracker and
         ; statsRecorder, further down). The bus is FIFO; our handler
         ; needs to run first while the snapshot is still intact.
+        ; The callbacks are late-bound: this._snapshotSaver is still
+        ; "" at this point and gets assigned later in __New, after
+        ; every service it consumes has been constructed.
         this.bus.Subscribe(Events.RunCompleted,
-            (data) => this._SaveRunSnapshot("completed"))
+            (data) => this._snapshotSaver.Save("completed"))
         this.bus.Subscribe(Events.RunCancelled,
-            (data) => this._SaveRunSnapshot("cancelled"))
+            (data) => this._snapshotSaver.Save("cancelled"))
 
         this.runState   := RunStateRepository(ini)
         this.timer      := TimerService(this.clock, this.bus)
@@ -308,6 +311,18 @@ class SpeedKalandraApp
             this.logMonitor,
             this.runService,
             this.timer,
+            this.log,
+            headless
+        )
+
+        this._snapshotSaver := RunSnapshotSaver(
+            this.runHistory,
+            this.zoneTracker,
+            this.timer,
+            this.statsRecorder,
+            this.plotBuilder,
+            this.actCheckpoints,
+            this.personalBest,
             this.log,
             headless
         )
@@ -840,264 +855,10 @@ class SpeedKalandraApp
         this._riverbankSeenInRun := false
     }
 
-    ; Persists a finished/cancelled run to history. Subscribed in __New
-    ; on both RunCompleted and RunCancelled, BEFORE the services that
-    ; clear state on those events. The MIN_CANCELLED_SAVE_MS threshold
-    ; (3 min) applies to both reasons — below that, the run is
-    ; discarded as test/quick-abort garbage. Completed saves above
-    ; the threshold are marked undoable for 60 s via the tray menu.
-    _SaveRunSnapshot(reason)
-    {
-        try
-        {
-            if !IsObject(this.runHistory)
-                return
-
-            zoneTotals := IsObject(this.zoneTracker)
-                          ? this.zoneTracker.GetTotalsForSnapshot()
-                          : Map()
-            ; Per-zone first-entry timestamps drive the chronological
-            ; ordering of zones in the plot details.
-            zoneFirstEnteredAt := IsObject(this.zoneTracker)
-                                  ? this.zoneTracker.GetFirstEnteredAtMap()
-                                  : Map()
-            runMs := IsObject(this.timer) ? this.timer.GetRunMs() : 0
-
-            ; Uniform threshold for completed and cancelled.
-            if (runMs < SpeedKalandraApp.MIN_CANCELLED_SAVE_MS)
-            {
-                if IsObject(this.log)
-                {
-                    try this.log.Info("Run too short, discarded (< "
-                        . SpeedKalandraApp.MIN_CANCELLED_SAVE_MS . "ms): "
-                        . runMs . " ms (reason=" . reason . ")", "App")
-                }
-                ; TrayTip only for completed — cancelled is expected
-                ; to be silent (user cancelled intentionally)
-                if (reason = "completed" && !this._headless)
-                {
-                    try TrayTip("SpeedKalandra",
-                        "Run too short (" SpeedKalandraApp._FormatMsForMsg(runMs)
-                        "), not saved.", "Mute")
-                }
-                return
-            }
-
-            if !IsObject(this.statsRecorder) || !IsObject(this.plotBuilder)
-                return
-
-            snapshot := this.statsRecorder.GetSnapshot(zoneTotals, runMs, zoneFirstEnteredAt)
-            buildResult := this.plotBuilder.Build(snapshot)
-
-            ; Capture act checkpoints HERE and inject into buildResult
-            ; before Save. Lets PersonalBestService.RebuildFromHistory
-            ; rebuild per-act PBs after run deletes from the same
-            ; persisted checkpoints that UpdateFromRun consumes. Runs
-            ; saved before this was added carry no checkpoints; rebuild
-            ; silently ignores them.
-            actCheckpoints := Map()
-            if IsObject(this.actCheckpoints)
-            {
-                try
-                {
-                    this.actCheckpoints.CaptureCurrentAsCheckpoint(runMs)
-                }
-                catch as ex
-                {
-                    try this.log.Warn("Failed to capture final act checkpoint: " . ex.Message, "App")
-                }
-                try actCheckpoints := this.actCheckpoints.GetCheckpoints()
-            }
-            buildResult["actCheckpoints"] := actCheckpoints
-
-            saved := this.runHistory.Save(buildResult)
-            rid := buildResult.Has("runId") ? buildResult["runId"] : ""
-            if (saved && IsObject(this.log))
-            {
-                this.log.Info("Run saved to history (" . reason . "): " . rid
-                    . " (" . runMs . " ms)", "App")
-            }
-
-            ; --- Personal bests ---
-            ; Completed runs only — cancelled doesn't count toward PB
-            ; even if it crosses the threshold.
-            pbChanged := false
-            if (reason = "completed" && IsObject(this.personalBest))
-            {
-                try
-                {
-                    pbChanged := this.personalBest.UpdateFromRun(runMs, rid, zoneTotals, actCheckpoints)
-                }
-                catch as ex
-                {
-                    try this.log.Warn("PB update failed on completed run " . rid . ": " . ex.Message, "App")
-                }
-                if (pbChanged && IsObject(this.log))
-                {
-                    nActs := 0
-                    for _, _ms in actCheckpoints
-                    {
-                        if (_ms > 0)
-                            nActs += 1
-                    }
-                    try this.log.Info("PB updated on run " . rid
-                        . " (runMs=" . runMs . ", checkpoints=" . nActs . ")", "App")
-                }
-            }
-
-            ; --- TrayTip + "Undo last save" tray menu item ---
-            ; Completed only; cancelled is silent.
-            if (saved && reason = "completed" && !this._headless)
-            {
-                durStr := SpeedKalandraApp._FormatMsForMsg(runMs)
-                msg := pbChanged
-                    ? "Saved (" durStr "). PB updated! Tray menu has Undo (60s)."
-                    : "Saved (" durStr "). Tray menu has Undo (60s)."
-                try TrayTip("SpeedKalandra", msg, "Mute")
-                this._MarkUndoableSave(rid)
-            }
-        }
-        catch as ex
-        {
-            try this.log.Warn("Failed to save run to history: " ex.Message, "App")
-        }
-    }
-
-    ; Undo last save — F1 from the tray menu.
-    ;
-    ;   1. _SaveRunSnapshot saves a run → _MarkUndoableSave(runId)
-    ;   2. _MarkUndoableSave stores the runId, adds the tray menu
-    ;      item, and arms a 60 s SetTimer.
-    ;   3a. User clicks "Undo last save" → UndoLastSave() deletes
-    ;       the file and rebuilds PBs from the surviving runs.
-    ;   3b. 60 s pass → _ExpireUndoableSave() removes the menu item
-    ;       and clears the runId.
-    ;
-    ; The undo path rebuilds PBs (same semantics as the Delete button
-    ; in RunHistoryDialog), so a deleted run no longer contributes to
-    ; any PB.
-    _MarkUndoableSave(runId)
-    {
-        if (runId = "")
-            return
-        this._lastSavedRunId := runId
-
-        ; Cancel the old timer if it existed (previous save still undoable)
-        if (this._undoTimerFn != "")
-        {
-            try SetTimer(this._undoTimerFn, 0)
-            this._undoTimerFn := ""
-        }
-
-        ; Adds tray menu item (global helper in speedkalandra.ahk)
-        try SpeedKalandraTrayAddUndoItem()
-
-        ; Arms a timer to expire after 60s (negative = run once)
-        this._undoTimerFn := () => this._ExpireUndoableSave()
-        try SetTimer(this._undoTimerFn, -60000)
-    }
-
-    UndoLastSave()
-    {
-        ; Local `runId` collides with the `RunId` domain class; rename.
-        currentRunId := this._lastSavedRunId
-        if (currentRunId = "")
-        {
-            ; Stale menu item — clean up just in case.
-            try SpeedKalandraTrayRemoveUndoItem()
-            return
-        }
-
-        deleted := false
-        try
-        {
-            if IsObject(this.runHistory)
-                deleted := this.runHistory.Delete(currentRunId)
-        }
-        catch as ex
-        {
-            deleted := false
-            try this.log.Warn("UndoLastSave: Delete threw for " . currentRunId . ": " . ex.Message, "App")
-        }
-
-        ; Rebuild PBs from the surviving runs so the deleted run no
-        ; longer contributes. Mirrors RunHistoryDialog._OnDeleteSelected.
-        pbChanged := false
-        if deleted
-        {
-            try
-            {
-                pbChanged := this._RebuildPbsFromHistory()
-            }
-            catch as ex
-            {
-                try this.log.Warn("UndoLastSave: PB rebuild failed: " . ex.Message, "App")
-            }
-        }
-
-        ; Clear internal state
-        this._lastSavedRunId := ""
-        if (this._undoTimerFn != "")
-        {
-            try SetTimer(this._undoTimerFn, 0)
-            this._undoTimerFn := ""
-        }
-        try SpeedKalandraTrayRemoveUndoItem()
-
-        if IsObject(this.log)
-        {
-            try this.log.Info("Undo last save: " . currentRunId
-                . (deleted ? " (removed)" : " (file not found)")
-                . (pbChanged ? " | PBs rebuilt from history" : ""), "App")
-        }
-        if !this._headless
-        {
-            if deleted
-            {
-                msg := pbChanged
-                    ? "Last save removed. PBs were rebuilt from history."
-                    : "Last save removed (no PB changes)."
-            }
-            else
-            {
-                msg := "Last save not found (already removed?)."
-            }
-            try TrayTip("SpeedKalandra", msg, "Mute")
-        }
-    }
-
-    ; Loads every surviving run from disk (full Load, with details
-    ; and actCheckpoints) and replays them through
-    ; PersonalBestService.RebuildFromHistory. Returns true if any PB
-    ; changed. Mirrors the helper of the same name in
-    ; RunHistoryDialog so both delete paths share semantics.
-    _RebuildPbsFromHistory()
-    {
-        if !IsObject(this.personalBest)
-            return false
-        runs := []
-        try
-        {
-            for _, rid in this.runHistory.ListRunIds()
-            {
-                br := this.runHistory.Load(rid)
-                if IsObject(br)
-                    runs.Push(br)
-            }
-        }
-        catch as ex
-        {
-            try this.log.Warn("Failed to enumerate runs during PB rebuild: " . ex.Message, "App")
-        }
-        return this.personalBest.RebuildFromHistory(runs)
-    }
-
-    _ExpireUndoableSave()
-    {
-        this._lastSavedRunId := ""
-        this._undoTimerFn := ""
-        try SpeedKalandraTrayRemoveUndoItem()
-    }
+    ; Tray menu callback — delegates to the snapshot saver. Kept as a
+    ; public method on the app so the entry script's tray wiring stays
+    ; agnostic of where the implementation lives.
+    UndoLastSave() => this._snapshotSaver.UndoLastSave()
 
     ; Subscribed to Commands.ResetPersonalBestsRequested (tray menu).
     ; Shows a confirmation MsgBox (destructive action). Headless mode

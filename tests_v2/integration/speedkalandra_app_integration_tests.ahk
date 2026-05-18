@@ -558,11 +558,11 @@ class SpeedKalandraAppIntegrationTests extends TestCase
         Assert.Equal(producedRunId, this.app.personalBest.GetRunPbRunId())
         Assert.Equal(1, this._ListRunFiles().Length, "sanity: run saved to disk")
 
-        ; Production sets _lastSavedRunId inside _MarkUndoableSave, but
-        ; that path is gated by !_headless (it also adds a tray menu
-        ; entry and arms a 60s SetTimer). In headless tests we set the
-        ; field directly so UndoLastSave has a target.
-        this.app._lastSavedRunId := producedRunId
+        ; Production sets _lastSavedRunId inside RunSnapshotSaver._MarkUndoable,
+        ; but that path is gated by !_headless (it also adds a tray menu
+        ; entry and arms a 60 s SetTimer). In headless tests we poke the
+        ; saver's field directly so UndoLastSave has a target.
+        this.app._snapshotSaver._lastSavedRunId := producedRunId
 
         this.app.UndoLastSave()
 

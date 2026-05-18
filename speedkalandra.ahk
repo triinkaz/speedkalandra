@@ -245,6 +245,7 @@ SpeedKalandraRunImportDebug()
 #Include "src_v2\ui\import_preview_dialog.ahk"
 
 #Include "src_v2\app\boot_prompts.ahk"
+#Include "src_v2\app\run_snapshot_saver.ahk"
 
 #Include "src_v2\app\app.ahk"
 
