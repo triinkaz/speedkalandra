@@ -145,6 +145,15 @@ class SpeedKalandraApp
         ; Clock is injectable so integration tests can plug in FakeClock.
         this.clock := cfgMap.Has("clock") ? cfgMap["clock"] : RealClock()
 
+        ; Warning sinks for infra/services that don't take a direct
+        ; LogService dependency (keeps the layered architecture honest;
+        ; see ARCHITECTURE.md § 14). Each carries a fixed context tag
+        ; so a grep of `[PB]` / `[RunState]` / `[RunHistory]` in
+        ; data/speedkalandra.log isolates failures by source layer.
+        pbSink         := LogServiceWarningSink(this.log, "PB")
+        runStateSink   := LogServiceWarningSink(this.log, "RunState")
+        runHistorySink := LogServiceWarningSink(this.log, "RunHistory")
+
         ini := IniFile(iniPath)
         this._settingsRepo := SettingsRepository(ini)
         this._cfg := this._settingsRepo.Load()
@@ -153,12 +162,18 @@ class SpeedKalandraApp
         this.log.Info("Zones catalog loaded: " this.zonesCatalog.Count() " zones", "App")
 
         ; Run history
-        this.runHistory := RunHistoryRepository(runHistoryDir)
+        this.runHistory := RunHistoryRepository(runHistoryDir, runHistorySink)
 
         ; Personal bests are loaded by the repository inside
         ; PersonalBestService.__New, then updated by RunSnapshotSaver
-        ; when reason="completed".
-        this.personalBest := PersonalBestService(PersonalBestRepository(pbPath))
+        ; when reason="completed". The same pbSink goes into both the
+        ; repo (Save I/O failures) and the service (persist-after-
+        ; mutation failures) so all PB-related WARNs land under one
+        ; greppable tag.
+        this.personalBest := PersonalBestService(
+            PersonalBestRepository(pbPath, pbSink),
+            pbSink
+        )
         if this.personalBest.HasRunPb()
         {
             try this.log.Info("Run PB loaded: "
@@ -178,7 +193,7 @@ class SpeedKalandraApp
         this.bus.Subscribe(Events.RunCancelled,
             (data) => this._snapshotSaver.Save("cancelled"))
 
-        this.runState   := RunStateRepository(ini)
+        this.runState   := RunStateRepository(ini, runStateSink)
         this.timer      := TimerService(this.clock, this.bus)
         this.runService := RunService(this.clock, this.bus, this.timer, this.runState)
 

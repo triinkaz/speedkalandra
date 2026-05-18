@@ -22,19 +22,26 @@
 class PersonalBestService
 {
     _repo := ""
+    _warn := ""   ; WarningSink (Null by default; LogServiceWarningSink in production)
 
     _runPbMs    := 0
     _runPbRunId := ""
     _runPbByAct := ""    ; Map<actNum, ms>
     _zonePbs    := ""    ; Map<zoneName, ms>
 
-    __New(repo)
+    __New(repo, warningSink := "")
     {
         if !(repo is PersonalBestRepository)
             throw TypeError("PersonalBestService: 'repo' must be PersonalBestRepository")
         this._repo       := repo
         this._runPbByAct := Map()
         this._zonePbs    := Map()
+        ; No-op sink by default so existing tests that construct the
+        ; service with just `(repo)` keep passing. Production wires
+        ; LogServiceWarningSink so persist failures show up in the
+        ; user log under the "PB" tag instead of being silently
+        ; swallowed by the finalize flow.
+        this._warn       := IsObject(warningSink) ? warningSink : NullWarningSink()
         this._LoadFromRepo()
     }
 
@@ -155,7 +162,7 @@ class PersonalBestService
         }
 
         if changed
-            try this._PersistToRepo()
+            this._TryPersistOrWarn("after UpdateFromRun")
         return changed
     }
 
@@ -167,7 +174,7 @@ class PersonalBestService
         this._runPbRunId := ""
         this._runPbByAct := Map()
         this._zonePbs    := Map()
-        try this._PersistToRepo()
+        this._TryPersistOrWarn("after Reset")
     }
 
     ; Replaces all local PBs with external data, used by
@@ -217,7 +224,7 @@ class PersonalBestService
             }
         }
 
-        try this._PersistToRepo()
+        this._TryPersistOrWarn("after LoadFromExternal")
     }
 
     ; Pins a specific run as PB. The use case is a user who
@@ -278,7 +285,7 @@ class PersonalBestService
         }
 
         if changed
-            try this._PersistToRepo()
+            this._TryPersistOrWarn("after SetAsRunPb")
         return changed
     }
 
@@ -314,7 +321,7 @@ class PersonalBestService
 
         if !IsObject(runs)
         {
-            try this._PersistToRepo()
+            this._TryPersistOrWarn("after RebuildFromHistory (no runs)")
             return true
         }
 
@@ -379,7 +386,7 @@ class PersonalBestService
 
         ; Always persist (even if nothing changed — simplifies the flow).
         ; The extra I/O cost is negligible.
-        try this._PersistToRepo()
+        this._TryPersistOrWarn("after RebuildFromHistory")
 
         ; Detect change to return to the caller (debug/UI feedback)
         newByActStr := PersonalBestService._MapToDebugStr(this._runPbByAct)
@@ -458,18 +465,48 @@ class PersonalBestService
         catch as ex
         {
             ; A silent load failure used to mask corrupt INIs and
-            ; I/O problems. The service has no injected logger.
-            OutputDebug("PersonalBestService._LoadFromRepo failed: " ex.Message)
+            ; I/O problems. Now visible through the WarningSink so
+            ; the user sees "PB load failed" instead of silently
+            ; starting with zeroed PBs (and overwriting the corrupt
+            ; file on the next successful save).
+            this._warn.Warn("Failed to load PBs from repo", ex)
         }
     }
 
+    ; Persists current in-memory PBs to the repo. Returns the bool
+    ; produced by the repo's Save (true on success, false on failure).
+    ; Throws only on programming errors the caller cannot recover from
+    ; (the repo's catch already swallows I/O exceptions and turns them
+    ; into `false` + a WARN through its own sink).
     _PersistToRepo()
     {
-        this._repo.Save(Map(
+        return this._repo.Save(Map(
             "runPbMs",    this._runPbMs,
             "runPbRunId", this._runPbRunId,
             "runPbByAct", this._runPbByAct,
             "zonePbs",    this._zonePbs
         ))
+    }
+
+    ; Calls _PersistToRepo and routes both branches — thrown
+    ; exception and returned-false — through the WarningSink.
+    ; Keeps the public methods (UpdateFromRun, Reset, etc.) at one
+    ; call each instead of repeating the try/catch boilerplate.
+    ;
+    ; The flow is INTENTIONALLY non-fatal: a failed persist must not
+    ; break the finalize flow that called us (the run must still
+    ; reach the history file). The WARN replaces the previous silent
+    ; swallow.
+    _TryPersistOrWarn(context)
+    {
+        try
+        {
+            if !this._PersistToRepo()
+                this._warn.Warn("PB persist returned false (" . context . ")")
+        }
+        catch as ex
+        {
+            this._warn.Warn("PB persist threw (" . context . ")", ex)
+        }
     }
 }
