@@ -1,67 +1,69 @@
-﻿# src_v2 — SpeedKalandra Architecture (v17.15)
+# src_v2 — SpeedKalandra source tree
 
-Minimalist PoE2 speedrun tracker. Composition Root + EventBus + Services + Domain.
+Minimalist PoE2 speedrun tracker. The runtime is a single AHK v2 process organized as Composition Root + EventBus + Services + Domain. Top-down read of `app/app.ahk` is enough to understand the entire object graph.
 
-> **Historical decisions and demolition context**: see `ARCHITECTURE.md` at the root (>240KB, mixes current state and the history of the waves).
+> The full architectural tour is in [`ARCHITECTURE.md`](../ARCHITECTURE.md) at the repo root.
 
-## Current layout
+## Layout
 
 ```
 src_v2/
-├── core/                          ; Basic infrastructure
-│   ├── event_bus.ahk              ; Synchronous pub/sub
-│   ├── log_service.ahk            ; Logger with log rotation + WARN/ERROR counters
-│   └── clock.ahk                  ; RealClock + FakeClock
+├── core/                              ; Cross-cutting primitives
+│   ├── event_bus.ahk                  ; Synchronous pub/sub (FIFO, clone-on-iterate)
+│   ├── log_service.ahk                ; Logger with rotation + WARN/ERROR counters
+│   └── clock.ahk                      ; RealClock + FakeClock
 │
-├── domain/                        ; Pure models (no I/O)
+├── domain/                            ; Pure values + rules (no I/O)
 │   ├── values/
 │   │   ├── duration.ahk
-│   │   └── ids.ahk                ; runId helpers
-│   ├── app_settings.ahk           ; Root configuration aggregate
-│   ├── overlay_layout.ahk         ; OverlayPosition + OverlayLayout (Compact/Micro/Steve)
-│   ├── run_state.ahk              ; Persisted state of an in-progress run (crash recovery)
-│   ├── window_state.ahk           ; microLocked, steveLocked
-│   └── xp_rules.ahk               ; XP table per level + helpers
+│   │   └── ids.ahk                    ; runId helpers
+│   ├── app_settings.ahk               ; Root configuration aggregate
+│   ├── overlay_layout.ahk             ; OverlayPosition + OverlayLayout (Compact/Micro/Steve)
+│   ├── run_state.ahk                  ; Persisted run state (crash recovery)
+│   ├── window_state.ahk               ; microLocked, steveLocked flags
+│   └── xp_rules.ahk                   ; XP table per level + helpers
 │
-├── infra/                         ; I/O
-│   ├── io/                        ; ini_file, csv_file, json_file, atomic_write, text_encoding
-│   ├── settings_repository.ahk    ; AppSettings <-> speedkalandra.ini
-│   ├── run_state_repository.ahk   ; RunState <-> data/run_state.ini + zone_totals.txt
-│   ├── run_history_repository.ahk ; Finalized runs <-> data/runs/{runId}.ini
-│   ├── personal_best_repository.ahk ; PBs <-> data/personal_bests.ini
-│   └── zones_catalog.ahk          ; Parser for data/zones.csv (77 PoE2 zones)
+├── infra/                             ; I/O — files, INI, JSON, CSV
+│   ├── io/                            ; ini_file, csv_file, json_file, atomic_write, text_encoding, run_export_format
+│   ├── settings_repository.ahk        ; AppSettings <-> speedkalandra.ini
+│   ├── run_state_repository.ahk       ; RunState <-> data/run_state.ini + zone_totals.txt
+│   ├── run_history_repository.ahk     ; Finalized runs <-> data/runs/{runId}.ini
+│   ├── personal_best_repository.ahk   ; PBs <-> data/personal_bests.ini
+│   └── zones_catalog.ahk              ; Parser for data/zones.csv (77 PoE2 zones)
 │
-├── app/                           ; Orchestration
+├── app/                               ; Orchestration
 │   ├── bus/
-│   │   ├── commands.ahk           ; Command constants (Cmd.*)
-│   │   └── events.ahk             ; Event constants (Evt.*)
-│   ├── services/                  ; ~20 services (lifecycle, detection, plot, etc.)
-│   └── app.ahk                    ; Composition Root (SpeedKalandraApp)
+│   │   ├── commands.ahk               ; Cmd.* constants
+│   │   └── events.ahk                 ; Evt.* constants
+│   ├── services/                      ; ~20 services
+│   └── app.ahk                        ; SpeedKalandraApp — composition root
 │
-└── ui/                            ; GUIs
-    ├── theme.ahk                  ; Color palette + Font helpers
-    ├── widget_base.ahk            ; Base class for GDI+ widgets
-    ├── layout_widget_base.ahk     ; Base class for layouts (Compact/Micro/Steve)
-    ├── compact_layout_widget.ahk  ; COMPACT overlay (720x80)
-    ├── micro_layout_widget.ahk    ; MICRO overlay (200x32)
-    ├── steve_layout_widget.ahk    ; STEVE overlay (v17.14, the happy whale)
+└── ui/                                ; Widgets and dialogs
+    ├── theme.ahk                      ; Color palette + font helpers
+    ├── widget_base.ahk                ; Base for GDI+ widgets
+    ├── layout_widget_base.ahk         ; Base for layout widgets (Compact/Micro/Steve)
+    ├── compact_layout_widget.ahk
+    ├── micro_layout_widget.ahk
+    ├── steve_layout_widget.ahk
     ├── settings_dialog.ahk
     ├── line_chart_renderer.ahk
     ├── run_stats_plot_dialog.ahk
-    └── run_history_dialog.ahk
+    ├── run_history_dialog.ahk
+    ├── export_options_dialog.ahk
+    └── import_preview_dialog.ahk
 ```
 
 ## Conventions
 
-| Item                    | Convention           | Example            |
-| ----------------------- | -------------------- | ------------------ |
-| Classes                 | `PascalCase`         | `EventBus`         |
-| Public methods          | `PascalCase`         | `Subscribe()`      |
-| Private methods         | `_PascalCase`        | `_Log()`           |
-| Public properties       | `camelCase`          | `isRunning`        |
-| Private properties      | `_camelCase`         | `_subs`, `_clock`  |
-| Constants               | `UPPER_SNAKE_CASE`   | `MAX_LOG_SIZE`     |
-| Files                   | `snake_case.ahk`     | `event_bus.ahk`    |
+| Item                | Convention           | Example            |
+| ------------------- | -------------------- | ------------------ |
+| Classes             | `PascalCase`         | `EventBus`         |
+| Public methods      | `PascalCase`         | `Subscribe()`      |
+| Private methods     | `_PascalCase`        | `_Log()`           |
+| Public properties   | `camelCase`          | `isRunning`        |
+| Private properties  | `_camelCase`         | `_subs`, `_clock`  |
+| Constants           | `UPPER_SNAKE_CASE`   | `MAX_LOG_SIZE`     |
+| Files               | `snake_case.ahk`     | `event_bus.ahk`    |
 
 ## How to run
 
@@ -69,55 +71,36 @@ src_v2/
 AutoHotkey.exe speedkalandra.ahk
 ```
 
-That's the definitive entry point. Requires AutoHotkey v2.
+Requires AutoHotkey v2. The entry point is `speedkalandra.ahk` at the repo root, which includes everything under `src_v2/`.
 
-## Automated tests (v0.1.3+)
+## Tests
 
-The legacy suite (~2500 tests) referenced classes that went to `_LIXEIRA/` during the demolition of Waves 1-6 and was archived there. A new suite was rewritten from scratch under `tests_v2/` with a micro test runner in pure AHK v2 (no external deps). Current coverage: **1558 unit + integration tests** across `core/`, `domain/`, `infra/`, `app/services/`, `ui/`, plus end-to-end integration of `SpeedKalandraApp`.
-
-To run:
+The full automated test suite lives in [`../tests_v2/`](../tests_v2/) — over 1500 unit + integration tests covering `core/`, `domain/`, `infra/`, `app/services/`, `ui/`, and end-to-end wiring of `SpeedKalandraApp`. Run with:
 
 ```
 "C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe" tests_v2\run_tests.ahk
 ```
 
-See `tests_v2/README.md` for framework details, conventions, and wave-by-wave coverage notes.
-
-## Migration status
-
-**v17.15: production-ready.** The wave-based demolition (1-6) eliminated the previous paradigm (campaign_route.ini route system, route editor, splits per step, targets, replay engine, CSV summaries, gem planner, build planner) and rebuilt the current minimalist app:
-
-| Wave | Scope | Status |
-|------|-------|--------|
-| 0 | Extraction of boss_catalog.ini + zones.csv | ✅ |
-| 1 | Demolition of the route paradigm (8 sub-waves) | ✅ |
-| 2 | BossFightTracker + standalone BossTimerService | ✅ |
-| 3 | ZoneTrackingService + ZonesCatalog | ✅ |
-| 4 | 2 widgets (Compact + Micro) | ✅ |
-| 5 | RunStatsPlotBuilder + RunStatsRecorder | ✅ |
-| 6 | TimerService + RunService + AutoFinalize + rebuilt composition root | ✅ |
-| 7 | AutoStart + GamePauseDetection (disconnected in v17.5) + cleanup | ✅ |
-| 8 | VendorRegex slots in Compact widget + StevenTheHappyWhale layout (v17.14) | ✅ |
-| 7-cleanup | Production audit + bug fixes (v17.15) | ✅ |
+See `tests_v2/README.md` for framework conventions and the assertion API, and `tests_v2/REGRESSION-COVERAGE.md` for the bug → test mapping.
 
 ## Important design decisions
 
 ### Tolerant EventBus
 
-Each service publishes events (`Evt.RunStarted`, `Evt.ZoneChanged`, ...) and/or subscribes to commands (`Cmd.NewRunRequested`, ...). A handler that throws in one subscriber does not prevent the others (`try/catch` in `Publish` with log). Safe Unsubscribe during Publish via array cloning. **After an Unsubscribe that empties the subscriber list, the key is deleted from the Map** (avoids leak in long sessions with Stop/Start cycles — v17.15 Bug #22).
+Services publish events (`Evt.RunStarted`, `Evt.ZoneChanged`, …) and subscribe to commands (`Cmd.NewRunRequested`, …). A handler that throws does not block the others — `Publish` wraps each handler in `try/catch` and logs the failure. `Unsubscribe` during `Publish` is safe (the subscriber list is cloned before iteration). After an `Unsubscribe` that empties a subscriber list, the key is deleted from the internal Map to avoid leaks across long-running `Start`/`Stop` cycles.
 
 ### Headless mode in widgets and dialogs
 
-Every UI accepts a `_headless := true` flag in the constructor. In headless, `Show()`/`Open()` become no-ops, and the testable part (state, validation, transformations) stays accessible via the public API. Used by the (extinct) test harness; preserved for the future reintroduction of tests.
+Every UI surface accepts a `headless := true` flag in the constructor. In headless, `Show()` / `Open()` become no-ops, but the testable surface (state, validation, transformations) remains accessible via the public API. The full integration suite uses this so it can exercise `SpeedKalandraApp.__New` without touching real GUI.
 
 ### Unified Composition Root
 
-`SpeedKalandraApp` (`src_v2/app/app.ahk`) is the only place where objects are instantiated and wired. Everything else receives deps via constructor. To understand the whole app, just read `app.ahk` top to bottom.
+`SpeedKalandraApp` (`app/app.ahk`) is the only place where objects are instantiated and wired. Every other class receives its dependencies via constructor. To understand the whole app, read `app.ahk` top to bottom.
 
 ### Atomic persistence (best effort)
 
-`infra/io/atomic_write.ahk` implements write-via-tempfile + FileMove with REPLACE_EXISTING. **Not fully atomic on Windows** (delete-then-rename internally), risk accepted for a single-thread desktop app. Covers 99% of mid-write crash cases.
+`infra/io/atomic_write.ahk` implements write-via-tempfile + `FileMove` with `MOVEFILE_REPLACE_EXISTING`. Not fully atomic on Windows (the underlying `MoveFileEx` does a delete-then-rename internally); the inconsistency window is short enough — milliseconds, single-threaded — to be acceptable for desktop save patterns. Covers 99% of mid-write crashes.
 
 ### Manual zones catalog
 
-`data/zones.csv` (77 zones, semicolon format with header) is hand-edited. The legacy RePoE pipeline was scrapped in the demolition. Adding new zones requires editing the CSV manually.
+`data/zones.csv` (77 zones, semicolon-delimited with header) is hand-edited. Adding new zones requires editing the CSV directly.

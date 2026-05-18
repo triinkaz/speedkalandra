@@ -1,10 +1,8 @@
 # SpeedKalandra — Regression Coverage Matrix
 
-Maps catalogued bugs (pre-release internal audit + the ones found in the test Waves) to the tests that prove the fix. Useful for ensuring no bug returns silently in a future refactor.
+Maps catalogued bugs to the tests that prove the fix. Useful for ensuring no bug returns silently in a future refactor.
 
-Convention:
-- **Audit #N**: bugs from the pre-release internal audit (legacy v17.15 numbering)
-- **Wave #N**: bugs discovered during construction of the test suite (internal numbering of this doc)
+Bug IDs are stable and referenced by test names — e.g. `bug21_*` in the suite maps to `#21` below. Don't renumber.
 
 ---
 
@@ -70,20 +68,20 @@ Not bugs — they are new behaviors covered by tests to shield against future re
 
 ## Bugs discovered during construction of the test suite
 
-### Wave 4 (infra)
+### Infrastructure layer (W4.x)
 
 | # | Symptom | Fix in | Regression test |
 | - | ------- | ------ | --------------- |
 | W4.1 | PersonalBest INI written in UTF-8 but `IniRead` needs UTF-16 LE BOM | `personal_best_repository.ahk::Save` changed from "UTF-8" to "UTF-16" | `PersonalBestRepositoryTests::iniread_key_lookup_works_in_utf16_le_bom_but_not_utf8_bom` (documents AHK pitfall) |
 
-### Wave 5a (pure services)
+### Pure services (W5.x)
 
 | # | Symptom | Fix in | Regression test |
 | - | ------- | ------ | --------------- |
 | W5.1 | `_MapToDebugStr` with integer keys was comparing `m[k]` (int) vs string keys, returned absence | (test framework) | Covered by `LoadingDetectionServiceTests` (uses integer keys in the points Map) |
 | W5.2 | `_SafeCategoryLabel` scope-dependent — dynamic lookup via `%"..."%` failed in isolated tests without builder in scope | `run_history_repository.ahk::_SafeCategoryLabel` hardcoded fallback | `RunHistoryRepositoryTests::safe_category_label_fallback_for_known_categories`, `…::safe_category_label_passes_through_unknown` |
 
-### Wave 9 (this doc)
+### Catalogued during test-driven sweep (W9.x)
 
 | # | Symptom | Fix in | Regression test |
 | - | ------- | ------ | --------------- |

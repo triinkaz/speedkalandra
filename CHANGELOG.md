@@ -2,7 +2,7 @@
 
 All notable changes to SpeedKalandra are tracked here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-Each release section is short and user-facing; engineering rationale lives next to the code (or in `ARCHITECTURE.md` when it shapes the design). Historical pre-release version tags (`v17.x`) survive in source comments as change-traceability metadata and are not surfaced in releases.
+Each release section is short and user-facing; engineering rationale lives next to the code (or in `ARCHITECTURE.md` when it shapes the design). Pre-release `v17.x` tags are listed at the end of this file as historical context only; they are no longer kept in source comments.
 
 ## [Unreleased]
 
@@ -81,4 +81,4 @@ Switched to public SemVer (`MAJOR.MINOR.PATCH`). Pre-1.0 signals "functional, ev
 
 ## Pre-release history (`v17.x`, internal)
 
-The `v17.x` tags appear in source comments as change-traceability metadata from the pre-public iteration of the project, when the codebase was being incrementally rewritten under the paradigm now described in `ARCHITECTURE.md`. They have no SemVer mapping. The rewrite produced the layered architecture (`core/`, `domain/`, `infra/`, `app/`, `ui/`), the EventBus, the repository pattern around INI persistence, and the test framework — see `ARCHITECTURE.md` for the resulting design.
+The `v17.x` tags are from the pre-public iteration of the project, when the codebase was being incrementally rewritten under the paradigm now described in `ARCHITECTURE.md`. They have no SemVer mapping and are no longer present in source comments. The rewrite produced the layered architecture (`core/`, `domain/`, `infra/`, `app/`, `ui/`), the EventBus, the repository pattern around INI persistence, and the test framework — see `ARCHITECTURE.md` for the resulting design.

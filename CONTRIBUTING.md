@@ -38,7 +38,7 @@ For non-trivial changes, open an issue first to check it's a direction I'd merge
 1. Install [AutoHotkey v2](https://www.autohotkey.com/) (it must be v2, not v1)
 2. Clone the repo
 3. Open `speedkalandra.ahk` to test, edit files in `src_v2/`
-4. Automated test suite under `tests_v2/` (~1558 tests, pure AHK v2, no external deps). Run with `"C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe" tests_v2\run_tests.ahk`. Add tests for new behavior under `tests_v2/unit/<layer>/` — see `tests_v2/README.md` for conventions and the assertion API.
+4. Automated test suite under `tests_v2/` (~1567 tests, pure AHK v2, no external deps). Run with `"C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe" tests_v2\run_tests.ahk`. Add tests for new behavior under `tests_v2/unit/<layer>/` — see `tests_v2/README.md` for conventions and the assertion API.
 
 ### Style
 
@@ -46,11 +46,10 @@ For non-trivial changes, open an issue first to check it's a direction I'd merge
 - New services go in `src_v2/app/services/`. Inject dependencies via constructor
 - Validate types in constructors with `is ClassName` checks
 - Avoid `try` without `catch` — use `catch as ex { OutputDebug(...) }` at minimum
-- Tag changes with `; v17.X.Y` in comments where relevant for traceability
 
 ### Architecture orientation
 
-Start with [`src_v2/README.md`](src_v2/README.md). For deeper history (waves of demolition from older paradigms) see `ARCHITECTURE.md`.
+Start with [`src_v2/README.md`](src_v2/README.md) for a map of the source tree. The full architectural tour is in [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
 ## Forks
 

@@ -1,14 +1,14 @@
 ; ============================================================
-; speedkalandra.ahk - entry point (Wave 6)
+; speedkalandra.ahk - entry point
 ; ============================================================
 
 #Requires AutoHotkey v2.0
 #SingleInstance Force
-; v17.15 (Bug #17): enables the VarUnset warning (variable used
-; without an assigned value) with silent output to OutputDebug.
-; Other warnings (LocalSameAsGlobal, Unreachable, ClassOverwrite)
-; stay off as they're too noisy in the current code. VarUnset is
-; the one that catches real bugs.
+; Enables the VarUnset warning (variable used without an assigned
+; value) with silent output to OutputDebug. Other warnings
+; (LocalSameAsGlobal, Unreachable, ClassOverwrite) stay off as
+; they're too noisy in the current code. VarUnset is the one that
+; catches real bugs.
 #Warn VarUnset, OutputDebug
 
 A_TrayMenu.Delete()
@@ -24,7 +24,7 @@ A_TrayMenu.Default := "Settings"
 A_IconTip := "SpeedKalandra " Version.STRING
 
 ; ============================================================
-; Tray helpers: dynamic "Undo last save" item (v17.14)
+; Tray helpers: dynamic "Undo last save" item
 ;
 ; Added by app.ahk after a successful save. Removed after 60s via
 ; an internal SetTimer in the app, or after the user clicks it.
@@ -46,7 +46,7 @@ SpeedKalandraTrayRemoveUndoItem()
 }
 
 ; ============================================================
-; SpeedKalandraMsgBox (v0.1.0 Phase 5) - MsgBox wrapper with TopMost
+; SpeedKalandraMsgBox - MsgBox wrapper with TopMost
 ;
 ; PROBLEM IT SOLVES:
 ;   AHK's default MsgBox does NOT inherit AlwaysOnTop from the dialog
@@ -78,11 +78,12 @@ SpeedKalandraMsgBox(text, title := "", options := "")
 }
 
 ; ============================================================
-; v0.1.0: debug helper. Can be called from anywhere (AHK console,
+; Debug helper. Can be called from anywhere (AHK console, a
 ; temporary hotkey) to validate that the RunExportFormat roundtrip
-; still works after schema changes. Was a tray menu item during
-; Phase 1 of the export/import feature, then removed to not clutter
-; the UI — the function remains alive for the regression case.
+; still works after schema changes. Used to be a tray menu item
+; during early iteration of the export/import feature, then
+; removed to not clutter the UI — the function stays alive for
+; the regression case.
 ; ============================================================
 SpeedKalandraRunExportSelfTest()
 {
@@ -98,10 +99,11 @@ SpeedKalandraRunExportSelfTest()
 }
 
 ; ============================================================
-; v0.1.0: debug helper. Was a tray menu item during Phase 3 of the
-; export/import feature; then removed to not clutter the UI. The
-; function remains alive for regression debugging of the import
-; service flow (call via AHK console or a temporary hotkey).
+; Debug helper. Used to be a tray menu item during early
+; iteration of the export/import feature, then removed to not
+; clutter the UI. The function stays alive for regression
+; debugging of the import service flow (call via AHK console or
+; a temporary hotkey).
 ; ============================================================
 SpeedKalandraRunImportDebug()
 {
@@ -273,9 +275,3 @@ SpeedKalandraOnExitHandler(reason, code)
 }
 
 ^!q::ExitApp()
-
-; v17.15 (Bug #16): hotkey ^!g and the GamePauseHotkeyHelpers class
-; removed. They were for debugging the GamePauseDetectionService,
-; which was disconnected in v17.5 and the service file now lives in
-; _LIXEIRA/. Without the service active, the hotkey only showed an
-; error MsgBox — 150 lines of dead code removed.

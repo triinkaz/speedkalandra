@@ -156,7 +156,7 @@ All services are constructed by the composition root and receive their dependenc
 
 | Service | Responsibility | Key events |
 |---|---|---|
-| **TimerService** | Mechanical timer: `Start`/`Pause`/`Resume`/`Stop`/`Reset`/`Toggle`/`Hydrate`/`AddPenaltyMs`. Tracks `_baseMs` and `_startTick`, computes `GetRunMs()` lazily. `AddPenaltyMs(ms)` (v0.1.3) commits the current delta and adds a flat amount to `_baseMs` — used by the composition root when a death is detected and `cfg.deathPenaltyEnabled`, so the penalty becomes visible in the overlay immediately instead of only post-finalize in the run plot. Silent (no event published — widgets pick it up on the next `Tick`). | Publishes `Evt.TimerStarted`/`Paused`/`Resumed`/`Stopped`/`Reset`. |
+| **TimerService** | Mechanical timer: `Start`/`Pause`/`Resume`/`Stop`/`Reset`/`Toggle`/`Hydrate`/`AddPenaltyMs`. Tracks `_baseMs` and `_startTick`, computes `GetRunMs()` lazily. `AddPenaltyMs(ms)` commits the current delta and adds a flat amount to `_baseMs` — used by the composition root when a death is detected and `cfg.deathPenaltyEnabled`, so the penalty becomes visible in the overlay immediately instead of only post-finalize in the run plot. Silent (no event published — widgets pick it up on the next `Tick`). | Publishes `Evt.TimerStarted`/`Paused`/`Resumed`/`Stopped`/`Reset`. |
 | **RunService** | Run lifecycle on top of TimerService: `NewRun`, `FinalizeRun`, `CancelRun`, `ResetRun`. Holds `RunState` (runId, startedAt, status, runBaseMs). | Subscribes to `Cmd.NewRunRequested`/`FinalizeRun`/`Cancel`/`Reset`. Publishes `Evt.RunStarted`/`Completed`/`Cancelled`/`Reset`. |
 | **ActCheckpointTracker** | Captures the total `runMs` at each act transition (first `ZoneEntered` of act N+1 closes act N). Output consumed by `PersonalBestService` and persisted in run history. | Subscribes to `Evt.ZoneEntered`, run lifecycle events. |
 | **AppTickEmitter** | Periodic `Evt.Tick` (default 300 ms). Widgets refresh on tick instead of running their own timers. | Publishes `Evt.Tick`. |
@@ -426,8 +426,8 @@ A few language quirks come up often enough that the codebase has standard patter
 | **"Stuck modifier" on dialog open.** Hotkey opens a dialog → game loses focus while Ctrl/Alt/Shift is still held → game never sees the keyup → modifier sticks. | `HotkeyService.FocusChangingActions` sends `Send "{Blind}{Ctrl up}{Alt up}{Shift up}"` immediately before publishing the command. Same pattern in the global `OnExit` handler. |
 | **`WinActive` substring match.** Default `SetTitleMatchMode` of 2 matches substring, so `WinActive("Path of Exile 2")` matches a browser tab titled "Path of Exile 2 Wiki — …". | Match by `ahk_exe` instead, listing the known process names: `PathOfExile2_x64.exe`, `PathOfExile2Steam.exe`, etc. |
 | **`InputHook` for hotkey capture.** Modifier-only key presses (Ctrl alone) trigger if you mark `{All}` as `E`. | Use `KeyOpt("{All}", "N")` and an `OnKeyDown` callback that ignores known modifier VKs (`0x10/A0/A1`, `0x11/A2/A3`, `0x12/A4/A5`, `0x5B/5C`). Read modifier state at capture time via `GetKeyState(name, "P")`. |
-| **`IniRead` key-lookup only works on UTF-16 LE BOM files.** Files with UTF-8 BOM cause `IniRead(path, section, key, default)` to silently return the default for every key — the parser does not recognize the section/key layout. Section-only reads (without key) tolerate both encodings. | The project keeps all INIs in UTF-16 LE BOM (the AHK `IniWrite` default for new files). The `MigrateIniToUtf8` helper was removed in v0.1.1 (Bug #2) because it produced files that broke every subsequent read. Documented in `text_encoding.ahk` and `PersonalBestRepositoryTests::iniread_key_lookup_works_in_utf16_le_bom_but_not_utf8_bom`. |
-| **AHK v2 string escape syntax.** Backslash is not an escape character — `"text \"quoted\" text"` is a parse error (`Illegal character in expression`). | Double the quote (`"text ""quoted"" text"`) or wrap with single quotes when convenient (`"text 'quoted' text"`). Caught during Wave 9 regression tests. |
+| **`IniRead` key-lookup only works on UTF-16 LE BOM files.** Files with UTF-8 BOM cause `IniRead(path, section, key, default)` to silently return the default for every key — the parser does not recognize the section/key layout. Section-only reads (without key) tolerate both encodings. | The project keeps all INIs in UTF-16 LE BOM (the AHK `IniWrite` default for new files). The `MigrateIniToUtf8` helper was removed because it produced files that broke every subsequent read. Documented in `text_encoding.ahk` and `PersonalBestRepositoryTests::iniread_key_lookup_works_in_utf16_le_bom_but_not_utf8_bom`. |
+| **AHK v2 string escape syntax.** Backslash is not an escape character — `"text \"quoted\" text"` is a parse error (`Illegal character in expression`). | Double the quote (`"text ""quoted"" text"`) or wrap with single quotes when convenient (`"text 'quoted' text"`). |
 
 ---
 
@@ -456,9 +456,9 @@ AutoHotkey64.exe tests_v2\run_tests.ahk regression_bug
 | `domain/` | Duration, Ids, WindowState, RunState, XpRules, OverlayLayout, AppSettings | ~135 |
 | `infra/io/` | AtomicWriter, TextEncoding, IniFile, CsvFile, JsonFile, RunExportFormat | ~140 |
 | `infra/` repos | ZonesCatalog, PersonalBest, RunState, RunHistory, Settings | ~150 |
-| `app/services/` | All 20 services (TimerService gained 13 tests for `AddPenaltyMs` in v0.1.3; ZoneTrackingService gained 2 for the hydrated-flag fix in v0.1.4) | ~840 |
+| `app/services/` | All 20 services | ~840 |
 | `ui/` | Theme, HotkeyFormatter, WidgetBase, LayoutWidgetBase | ~115 |
-| `integration/` | SpeedKalandraApp full wire-up + Bug #9 regression + death penalty handler (v0.1.3, 6 tests) + EventTraceLogger opt-in + Undo PB rebuild + hydration ordering (v0.1.4, 5 tests) | ~33 |
+| `integration/` | SpeedKalandraApp full wire-up + regression suite (death-penalty handler, EventTraceLogger opt-in, UndoLastSave PB rebuild, hydration ordering) | ~33 |
 | **Total** | | **~1567** |
 
 Tests run in ~25 s on a typical desktop. Headless mode (`headless := true` constructor arg on widgets/dialogs) skips Gui creation so the entire surface is exercisable.
