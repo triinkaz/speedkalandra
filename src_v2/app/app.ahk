@@ -1,9 +1,23 @@
 ; SpeedKalandraApp — composition root.
 ;
-; Persistence: timer base + loading total + per-zone totals are
-; written to the INI every 5 s by _PersistRunData, with a hash cache
-; that skips IniWrite when nothing has changed (a naive write was
-; blocking the thread for 1–2 s every tick).
+; The class itself does little: it wires every service together,
+; subscribes the cross-cutting handlers on the bus, and drives the
+; lifecycle (Start / Stop). The substantive flows live in dedicated
+; classes constructed here and addressed by reference:
+;
+;   BootPrompts                  disclaimer / Client.txt setup /
+;                                hydrated-run resume modals.
+;   RunSnapshotSaver             RunCompleted / RunCancelled
+;                                handler + tray-undo flow.
+;   RunStatePersister            5 s persistence tick + final
+;                                flush from Stop().
+;   LiveReconfigurationHandlers  death-penalty timer update,
+;                                hotkey rebind, PB reset.
+;
+; Two responsibilities still live here because they need direct
+; access to fields owned by the composition root: `_OnLogFilePathChanged`
+; (mutates `_logMonitorTimer`) and the small `_On*` handlers for
+; XP / area / zone / Riverbank / run-ended state.
 ;
 ; Run history: every run is saved to data/runs/{runId}.ini, triggered
 ; by RunCompleted (always) or RunCancelled (only if >= 3 min). The
@@ -78,14 +92,22 @@ class SpeedKalandraApp
     ; constructed later, after every collaborator it needs exists).
     _snapshotSaver := ""
 
+    ; Periodic 5 s persistence of run base / loading total / zone
+    ; totals + final flush from Stop(). Owns its own dirty-cache;
+    ; the composition root primes the cache after hydration and
+    ; clears it via ResetCache when a run ends.
+    _persister := ""
+
+    ; Hot-reload + destructive-action handlers (death-penalty timer
+    ; update, hotkey rebind, PB reset). Each is subscribed in
+    ; _WireEventHandlers via a one-line delegate.
+    _reconfig := ""
+
     _started   := false
     _persistFn := ""
     _logMonitorTimer  := ""
     _runPersistTimer  := ""
     _headless         := false
-
-    _lastSavedLoadingTotal := -1
-    _lastSavedZoneTotalsHash := ""
 
     ; First entry into the Riverbank in a run resets the cached
     ; character level (the game shows the level-1 zone for the
@@ -204,6 +226,12 @@ class SpeedKalandraApp
 
         this.zoneTracker := ZoneTrackingService(this.bus, this.clock, this.zonesCatalog)
 
+        ; Hydrated values are captured here in locals; the
+        ; RunStatePersister doesn't exist yet (depends on services
+        ; constructed below) and is primed with these once it does.
+        hydratedLoadingMs  := -1
+        hydratedZoneTotals := ""
+
         try
         {
             zoneTotals := this.runState.LoadZoneTotals()
@@ -213,7 +241,7 @@ class SpeedKalandraApp
                 this.zoneTracker.SetRunActive(true)
                 this.log.Info("Zone tracker hydrated: " . zoneTotals.Count . " zones with accumulated time (run in progress)", "App")
             }
-            this._lastSavedZoneTotalsHash := this._ComputeTotalsHash(zoneTotals)
+            hydratedZoneTotals := zoneTotals
         }
         catch as ex
         {
@@ -240,7 +268,7 @@ class SpeedKalandraApp
                 this.loadingTotals.Hydrate(loadingMs)
                 if (loadingMs > 0)
                     this.log.Info("Loading totals hydrated: " . loadingMs . " ms accumulated", "App")
-                this._lastSavedLoadingTotal := loadingMs
+                hydratedLoadingMs := loadingMs
             }
         }
         catch as ex
@@ -265,7 +293,19 @@ class SpeedKalandraApp
         microPos   := this._GetWidgetPos("microLayout",   75, 92)
         stevePos   := this._GetWidgetPos("steveLayout",   10, 1.5)
 
-        this._persistFn := () => this._PersistSettings()
+        ; Periodic persistence + settings save. Created here because
+        ; every dependency it needs has been wired above; the
+        ; _persistFn closure (passed to widgets, dialogs, and the
+        ; boot prompts) routes through this single instance so the
+        ; on-disk INI sees one consistent stream of writes.
+        this._persister := RunStatePersister(
+            this.runService, this.runState, this.loadingTotals,
+            this.zoneTracker, this._settingsRepo, this._cfg, this.log
+        )
+        this._persister.PrimeLoadingTotalCache(hydratedLoadingMs)
+        this._persister.PrimeZoneTotalsCache(hydratedZoneTotals)
+
+        this._persistFn := () => this._persister.PersistSettings()
 
         this.compactWidget := CompactLayoutWidget(
             this.bus, compactPos, this._persistFn,
@@ -307,7 +347,7 @@ class SpeedKalandraApp
 
         this._bootPrompts := BootPrompts(
             this._cfg,
-            () => this._PersistSettings(),
+            () => this._persister.PersistSettings(),
             this.logMonitor,
             this.runService,
             this.timer,
@@ -324,6 +364,15 @@ class SpeedKalandraApp
             this.actCheckpoints,
             this.personalBest,
             this.log,
+            headless
+        )
+
+        this._reconfig := LiveReconfigurationHandlers(
+            this._cfg,
+            this.log,
+            this.timer,
+            this.hotkeyService,
+            this.personalBest,
             headless
         )
 
@@ -430,7 +479,7 @@ class SpeedKalandraApp
             try this.log.Info("Event tracing ENABLED (interceptor active). Disable in [Diagnostics] when not diagnosing.", "App")
         }
 
-        this._runPersistTimer := () => this._PersistRunData()
+        this._runPersistTimer := () => this._persister.Tick()
         try SetTimer(this._runPersistTimer, 5000)
 
         this.bus.Publish(Events.AppStarted, Map())
@@ -482,7 +531,7 @@ class SpeedKalandraApp
 
         try
         {
-            this._PersistSettings()
+            this._persister.PersistSettings()
         }
         catch as ex
         {
@@ -490,7 +539,7 @@ class SpeedKalandraApp
         }
         try
         {
-            this._PersistRunDataFull()
+            this._persister.Flush()
         }
         catch as ex
         {
@@ -545,7 +594,7 @@ class SpeedKalandraApp
             (data) => this._OnRunStartedForXp(data))
 
         this.bus.Subscribe(Commands.ResetPersonalBestsRequested,
-            (data) => this._OnResetPersonalBestsRequested())
+            (data) => this._reconfig.ResetPersonalBests())
 
         this.bus.Subscribe(Commands.ExportRunsRequested,
             (data) => this._OnExportRunsRequested(data))
@@ -563,7 +612,7 @@ class SpeedKalandraApp
         ; plot already accounted for it; this makes the overlay agree
         ; with the plot in real time).
         this.bus.Subscribe(Events.DeathDetected,
-            (data) => this._OnDeathApplyTimerPenalty(data))
+            (data) => this._reconfig.ApplyDeathPenaltyToTimer(data))
 
         ; Hot-reload paths: the Settings dialog publishes these so
         ; the user doesn't have to reload the whole app on common
@@ -571,70 +620,7 @@ class SpeedKalandraApp
         this.bus.Subscribe(Events.LogFilePathChanged,
             (data) => this._OnLogFilePathChanged(data))
         this.bus.Subscribe(Events.HotkeysChanged,
-            (data) => this._OnHotkeysChanged(data))
-    }
-
-    ; Adds the configured death penalty to the live timer when a
-    ; death is detected. The post-finalize plot already accounts for
-    ; this via count*penalty; applying it here keeps the visible
-    ; timer in sync.
-    _OnDeathApplyTimerPenalty(data)
-    {
-        if !IsObject(this._cfg) || !this._cfg.deathPenaltyEnabled
-            return
-        if !IsObject(this.timer) || !this.timer.IsActive()
-            return
-        penaltyMs := this._cfg.deathPenaltyMs
-        if (!IsNumber(penaltyMs) || penaltyMs <= 0)
-            return
-        try
-        {
-            this.timer.AddPenaltyMs(penaltyMs)
-        }
-        catch as ex
-        {
-            if IsObject(this.log)
-                try this.log.Warn("Failed to apply death penalty to timer (" . penaltyMs . " ms): " . ex.Message, "App")
-        }
-        if IsObject(this.log)
-            try this.log.Info("Death penalty applied to timer: +" . penaltyMs . " ms", "App")
-    }
-
-    ; Rebinds hotkeys live when the user changes them in Settings.
-    ; Stop + Hydrate + Start so the previous bindings are released
-    ; before the new ones are registered.
-    _OnHotkeysChanged(data)
-    {
-        if !IsObject(this.hotkeyService)
-            return
-
-        ; Prefer the payload; fall back to cfg if it's missing/malformed.
-        newHotkeys := ""
-        if (IsObject(data) && data.Has("newHotkeys") && data["newHotkeys"] is Map)
-            newHotkeys := data["newHotkeys"]
-        else if (IsObject(this._cfg) && this._cfg.hotkeys is Map)
-            newHotkeys := this._cfg.hotkeys
-        else
-            newHotkeys := Map()
-
-        try
-        {
-            this.hotkeyService.Stop()
-            this.hotkeyService.Hydrate(newHotkeys)
-            this.hotkeyService.Start()
-        }
-        catch as ex
-        {
-            try this.log.Warn("Hotkey rebind failed (" . newHotkeys.Count . " action(s)): " . ex.Message, "App")
-        }
-
-        if IsObject(this.log)
-        {
-            try this.log.Info("Hotkeys rebound: " . newHotkeys.Count
-                . " action(s), " . this.hotkeyService.Count() . " registered", "App")
-        }
-        if !this._headless
-            try TrayTip("SpeedKalandra", "Hotkeys updated.", "Mute")
+            (data) => this._reconfig.RebindHotkeys(data))
     }
 
     ; Restarts LogMonitor against a new Client.txt path when the user
@@ -849,8 +835,8 @@ class SpeedKalandraApp
         {
             try this.log.Warn("ClearZoneTotals failed: " . ex.Message, "App")
         }
-        this._lastSavedLoadingTotal := -1
-        this._lastSavedZoneTotalsHash := ""
+        if IsObject(this._persister)
+            this._persister.ResetCache()
         ; Release the Riverbank reset flag for the next run.
         this._riverbankSeenInRun := false
     }
@@ -859,169 +845,6 @@ class SpeedKalandraApp
     ; public method on the app so the entry script's tray wiring stays
     ; agnostic of where the implementation lives.
     UndoLastSave() => this._snapshotSaver.UndoLastSave()
-
-    ; Subscribed to Commands.ResetPersonalBestsRequested (tray menu).
-    ; Shows a confirmation MsgBox (destructive action). Headless mode
-    ; resets without prompting.
-    _OnResetPersonalBestsRequested()
-    {
-        if !IsObject(this.personalBest)
-            return
-
-        if this._headless
-        {
-            this.personalBest.Reset()
-            return
-        }
-
-        ; Shows context of what will be lost
-        runPbStr := this.personalBest.HasRunPb()
-                    ? SpeedKalandraApp._FormatMsForMsg(this.personalBest.GetRunPbMs())
-                    : "—"
-        zoneCount := 0
-        try
-        {
-            for zk, zv in this.personalBest.GetAllZonePbs()
-                zoneCount += 1
-        }
-        actPbCount := 0
-        try
-            actPbCount := this.personalBest.CountActPbs()
-
-        result := ""
-        try
-        {
-            result := SpeedKalandraMsgBox(
-                "Reset all Personal Bests?`n`n"
-                . "Full run PB: " runPbStr "`n"
-                . "PBs per act: " actPbCount "`n"
-                . "Zone PBs: " zoneCount "`n`n"
-                . "This action erases all best times and cannot be undone.",
-                "SpeedKalandra - Reset PBs",
-                "YesNo Icon? Default2")
-        }
-        catch
-            return
-
-        if (result != "Yes")
-            return
-
-        this.personalBest.Reset()
-        try this.log.Info("PBs reset by user (run PB: " . runPbStr
-            . ", " . actPbCount . " acts, " . zoneCount . " zones)", "App")
-        try TrayTip("SpeedKalandra", "Personal Bests reset.", "Mute")
-    }
-
-    ; Formats ms as MM:SS or H:MM:SS for user-facing messages.
-    ; Delegates to Duration.FormatMs (used to be four near-identical
-    ; copies scattered across services).
-    static _FormatMsForMsg(ms) => Duration.FormatMs(ms)
-
-    _PersistRunData()
-    {
-        try
-        {
-            this.runService.PersistTick()
-        }
-        catch as ex
-        {
-            try this.log.Warn("PersistTick failed (tick): " . ex.Message, "App")
-        }
-
-        ; Explicit catch on both branches: this runs every 5 s, and
-        ; silent failure here (disk full, corrupt INI) would mean
-        ; persistent data loss with no signal.
-        try
-        {
-            if IsObject(this.loadingTotals)
-               && IsObject(this.runService)
-               && this.runService.IsActive()
-            {
-                ltms := this.loadingTotals.GetTotalMs()
-                if (ltms != this._lastSavedLoadingTotal)
-                {
-                    this.runState.SaveLoadingTotal(ltms)
-                    this._lastSavedLoadingTotal := ltms
-                }
-            }
-        }
-        catch as ex
-        {
-            try this.log.Warn("Failed to persist loading total: " . ex.Message, "App")
-        }
-
-        try
-        {
-            if IsObject(this.zoneTracker) && this.zoneTracker.IsRunActive()
-            {
-                snapshot := this.zoneTracker.GetTotals()
-                hash := this._ComputeTotalsHash(snapshot)
-                if (hash != this._lastSavedZoneTotalsHash)
-                {
-                    this.runState.SaveZoneTotals(snapshot)
-                    this._lastSavedZoneTotalsHash := hash
-                }
-            }
-        }
-        catch as ex
-        {
-            try this.log.Warn("Failed to persist zone totals: " . ex.Message, "App")
-        }
-    }
-
-    _PersistRunDataFull()
-    {
-        try
-        {
-            this.runService.PersistTick()
-        }
-        catch as ex
-        {
-            try this.log.Warn("PersistTick failed (full flush): " . ex.Message, "App")
-        }
-
-        ; Called from Stop() / OnExit — last chance to flush before
-        ; closing. Silent failure here would lose data without a peep.
-        try
-        {
-            if IsObject(this.loadingTotals)
-               && IsObject(this.runService)
-               && this.runService.IsActive()
-            {
-                ltms := this.loadingTotals.GetTotalMs()
-                this.runState.SaveLoadingTotal(ltms)
-                this._lastSavedLoadingTotal := ltms
-            }
-        }
-        catch as ex
-        {
-            try this.log.Warn("Failed to persist loading total (Full): " . ex.Message, "App")
-        }
-
-        try
-        {
-            if IsObject(this.zoneTracker) && this.zoneTracker.IsRunActive()
-            {
-                snapshot := this.zoneTracker.GetTotalsForSnapshot()
-                this.runState.SaveZoneTotals(snapshot)
-                this._lastSavedZoneTotalsHash := this._ComputeTotalsHash(snapshot)
-            }
-        }
-        catch as ex
-        {
-            try this.log.Warn("Failed to persist zone totals (Full): " . ex.Message, "App")
-        }
-    }
-
-    _ComputeTotalsHash(totalsMap)
-    {
-        if !IsObject(totalsMap)
-            return ""
-        parts := ""
-        for k, v in totalsMap
-            parts .= k "=" v "|"
-        return parts
-    }
 
     _GetWidgetPos(widgetId, defaultLeftPct, defaultTopPct)
     {
@@ -1041,18 +864,6 @@ class SpeedKalandraApp
         ))
         this._cfg.overlay.SetPosition(widgetId, pos)
         return pos
-    }
-
-    _PersistSettings()
-    {
-        try
-        {
-            this._settingsRepo.Save(this._cfg)
-        }
-        catch as ex
-        {
-            try this.log.Warn("Failed to persist settings: " . ex.Message, "App")
-        }
     }
 
     _DeduceCurrentAct()

@@ -246,6 +246,8 @@ SpeedKalandraRunImportDebug()
 
 #Include "src_v2\app\boot_prompts.ahk"
 #Include "src_v2\app\run_snapshot_saver.ahk"
+#Include "src_v2\app\run_state_persister.ahk"
+#Include "src_v2\app\live_reconfiguration_handlers.ahk"
 
 #Include "src_v2\app\app.ahk"
 
