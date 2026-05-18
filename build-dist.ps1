@@ -31,17 +31,23 @@
 .PARAMETER Force
     Switch. Overwrites DestDir without prompting.
 
+.PARAMETER SkipTests
+    Switch. Bypasses the AHK test-suite gate that normally runs before
+    packaging. Use only for local iteration or to break recursion in
+    `tests_v2/build/test_build_dist.ps1`; never for actual releases.
+
 .EXAMPLE
     .\build-dist.ps1
     Clean copy to ..\SpeedKalandra-dist, prompts before overwriting.
+    Runs the test suite first; aborts on red.
 
 .EXAMPLE
     .\build-dist.ps1 -Compile -Zip -Force
-    Full build: copy + compile .exe + zip, no prompt.
+    Full release: tests, copy, compile .exe, zip, SHA256 sidecar.
 
 .EXAMPLE
     .\build-dist.ps1 -DestDir "C:\temp\sk-release" -Zip
-    Custom destination, also produces a zip.
+    Custom destination, also produces a zip + SHA256 sidecar.
 #>
 
 [CmdletBinding()]
@@ -49,7 +55,12 @@ param(
     [string]$DestDir = "",
     [switch]$Compile,
     [switch]$Zip,
-    [switch]$Force
+    [switch]$Force,
+    # Skip running the AHK test suite before packaging. By default the
+    # test suite is run as a release gate; failures abort the build.
+    # -SkipTests bypasses the gate — use only for local iteration or
+    # the test of this script itself, never for actual releases.
+    [switch]$SkipTests
 )
 
 $ErrorActionPreference = "Stop"
@@ -109,6 +120,51 @@ Write-Host "=== SpeedKalandra :: Build Dist ===" -ForegroundColor Cyan
 Write-Host "Source : $SourceDir" -ForegroundColor Gray
 Write-Host "Dest   : $DestDir" -ForegroundColor Gray
 Write-Host ""
+
+# ============================================================
+# Test gate (release safety)
+# ============================================================
+#
+# Run the AHK test suite headlessly before packaging. A red CI
+# build still happens regardless, but the release script itself
+# refuses to produce a distribution from a broken tree.
+#
+# Skip with -SkipTests (intended for local iteration and for the
+# test of this script in tests_v2/build/test_build_dist.ps1, which
+# would otherwise recurse).
+
+if (-not $SkipTests) {
+    Write-Host "Running AHK test suite (release gate)..." -ForegroundColor Cyan
+    $ahkExe = "C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe"
+    if (-not (Test-Path $ahkExe)) {
+        Write-Error "AutoHotkey v2 not found at '$ahkExe'. Install AHK v2 or pass -SkipTests (not recommended for releases)."
+        exit 1
+    }
+
+    # SPEEDKALANDRA_TEST_NO_GUI=1 suppresses the final MsgBox and
+    # makes the runner exit with 0/1 instead of waiting for OK.
+    $oldNoGui = $env:SPEEDKALANDRA_TEST_NO_GUI
+    $env:SPEEDKALANDRA_TEST_NO_GUI = "1"
+    try {
+        $testProc = Start-Process -FilePath $ahkExe `
+                                  -ArgumentList "tests_v2\run_tests.ahk" `
+                                  -WorkingDirectory $SourceDir `
+                                  -Wait -PassThru -NoNewWindow
+        if ($testProc.ExitCode -ne 0) {
+            Write-Error "Test suite failed (exit $($testProc.ExitCode)). Release aborted. See tests_v2\tests_output.log for details."
+            exit $testProc.ExitCode
+        }
+        Write-Host "Tests passed." -ForegroundColor Green
+        Write-Host ""
+    }
+    finally {
+        $env:SPEEDKALANDRA_TEST_NO_GUI = $oldNoGui
+    }
+}
+else {
+    Write-Host "-SkipTests was passed; release gate bypassed." -ForegroundColor Yellow
+    Write-Host ""
+}
 
 # ============================================================
 # Clean dest if it exists
@@ -435,6 +491,19 @@ if ($Zip) {
     if (Test-Path $zipPath) {
         $zipSize = [Math]::Round((Get-Item $zipPath).Length / 1MB, 2)
         Write-Host "Zip created: $zipPath ($zipSize MB)" -ForegroundColor Green
+
+        # SHA256 sidecar so downloaders can verify integrity.
+        # Format mirrors GNU coreutils `sha256sum`: "<HEX>  <filename>".
+        # Verify on Linux/macOS:  sha256sum -c SpeedKalandra-dist.zip.sha256.txt
+        # Verify on Windows:      Get-FileHash file.zip -Algorithm SHA256
+        $hash = Get-FileHash $zipPath -Algorithm SHA256
+        $zipName = Split-Path $zipPath -Leaf
+        $sidecarPath = "$zipPath.sha256.txt"
+        "$($hash.Hash.ToLower())  $zipName" | Out-File -FilePath $sidecarPath -Encoding ASCII -NoNewline
+        # Append a trailing newline (coreutils convention)
+        Add-Content -Path $sidecarPath -Value "" -Encoding ASCII
+        Write-Host "SHA256: $($hash.Hash.ToLower())" -ForegroundColor Gray
+        Write-Host "Sidecar: $sidecarPath" -ForegroundColor Gray
     }
 }
 

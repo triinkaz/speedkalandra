@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security issue
+    url: https://github.com/triinkaz/speedkalandra/blob/main/SECURITY.md
+    about: Security issues must be reported privately. See SECURITY.md for the disclosure channel and what counts as in-scope.
+  - name: Documented limitation
+    url: https://github.com/triinkaz/speedkalandra/blob/main/KNOWN_ISSUES.md
+    about: Atomic-write window, HUD-position assumption, English-only regex defaults, no boss detection. Worth a glance before opening a bug.
