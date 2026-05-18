@@ -16,6 +16,7 @@ Each release section is short and user-facing; engineering rationale lives next 
 ### Changed
 
 - **`EventTraceLogger` is now opt-in.** New `[Diagnostics].EventTracingEnabled` INI flag (default `0`). When false, the bus interceptor is constructed but never registered, so a normal install never persists raw `Client.txt` lines into `speedkalandra.log`. Users who need event-level traces for a bug report flip the flag (see `CONTRIBUTING.md`). Documented in `AppSettings` and surfaced via `SettingsRepository._{Load,Save}Diagnostics`.
+- **Silent `try` sweep in critical paths.** Failures in settings save, run-data flush (5 s tick + shutdown), PB update, act-checkpoint capture, hotkey rebind, log-monitor restart, hydrated-run discard/finalize, zone-totals clear, death penalty application, and disclaimer/setup persistence are now logged via `LogService.Warn` instead of being swallowed by bare `try`. Same treatment at the infrastructure layer (`RunStateRepository.SaveZoneTotals`, `RunHistoryRepository._EnsureDir`) via `OutputDebug`, mirroring the existing convention in `RunHistoryRepository.Delete`. Legitimate silent `try` in lifecycle teardown (`Stop`, `Dispose`, `Hide`) and cosmetic side effects (`TrayTip`, `log.Info`) are kept intentionally.
 
 ### Build
 
