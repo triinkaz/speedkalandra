@@ -4,7 +4,7 @@
 
 A minimalist Path of Exile 2 speedrun tracker for Windows.
 
-> **Status**: Personal project, slow response times. See [disclaimer](#disclaimer) below.
+> **Status**: Independent project; response times depend on availability. See [disclaimer](#disclaimer) below.
 
 ---
 
@@ -29,17 +29,11 @@ Everything else (zone detection, deaths, loading screens, level changes, persona
 
 ## Disclaimer
 
-SpeedKalandra is a personal project by a player, not a developer.
+SpeedKalandra is an independent personal project. It reads Path of Exile 2's `Client.txt` log file and samples pixel colors on screen for loading detection — it does not inject into the game process, modify game files, or send inputs. To the best of my knowledge this falls within typical overlay/tracker territory, but I make no guarantees; use it understanding that you are responsible for what runs on your machine while playing.
 
-I built this because some functionality was missing from the overlays available during my runs, and I wanted something for my own use that other players might also find useful.
+The codebase was developed with significant AI assistance. Every change was reviewed, tested in real runs, and is covered by an automated test suite that runs on CI for every commit (see the badge above). I keep this disclaimer because AI-assisted development should be transparent — the project itself is real, maintained, and validated.
 
-Yes, I know other speedrun trackers exist, some maintained by teams. I don't care if there are 10 other people working on this — I'm not trying to compete with them. I'm doing this because it's fun, and because I want a tracker that works the way I want it to.
-
-The code was written with substantial help from AI. I directed what I wanted, reviewed the output, tested in actual runs, and iterated when things broke. I keep this disclaimer because AI-assisted development should be transparent — but the project is real, maintained, and tested.
-
-**Use at your own risk.** Bugs are likely. Don't expect fast support.
-
-**Anti-cheat / TOS**: The tool only reads the PoE2 `Client.txt` log file and captures pixel colors from the screen for loading detection. It does not inject into the game process, modify game files, or send inputs to the game. To my knowledge this is within typical overlay/tracker territory, but I make no guarantees — use it understanding that ultimately you're responsible for what runs on your machine while playing.
+Use at your own risk. Issues and pull requests are welcome; response times depend on availability.
 
 ## Installation
 
@@ -92,15 +86,19 @@ The project ships with a self-contained AHK v2 test suite under `tests_v2/` (no 
 "C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe" tests_v2\run_tests.ahk
 ```
 
-~1569 tests covering core primitives, domain, persistence, services, UI bases, and end-to-end app wiring. Output goes to `tests_v2/tests_output.log` plus a final MsgBox with the pass/fail count. Filter by substring: `AutoHotkey64.exe tests_v2\run_tests.ahk EventBus`. Conventions and assertion API are in [`tests_v2/README.md`](tests_v2/README.md).
+An automated test suite covers core primitives, domain, persistence, services, UI bases, and end-to-end app wiring. Output goes to `tests_v2/tests_output.log` plus a final MsgBox with the pass/fail count. Filter by substring: `AutoHotkey64.exe tests_v2\run_tests.ahk EventBus`. Conventions and assertion API are in [`tests_v2/README.md`](tests_v2/README.md).
 
 ## Architecture
 
 [`ARCHITECTURE.md`](ARCHITECTURE.md) is the design tour: layered structure (`core` / `domain` / `infra` / `app` / `ui`), the EventBus, run persistence, run history format, AHK v2 pitfalls encoded in the code. [`src_v2/README.md`](src_v2/README.md) is a shorter map of the source tree.
 
+## Known limitations
+
+[`KNOWN_ISSUES.md`](KNOWN_ISSUES.md) lists design constraints (atomic-write window, loading detection assumes default HUD position, English-only regex defaults, no boss detection). Worth a glance before opening an issue.
+
 ## Contributing
 
-See [`CONTRIBUTING.md`](CONTRIBUTING.md). TL;DR: PRs welcome, response times are slow, set expectations accordingly.
+See [`CONTRIBUTING.md`](CONTRIBUTING.md). TL;DR: issues and PRs welcome; response times depend on availability.
 
 ## Changelog
 

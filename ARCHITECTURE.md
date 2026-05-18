@@ -1,6 +1,6 @@
 # SpeedKalandra — Architecture
 
-> **Status:** v0.1.3 — public release. AutoHotkey v2 desktop overlay for Path of Exile 2 speedrunning.
+> **Status:** Public release. AutoHotkey v2 desktop overlay for Path of Exile 2 speedrunning.
 >
 > This document describes the **current architecture**. It does not track historical decisions or refactor history — see git history for that.
 
@@ -210,27 +210,26 @@ The constructor:
 1. Loads `AppSettings` from disk via `SettingsRepository`.
 2. Builds `core` primitives: `LogService`, `EventBus`, `RealClock`.
 3. Constructs domain catalogs and repositories.
-4. **Registers `_SaveRunSnapshot` handlers for `RunCompleted` / `RunCancelled` *first*** — before instantiating `ZoneTrackingService` and `RunStatsRecorder`, which zero their state on those same events. Because the bus dispatches FIFO, this guarantees the save handler runs with intact state.
+4. **Registers the run-finalization handlers for `RunCompleted` / `RunCancelled` *first*** — before instantiating `ZoneTrackingService` and `RunStatsRecorder`, which zero their state on those same events. Because the bus dispatches FIFO, this guarantees the save handler runs with intact state. The subscriptions are late-bound (`(data) => this._snapshotSaver.Save(...)`) because `RunSnapshotSaver` itself depends on services that don't exist yet at subscription time; it is constructed near the end of `__New`, once they do.
 5. Constructs all services in dependency order. Each receives its deps explicitly.
 6. Hydrates services from persisted state: `RunService.Hydrate`, `ZoneTrackingService.Hydrate` + `SetRunActive`, `LoadingTotalsService.Hydrate`, `XpService.Hydrate`, `OverlayModeService.Hydrate`.
 7. Constructs widgets and dialogs.
 
 `Start()`:
 
-1. Shows the **disclaimer dialog** (modal) on first boot or until acknowledged.
-2. Shows the **Client.txt setup dialog** (modal) if `cfg.logFile` is empty or points to a file that doesn't exist. Default suggested path is the Steam install location; Cancel calls `ExitApp()` — the app is not allowed to run without a valid log path (v0.1.3).
-3. If a run was hydrated as active, prompts the user with **Resume / Finalize / Discard** (modal, timer paused during the prompt to not bleed seconds).
-4. Wires runtime event handlers (`_WireEventHandlers`).
-5. Starts `LogMonitorService` and registers a 250 ms `SetTimer` to drive its `Tick()`.
-6. Starts `FocusAutoPauseService`, `HotkeyService`, `OverlayInteractionService`, optionally `LoadingDetectionService`.
-7. Shows widgets and applies the current overlay mode.
-8. Starts `AppTickEmitter`.
-9. Registers the 5-second persistence tick (`_PersistRunData`).
-10. Surfaces boot warnings/errors as a `TrayTip` if any.
+1. Drives the three **boot-time modals** in sequence via `BootPrompts` (extracted from the composition root to keep `__New` focused on wiring):
+   - **Disclaimer** on first boot or until acknowledged.
+   - **Client.txt setup** if `cfg.logFile` is empty or points to a file that doesn't exist. Default suggested path is the Steam install location; Cancel calls `ExitApp()` — the app is not allowed to run without a valid log path.
+   - **Hydrated run prompt** (Resume / Finalize / Discard) when boot finds an active run from a previous session. Timer is paused during the prompt to not bleed seconds while the user thinks.
+2. Wires runtime event handlers (`_WireEventHandlers`).
+3. Starts `LogMonitorService` and registers a 250 ms `SetTimer` to drive its `Tick()`.
+4. Starts `FocusAutoPauseService`, `HotkeyService`, `OverlayInteractionService`, optionally `LoadingDetectionService`.
+5. Shows widgets and applies the current overlay mode.
+6. Starts `AppTickEmitter`.
+7. Registers the 5-second persistence tick (`_PersistRunData`).
+8. Surfaces boot warnings/errors as a `TrayTip` if any.
 
-All three boot modals (disclaimer, Client.txt setup, hydrated run prompt) follow the same pattern: build a `Gui`, attach button handlers that write to a shared `choice` closure object and destroy the window, then block on `while (choice.value = "" && WinExist("ahk_id " hwnd)) Sleep 50`. AHK v2 has no built-in `ShowModal()` — this Sleep-loop is the idiomatic way to make the call site synchronous while keeping the message pump alive.
-
-In `_headless = true` mode (used by every integration test), all three modals skip on their first line, so the test suite never touches GUI. The same flag is checked by widgets and other dialog classes for the same reason.
+In `_headless = true` mode (used by every integration test), `BootPrompts` short-circuits on the first line of each method, so the test suite never touches GUI. The same flag is checked by widgets and other dialog classes for the same reason.
 
 `Stop()` reverses the order: stops timers, stops services, hides widgets, persists state, flushes the log.
 
@@ -344,10 +343,10 @@ Click-through is the default. While Ctrl is held, the widget under the cursor be
 
 The app has two flavors of dialogs:
 
-**Boot-time inline modals** (live in `app.ahk`, no dedicated class). All three follow the same Sleep-loop pattern described in §6:
+**Boot-time modals** (extracted into `app/boot_prompts.ahk`, driven from `Start()`). All three follow the same Sleep-loop pattern: build a `Gui`, attach button handlers that write to a shared `choice` closure object and destroy the window, then block on `while (choice.value = "" && WinExist("ahk_id " hwnd)) Sleep 50`. AHK v2 has no built-in `ShowModal()` — this Sleep-loop is the idiomatic way to make the call site synchronous while keeping the message pump alive.
 
 - **Disclaimer dialog** — shown on first boot, dismissible with "I understand". A checkbox persists `cfg.disclaimerAcknowledged = true` so it doesn't show again.
-- **Client.txt setup dialog** (v0.1.3) — shown when `cfg.logFile` is empty or invalid. Pre-fills the Steam install path. OK validates with `FileExist`; Cancel calls `ExitApp()`.
+- **Client.txt setup dialog** — shown when `cfg.logFile` is empty or invalid. Pre-fills the Steam install path. OK validates with `FileExist`; Cancel calls `ExitApp()`.
 - **Hydrated run prompt** — shown when boot finds an active run from a previous session. Three choices: Resume / Finalize & save / Discard. Timer is paused during the prompt so seconds don't bleed into the run while the user thinks.
 
 **Dedicated dialog classes** (live in `ui/`, opened via bus commands):
@@ -448,20 +447,20 @@ AutoHotkey64.exe tests_v2\run_tests.ahk EventBus
 AutoHotkey64.exe tests_v2\run_tests.ahk regression_bug
 ```
 
-**Coverage** (as of v0.1.3):
+**Coverage:**
 
-| Layer | Suites | Approx. tests |
-|---|---|---|
-| `core/` | EventBus, LogService, Clock (Real + Fake), NullLogger, InMemoryLogger | ~70 |
-| `domain/` | Duration, Ids, WindowState, RunState, XpRules, OverlayLayout, AppSettings | ~135 |
-| `infra/io/` | AtomicWriter, TextEncoding, IniFile, CsvFile, JsonFile, RunExportFormat | ~140 |
-| `infra/` repos | ZonesCatalog, PersonalBest, RunState, RunHistory, Settings | ~150 |
-| `app/services/` | All 20 services | ~842 |
-| `ui/` | Theme, HotkeyFormatter, WidgetBase, LayoutWidgetBase | ~115 |
-| `integration/` | SpeedKalandraApp full wire-up + regression suite (death-penalty handler, EventTraceLogger opt-in, UndoLastSave PB rebuild, hydration ordering) | ~33 |
-| **Total** | | **~1569** |
+| Layer | Notable coverage |
+|---|---|
+| `core/` | EventBus, LogService, Clock (Real + Fake), NullLogger, InMemoryLogger |
+| `domain/` | Duration, Ids, WindowState, RunState, XpRules, OverlayLayout, AppSettings |
+| `infra/io/` | AtomicWriter, TextEncoding, IniFile, CsvFile, JsonFile, RunExportFormat |
+| `infra/` repos | ZonesCatalog, PersonalBest, RunState, RunHistory, Settings |
+| `app/services/` | Every service (pure, stateful, OS-hook) covered in its own suite |
+| `app/` composition | BootPrompts, RunSnapshotSaver |
+| `ui/` | Theme, HotkeyFormatter, WidgetBase, LayoutWidgetBase |
+| `integration/` | SpeedKalandraApp full wire-up + regression suite (death-penalty handler, EventTraceLogger opt-in, UndoLastSave PB rebuild, hydration ordering) |
 
-Tests run in ~25 s on a typical desktop. Headless mode (`headless := true` constructor arg on widgets/dialogs) skips Gui creation so the entire surface is exercisable.
+Full suite runs in roughly 25 seconds on a typical desktop. Headless mode (`headless := true` constructor arg on widgets/dialogs) skips Gui creation so the entire surface is exercisable.
 
 **Regression coverage** is documented in `tests_v2/REGRESSION-COVERAGE.md`, which maps every catalogued bug (from the pre-release internal audit and from bugs found during test-suite construction) to the specific test(s) that comprove the fix. The doc also catalogues AHK v2 pitfalls encountered during development (the table in §14 is a summary of that list).
 

@@ -67,30 +67,14 @@ class BootPrompts
 
         ; Disclaimer text (multi-line continuation section).
         ; Leading whitespace on each line is stripped by AHK up to the
-        ; closing `)`.
+        ; closing `)`. Mirrors README.md § Disclaimer.
         bodyText := "
         (
-SpeedKalandra is a personal project by a player, not a developer.
+SpeedKalandra is an independent personal project. It reads Path of Exile 2's Client.txt log file and samples pixel colors on screen for loading detection. It does not inject into the game process, modify game files, or send inputs to the game. To the best of my knowledge this falls within typical overlay/tracker territory, but I make no guarantees — use it understanding that you are responsible for what runs on your machine while playing.
 
-I built this because some functionality was missing from the overlays available during my runs, and I wanted something for my own use that other players might also find useful.
+The codebase was developed with significant AI assistance, was reviewed and tested in real runs, and is covered by an automated test suite that runs on CI for every commit. I keep this notice because AI-assisted development should be transparent.
 
-Yes, I know other speedrun trackers exist, some maintained by teams. I don't care if there are 10 other people working on this - I'm not trying to compete with them. I'm doing this because it's fun, and because I want a tracker that works the way I want it to.
-
-The code was written with substantial help from AI. I directed what I wanted, reviewed the output, tested in actual runs, and iterated when things broke - but I won't pretend I wrote the architecture from scratch or deeply understand every line. I understand enough to use it, debug obvious problems, and make small adjustments.
-
-What this means for you:
-
-- USE AT YOUR OWN RISK. I tested on my own machine for my own playstyle. Your setup may differ in ways I haven't anticipated.
-
-- BUGS ARE LIKELY. I fix what I personally hit. Edge cases I never encounter may sit broken for a long time.
-
-- DON'T EXPECT FAST SUPPORT. I'm not maintaining this as a product. If you open an issue, I'll read it, but response times will be whenever-I-feel-like-it.
-
-- FORK, MODIFY, RIP PARTS OUT. If you're a real developer and want to clean up something that's clearly wrong, go ahead.
-
-- ANTI-CHEAT / TOS: The tool only reads the PoE2 Client.txt log file and captures pixel colors from the screen for loading detection. It does not inject into the game process, modify game files, or send inputs to the game. To my knowledge this is within typical overlay/tracker territory, but I make no guarantees - use it understanding that ultimately you're responsible for what runs on your machine while playing.
-
-If it helps your runs, great. If it doesn't fit your needs, that's fine too - the goal was to scratch my own itch, not to build the universal speedrun tracker.
+Use at your own risk. Forks are welcome under the project's GPL license.
         )"
 
         choice := { dontShow: false, done: false }

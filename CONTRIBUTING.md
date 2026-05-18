@@ -4,7 +4,7 @@ Thanks for considering it.
 
 ## Set expectations
 
-I'm not actively maintaining this as a product. I work on it when I feel like it. Response times to issues and PRs will be slow — sometimes very slow. That's not me being rude, it's just the deal. I do read everything eventually.
+This is a personal project — response times to issues and PRs depend on availability, sometimes longer than typical OSS projects. I read everything eventually. If you want a feature merged faster, opening an issue first to discuss direction speeds up the eventual review.
 
 ## Reporting bugs
 
@@ -38,7 +38,7 @@ For non-trivial changes, open an issue first to check it's a direction I'd merge
 1. Install [AutoHotkey v2](https://www.autohotkey.com/) (it must be v2, not v1)
 2. Clone the repo
 3. Open `speedkalandra.ahk` to test, edit files in `src_v2/`
-4. Automated test suite under `tests_v2/` (~1569 tests, pure AHK v2, no external deps). Run with `"C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe" tests_v2\run_tests.ahk`. Add tests for new behavior under `tests_v2/unit/<layer>/` — see `tests_v2/README.md` for conventions and the assertion API.
+4. Automated test suite under `tests_v2/` (pure AHK v2, no external deps; over 1500 tests). Run with `"C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe" tests_v2\run_tests.ahk`. Add tests for new behavior under `tests_v2/unit/<layer>/` — see `tests_v2/README.md` for conventions and the assertion API.
 5. The same suite runs on GitHub Actions for every push and PR (see `.github/workflows/test.yml`); the badge at the top of the README shows the latest status. To replicate the CI invocation locally, set `$env:SPEEDKALANDRA_TEST_NO_GUI="1"` before the command above — the final MsgBox is suppressed and the process exits with `0` on green, `1` on red.
 
 ### Style
