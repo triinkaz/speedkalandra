@@ -131,7 +131,15 @@ class RunSnapshotSaver
                     if IsObject(this._log)
                         try this._log.Warn("Failed to capture final act checkpoint: " . ex.Message, "RunSnapshotSaver")
                 }
-                try actCheckpoints := this._actCheckpoints.GetCheckpoints()
+                try
+                {
+                    actCheckpoints := this._actCheckpoints.GetCheckpoints()
+                }
+                catch as ex
+                {
+                    if IsObject(this._log)
+                        try this._log.Warn("Failed to read act checkpoints for history (falling back to empty): " . ex.Message, "RunSnapshotSaver")
+                }
             }
             buildResult["actCheckpoints"] := actCheckpoints
 

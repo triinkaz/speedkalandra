@@ -46,7 +46,7 @@ For non-trivial changes, open an issue first to check it's a direction I'd merge
 - Match surrounding code: indentation, naming, structure, comment style
 - New services go in `src_v2/app/services/`. Inject dependencies via constructor
 - Validate types in constructors with `is ClassName` checks
-- Avoid `try` without `catch` — use `catch as ex { OutputDebug(...) }` at minimum
+- Use `try` only at I/O / event-dispatch / OS-primitive boundaries. Whether the catch should log on failure follows the policy in [`ARCHITECTURE.md` § 14](ARCHITECTURE.md#14-error-handling-policy): *log where silence would hide data loss, broken state, or actionable failure*. New code that uses silent `try` should map cleanly to one of the documented buckets (lifecycle teardown, cosmetic side effect, or UI fallback that aborts safely) — otherwise it should log via `LogService.Warn` with a context tag
 
 ### Architecture orientation
 

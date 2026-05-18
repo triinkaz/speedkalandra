@@ -416,13 +416,66 @@ Design rules carried throughout:
 - **No globals.** The only global is `app` (the composition root). Every service receives deps via constructor.
 - **Strict type checks at boundaries.** `__New` validates each dependency with `is` and throws `TypeError` on mismatch.
 - **Fail loud, fail early.** Validation errors throw immediately, not five calls later with a corrupted state.
-- **`try` only at the borders.** I/O operations and event dispatch wrap `try`. Pure logic does not — exceptions there indicate real bugs.
+- **`try` only at the borders.** I/O operations, event dispatch, and OS primitives wrap `try`; pure logic does not (an exception there is a real bug). Whether a given `try` should log on failure follows the policy in § 14 — the short version is *log where silence would hide data loss, broken state, or actionable failure*; otherwise silent is the honest option.
 - **Pull, don't push, for cross-cutting state.** When run lifecycle events arrive in an order that would zero needed state (PB updates after `RunStatsRecorder.Reset`), the composition root captures state and calls the consumer with the snapshot, instead of having the consumer subscribe.
 - **Headless flag.** Widgets and dialogs accept `headless := true`. In that mode `Show()`/`Open()` is a no-op but the testable surface (state, validation, computations) remains accessible.
 
 ---
 
-## 14. AHK v2 Pitfalls Encoded in the Code
+## 14. Error Handling Policy
+
+The codebase uses `try` deliberately, not by default. The rule is one line:
+
+> **Log where silence would hide data loss, broken state, or actionable failure.**
+
+A silent `try` (no `catch`, or `catch` with no body / only a `return`) is acceptable only when none of those three conditions apply. Every catch in the codebase falls into one of four buckets:
+
+### 1. Catches that log via `LogService.Warn`
+
+The default. Used everywhere the failure represents lost user data, corrupted on-disk state, or anything the operator could act on (disk full, permission denied, INI parse error, regex mismatch with no fallback). Examples: `RunStatePersister.Tick`, `RunSnapshotSaver.Save`, `RunStateRepository.SaveZoneTotals`, `PersonalBestRepository.Save`, `BootPrompts._SetupValidatePath` failure of `Configure`. Every such warn includes a context tag (`"Persister"`, `"RunSnapshotSaver"`, `"BootPrompts"`, `"App"`) so the log file is greppable.
+
+### 2. Silent — lifecycle teardown
+
+`Stop()`, `Dispose()`, `Hide()`, `OnExit`, and the per-service `Stop` cascades in `SpeedKalandraApp.Stop`. We're on the way out; if the failure is caused by the same condition that's killing the process (disk full, file lock), logging it would attempt another I/O against the same broken resource — at best wasted, at worst it delays the exit. Examples: `try this.tickEmitter.Stop()`, `try SetTimer(this._undoTimerFn, 0)`, `try this._timer.Pause()` before opening a modal.
+
+### 3. Silent — cosmetic side effect with no recovery path
+
+`TrayTip`, `log.Info` (informational, not diagnostic), tray menu item add/remove, status-label updates on a Gui that may already be destroyed. The user can't act on "TrayTip failed because notifications are disabled" — they configured it that way themselves. Logging would flood `data/speedkalandra.log` with WARNs on every boot for those users and drown out signals that actually matter. Examples: `try TrayTip(...)`, `try this._log.Info(...)`, `try SpeedKalandraTrayAddUndoItem()`, `try statusLbl.Value := "..."`.
+
+### 4. Silent — UI fallback that aborts safely
+
+More subtle. The pattern is `try { result := UI_Operation() } catch { return }` or `try { result := UI_Operation() return result } return defaultValue`. If the UI primitive fails (no display server, headless without provisions, permission denied for window creation), the catch is the signal that the operation didn't run. Adding a `Warn` here would create a *worse* mental model: the user sees "PB reset failed" in the log, thinks something is broken, when in fact the system did exactly what it should have done — refused to destroy data without confirmation. Examples: the `catch return` around `SpeedKalandraMsgBox` in `LiveReconfigurationHandlers.ResetPersonalBests`; the `try { FileSelect(...) }` in `BootPrompts._SetupBrowseLog`.
+
+### How to decide when adding new code
+
+```
+Does failure here lose user data, corrupt persisted state,
+or reveal an actionable problem?
+  YES → catch + try this._log.Warn("...", "<ContextTag>")
+  NO  → which of (2) (3) (4) applies?
+         lifecycle teardown                   → silent
+         cosmetic / no recovery               → silent
+         UI primitive whose failure means
+           "the operation did not happen"     → silent + safe return
+         none of the above                    → reconsider; probably (1)
+```
+
+If adding silent code that doesn't cleanly map to (2) (3) or (4), the right move is usually to log it. Borderline cases caught during the original sweep: `RunSnapshotSaver` reading the act-checkpoints map for the saved-run payload was silent, but a failure there meant the on-disk run file would carry an empty checkpoint map without any signal — that's data loss in disguise, so it moved to bucket (1).
+
+### Auditing the existing code
+
+This policy was applied retroactively to the codebase. Spot checks across the four extracted composition-root collaborators (`RunStatePersister`, `RunSnapshotSaver`, `BootPrompts`, `LiveReconfigurationHandlers`) found ~24 catches in bucket (1) with explicit `Warn`s + context tags, and ~25 silent catches all classifiable in buckets (2)–(4). To find every `try` site in the repository for re-review:
+
+```
+Get-ChildItem -Recurse -Include *.ahk src_v2 |
+  Select-String -Pattern '^\s*try\b' -CaseSensitive
+```
+
+A reviewer can sample any line from that list and ask: "if this throws, will the user notice something is wrong but find nothing in `speedkalandra.log`?" If yes, it's a bug. If no, it's by design.
+
+---
+
+## 15. AHK v2 Pitfalls Encoded in the Code
 
 A few language quirks come up often enough that the codebase has standard patterns for them:
 
@@ -441,7 +494,7 @@ A few language quirks come up often enough that the codebase has standard patter
 
 ---
 
-## 15. Test Suite
+## 16. Test Suite
 
 The project ships with a self-contained test framework in `tests_v2/` written in pure AHK v2 — no external runner, no `pip install`, no `npm`. Entry point: `tests_v2/run_tests.ahk`.
 
@@ -485,7 +538,7 @@ Full suite runs in roughly 25 seconds on a typical desktop. Headless mode (`head
 
 ---
 
-## 16. What This App Does Not Do
+## 17. What This App Does Not Do
 
 For people coming from other speedrun trackers or expecting more, the app deliberately avoids:
 
