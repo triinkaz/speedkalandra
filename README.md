@@ -1,5 +1,7 @@
 # SpeedKalandra
 
+[![tests](https://github.com/triinkaz/speedkalandra/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/triinkaz/speedkalandra/actions/workflows/test.yml)
+
 A minimalist Path of Exile 2 speedrun tracker for Windows.
 
 > **Status**: Personal project, slow response times. See [disclaimer](#disclaimer) below.

@@ -20,6 +20,7 @@ Each release section is short and user-facing; engineering rationale lives next 
 ### Build
 
 - **`build-dist.ps1` rejects descendant destinations.** Running `.\build-dist.ps1 -DestDir ".\dist"` used to enter a recursive copy. Now both ancestor and descendant relationships between source and destination are rejected with a clear error.
+- **CI reintroduced.** New `.github/workflows/test.yml` runs the full `tests_v2/` suite on `windows-latest` for every push and PR, installs AutoHotkey v2 via Chocolatey, runs in headless mode (`SPEEDKALANDRA_TEST_NO_GUI=1`), and uploads `tests_output.log` as an artifact even on failure. The previous attempt had been disabled because the runner exited with a non-zero status even on all-green runs — root-caused to `#Warn All, MsgBox` in `run_tests.ahk`, which tried to surface dialogs in a session without an interactive desktop. Replaced with `#Warn All, OutputDebug`, which keeps warnings visible to a local debugger but lets the headless process exit cleanly with `0` / `1`.
 
 ### Documentation
 

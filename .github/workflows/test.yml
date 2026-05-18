@@ -1,0 +1,51 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  tests:
+    name: AHK v2 test suite
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install AutoHotkey v2
+        shell: pwsh
+        run: |
+          choco install autohotkey --version=2.0.18 -y --no-progress
+          $ahk = "C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe"
+          if (-not (Test-Path $ahk)) {
+              Write-Error "AutoHotkey v2 was installed but $ahk is missing."
+              exit 1
+          }
+          Write-Host "AutoHotkey v2 installed at $ahk"
+
+      - name: Run test suite
+        shell: pwsh
+        env:
+          SPEEDKALANDRA_TEST_NO_GUI: "1"
+        run: |
+          $ahk = "C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe"
+          $proc = Start-Process -FilePath $ahk `
+                                -ArgumentList "tests_v2\run_tests.ahk" `
+                                -Wait -PassThru -NoNewWindow
+          Write-Host "Exit code: $($proc.ExitCode)"
+          if ($proc.ExitCode -ne 0) {
+              Write-Error "Test suite failed (exit $($proc.ExitCode)). See uploaded log artifact."
+              exit $proc.ExitCode
+          }
+
+      - name: Upload test log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tests_output.log
+          path: tests_v2/tests_output.log
+          if-no-files-found: warn
