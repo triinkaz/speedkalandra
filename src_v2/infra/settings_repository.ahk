@@ -1,38 +1,30 @@
 ; ============================================================
-; SettingsRepository - AppSettings <-> INI (Wave 6, simplified)
+; SettingsRepository — AppSettings <-> INI
 ; ============================================================
 ;
-; POST-DEMOLITION VERSION: aligned with the minimalist AppSettings/
-; OverlayLayout/WindowState.
+; Sections (in load/save order):
+;   [General]        ProfileName, GamePatch, LogFile
+;   [Character]      Name, Class, Level
+;   [CurrentArea]    Level, Code
+;   [Rules]          AutoPauseOnFocus, DeathPenaltyEnabled, DeathPenaltyMs
+;   [LoadingVisual]  Enabled, PollMs, MinMs, MaxMs
+;   [AutoFinalize]   Regex
+;   [AutoStart]      Regex
+;   [VendorRegexes]  Slot1, Slot2, Slot3
+;   [Disclaimer]     Acknowledged
+;   [Diagnostics]    EventTracingEnabled (opt-in; off by default)
+;   [Hotkeys]        <action> -> keyBind
+;   [Window]         MicroLocked
+;   [Overlay]        <widgetId>.{left,top,scale,visible,centered} + hoverHide
 ;
-; v17.15 (Bug #15): removed handling of disconnected fields:
-;   [General].PanelOverlayKeys, [Rules].GamePauseDetectionEnabled.
-;   Legacy keys in old INIs are orphaned but inert — they are not
-;   read, not written, and do not affect behavior.
+; Orphan keys in old INIs (PanelOverlayKeys, GamePauseDetectionEnabled)
+; are not read or written, so they sit inert.
 ;
-; v17.15.1: re-added [Rules].DeathPenaltyEnabled + DeathPenaltyMs
-; after discovering that RunStatsPlotBuilder ALREADY consumed them.
-; Old INIs with those keys are respected.
-;
-; SUPPORTED SECTIONS:
-;   [General]      ProfileName, GamePatch, LogFile
-;   [Character]    Name, Class, Level
-;   [CurrentArea]  Level, Code
-;   [Rules]        AutoPauseOnFocus, DeathPenaltyEnabled, DeathPenaltyMs
-;   [LoadingVisual] Enabled, PollMs, MinMs, MaxMs
-;   [AutoFinalize] Regex
-;   [AutoStart]    Regex
-;   [VendorRegexes] Slot1, Slot2, Slot3
-;   [Diagnostics]  EventTracingEnabled (v0.1.4 — opt-in only)
-;   [Hotkeys]      <action> -> keyBind
-;   [Window]       MicroLocked
-;   [Overlay]      <widgetId>.{left,top,scale,visible,centered} + hoverHide
-;
-; CONSTRUCTION:
-;   ini  := IniFile(A_ScriptDir "\poe2_tracker.ini")
+; Construction:
+;   ini  := IniFile(A_ScriptDir "\speedkalandra.ini")
 ;   repo := SettingsRepository(ini)
 ;
-; OPERATIONS:
+; Operations:
 ;   cfg := repo.Load()
 ;   repo.Save(cfg)
 
@@ -208,7 +200,7 @@ class SettingsRepository
     }
 
     ; ============================================================
-    ; [VendorRegexes] (Wave 8)
+    ; [VendorRegexes]
     ;
     ; Persists 3 short regex slots (max 50 chars each) used by the
     ; V1/V2/V3 buttons of CompactLayoutWidget for copy-to-clipboard
@@ -243,16 +235,16 @@ class SettingsRepository
                  : ""
             if (StrLen(v) > 50)
                 v := SubStr(v, 1, 50)
-            ; v0.1.4: use WriteVerbatim to preserve leading/trailing
+            ; Use WriteVerbatim to preserve leading/trailing
             ; double-quotes (common in PoE2 vendor filters like
-            ; '"!(uiv)" "melee|mov"'). Regular Write loses outer quotes
-            ; on the next reload due to IniRead's quote-stripping.
+            ; '"!(uiv)" "melee|mov"'). Regular Write loses the outer
+            ; quotes on the next reload due to IniRead's quote-stripping.
             ini.WriteVerbatim(v, "VendorRegexes", "Slot" i)
         }
     }
 
     ; ============================================================
-    ; [Disclaimer] (v17.15.2)
+    ; [Disclaimer]
     ;
     ; Persists the acknowledgment flag of the disclaimer dialog shown
     ; on boot. False = shown on each boot; true = silenced (user
@@ -269,7 +261,7 @@ class SettingsRepository
     }
 
     ; ============================================================
-    ; [Diagnostics] (v0.1.4)
+    ; [Diagnostics]
     ;
     ; Opt-in flag for the EventTraceLogger interceptor. When true,
     ; every EventBus Publish is appended to speedkalandra.log along
