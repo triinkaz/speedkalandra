@@ -27,9 +27,10 @@ Each release section is short and user-facing; engineering rationale lives next 
 
 ### Documentation
 
-- README, `src_v2/README.md`, `CONTRIBUTING.md`, `tests_v2/README.md` reconciled with reality: the automated test suite is acknowledged in every doc that previously claimed it didn't exist. README now lists `Ctrl+F8 — Toggle Steve mode` alongside the other hotkeys.
-- `CONTRIBUTING.md` documents the `[Diagnostics].EventTracingEnabled` flag for bug reports.
-- This file (`CHANGELOG.md`) exists now.
+- **Disclaimer rewritten and made canonical across all three surfaces.** The README, the in-app boot modal (`BootPrompts.ShowDisclaimerIfNeeded`), and `CONTRIBUTING.md` previously carried three different versions, several of them with self-deprecating phrasing about being a player rather than a developer, promises of slow support, and an explicit "I won't pretend I wrote the architecture" line. A single shorter version now lives in the README and is mirrored faithfully in the boot modal. The substantive points (AI-assisted development, anti-cheat / TOS posture, use-at-your-own-risk, GPL forks) are preserved; the apologetic framing is gone.
+- **Hard-coded test counts replaced by stable phrasing.** README, `CONTRIBUTING.md`, `tests_v2/README.md`, and `ARCHITECTURE.md` previously stated `~1569` (and the per-layer breakdowns in two of those files disagreed numerically). All references switched to either `over 1500` or removed entirely; the per-layer tables now describe coverage by suite name rather than by count, so the docs no longer drift every time a test is added.
+- **`ARCHITECTURE.md` updated for the `BootPrompts` and `RunSnapshotSaver` extractions.** §6 (composition root) describes the late-bound `(data) => this._snapshotSaver.Save(...)` subscription pattern; §11 (dialogs) lists the boot modals as living in `app/boot_prompts.ahk` instead of inline in `app.ahk`. §15 (test suite) drops the version-tagged coverage table.
+- **`KNOWN_ISSUES.md` added.** Catalogues design constraints the user should be aware of before opening an issue: atomic-write window on Windows, loading-detection HUD position assumption, English-only regex defaults, no boss detection, untested Win32 paths, and the hand-edited zones catalog. Linked from the README.
 
 ### Tests
 
