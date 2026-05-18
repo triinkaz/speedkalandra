@@ -36,7 +36,6 @@ The following behavior is not acceptable:
 - Repeatedly derailing technical discussions.
 - Trolling, bad-faith arguments, or intentionally wasting maintainer time.
 - Aggressive demands for support, features, or deadlines.
-- Mocking someone for using AI-assisted development, asking beginner questions, or contributing imperfect code.
 - Encouraging any of the above behavior.
 
 ## Technical criticism
