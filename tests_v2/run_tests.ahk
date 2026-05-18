@@ -31,7 +31,15 @@
 
 #Requires AutoHotkey v2.0
 #SingleInstance Off
-#Warn All, MsgBox
+; Warnings are routed to OutputDebug rather than MsgBox so headless
+; runs (CI, SPEEDKALANDRA_TEST_NO_GUI=1) never try to pop a dialog
+; that no one can dismiss — in some environments AHK's attempt to
+; surface a MsgBox without an interactive session leaves the
+; process exiting with a non-zero code even on all-green test runs.
+; View live warnings during local development with Sysinternals'
+; DbgView. The test framework itself reports failures via
+; tests_output.log plus the final summary MsgBox (skipped in headless).
+#Warn All, OutputDebug
 #NoTrayIcon
 
 ; ------------------------------------------------------------
@@ -96,9 +104,10 @@
 #Include ..\src_v2\app\bus\commands.ahk
 
 ; ------------------------------------------------------------
-; SUT - app/services (Wave 5a: pure services / with simple state)
-; Order by dependency: state-only -> bus-only -> bus+clock/timer
-; -> with repos -> with catalog+cfg
+; SUT - app/services
+; Ordered by dependency: state-only first, then bus-only,
+; then bus+clock/timer, then services that pull in repos and
+; the zones catalog.
 ; ------------------------------------------------------------
 #Include ..\src_v2\app\services\xp_service.ahk
 #Include ..\src_v2\app\services\app_tick_emitter.ahk
@@ -125,8 +134,9 @@
 #Include ..\src_v2\app\services\run_import_service.ahk
 
 ; ------------------------------------------------------------
-; SUT - ui/ (Wave 7: UI layer)
-; Order: pure ones (Theme, HotkeyFormatter) first
+; SUT - ui/
+; Order: pure ones (Theme, HotkeyFormatter) first, then bases,
+; then concrete widgets and dialogs.
 ; ------------------------------------------------------------
 #Include ..\src_v2\ui\theme.ahk
 #Include ..\src_v2\ui\hotkey_formatter.ahk
@@ -143,7 +153,7 @@
 #Include ..\src_v2\ui\import_preview_dialog.ahk
 
 ; ------------------------------------------------------------
-; SUT - app/ (Wave 8: composition root)
+; SUT - app/ (composition root)
 ; ------------------------------------------------------------
 ; Stubs of global helpers that normally live in speedkalandra.ahk
 ; (entry point) — in tests we don't have that file, but app.ahk
@@ -164,7 +174,7 @@ SpeedKalandraMsgBox(text, title := "", options := "") {
 #Include ..\src_v2\app\app.ahk
 
 ; ------------------------------------------------------------
-; Suites - Wave 1: core/
+; Suites - core/
 ; ------------------------------------------------------------
 #Include unit\core\event_bus_tests.ahk
 #Include unit\core\clock_tests.ahk
@@ -173,7 +183,7 @@ SpeedKalandraMsgBox(text, title := "", options := "") {
 #Include unit\core\log_service_tests.ahk
 
 ; ------------------------------------------------------------
-; Suites - Wave 2: domain/
+; Suites - domain/
 ; ------------------------------------------------------------
 #Include unit\domain\duration_tests.ahk
 #Include unit\domain\ids_tests.ahk
@@ -184,7 +194,7 @@ SpeedKalandraMsgBox(text, title := "", options := "") {
 #Include unit\domain\app_settings_tests.ahk
 
 ; ------------------------------------------------------------
-; Suites - Wave 3: infra/io/
+; Suites - infra/io/
 ; ------------------------------------------------------------
 #Include unit\infra\io\atomic_write_tests.ahk
 #Include unit\infra\io\text_encoding_tests.ahk
@@ -194,7 +204,7 @@ SpeedKalandraMsgBox(text, title := "", options := "") {
 #Include unit\infra\io\run_export_format_tests.ahk
 
 ; ------------------------------------------------------------
-; Suites - Wave 4: infra/ (repositories)
+; Suites - infra/ (repositories)
 ; ------------------------------------------------------------
 #Include unit\infra\zones_catalog_tests.ahk
 #Include unit\infra\personal_best_repository_tests.ahk
@@ -203,7 +213,7 @@ SpeedKalandraMsgBox(text, title := "", options := "") {
 #Include unit\infra\settings_repository_tests.ahk
 
 ; ------------------------------------------------------------
-; Suites - Wave 5a: app/services (pure)
+; Suites - app/services
 ; ------------------------------------------------------------
 #Include unit\app\services\xp_service_tests.ahk
 #Include unit\app\services\app_tick_emitter_tests.ahk
@@ -227,7 +237,7 @@ SpeedKalandraMsgBox(text, title := "", options := "") {
 #Include unit\app\services\overlay_interaction_service_tests.ahk
 
 ; ------------------------------------------------------------
-; Suites - Wave 7: ui/
+; Suites - ui/
 ; ------------------------------------------------------------
 #Include unit\ui\theme_tests.ahk
 #Include unit\ui\hotkey_formatter_tests.ahk
@@ -235,7 +245,7 @@ SpeedKalandraMsgBox(text, title := "", options := "") {
 #Include unit\ui\layout_widget_base_tests.ahk
 
 ; ------------------------------------------------------------
-; Suites - Wave 8: integration (end-to-end)
+; Suites - integration (end-to-end)
 ; ------------------------------------------------------------
 #Include integration\speedkalandra_app_integration_tests.ahk
 
