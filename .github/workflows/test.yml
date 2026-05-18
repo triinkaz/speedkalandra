@@ -19,7 +19,7 @@ jobs:
       - name: Install AutoHotkey v2
         shell: pwsh
         run: |
-          choco install autohotkey --version=2.0.18 -y --no-progress
+          choco install autohotkey -y --no-progress
           $ahk = "C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe"
           if (-not (Test-Path $ahk)) {
               Write-Error "AutoHotkey v2 was installed but $ahk is missing."

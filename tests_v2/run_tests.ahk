@@ -31,14 +31,10 @@
 
 #Requires AutoHotkey v2.0
 #SingleInstance Off
-; Warnings are routed to OutputDebug rather than MsgBox so headless
-; runs (CI, SPEEDKALANDRA_TEST_NO_GUI=1) never try to pop a dialog
-; that no one can dismiss — in some environments AHK's attempt to
-; surface a MsgBox without an interactive session leaves the
-; process exiting with a non-zero code even on all-green test runs.
-; View live warnings during local development with Sysinternals'
-; DbgView. The test framework itself reports failures via
-; tests_output.log plus the final summary MsgBox (skipped in headless).
+; Warnings go to OutputDebug, not MsgBox: headless runs (CI,
+; SPEEDKALANDRA_TEST_NO_GUI=1) can't dismiss dialogs and AHK exits
+; with a non-zero code if a MsgBox is attempted without an
+; interactive session. View live warnings locally with DbgView.
 #Warn All, OutputDebug
 #NoTrayIcon
 
@@ -105,9 +101,8 @@
 
 ; ------------------------------------------------------------
 ; SUT - app/services
-; Ordered by dependency: state-only first, then bus-only,
-; then bus+clock/timer, then services that pull in repos and
-; the zones catalog.
+; Order by dependency: state-only -> bus-only -> bus+clock/timer
+; -> with repos -> with catalog+cfg
 ; ------------------------------------------------------------
 #Include ..\src_v2\app\services\xp_service.ahk
 #Include ..\src_v2\app\services\app_tick_emitter.ahk
@@ -135,8 +130,7 @@
 
 ; ------------------------------------------------------------
 ; SUT - ui/
-; Order: pure ones (Theme, HotkeyFormatter) first, then bases,
-; then concrete widgets and dialogs.
+; Order: pure ones (Theme, HotkeyFormatter) first
 ; ------------------------------------------------------------
 #Include ..\src_v2\ui\theme.ahk
 #Include ..\src_v2\ui\hotkey_formatter.ahk

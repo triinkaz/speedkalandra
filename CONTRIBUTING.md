@@ -39,7 +39,7 @@ For non-trivial changes, open an issue first to check it's a direction I'd merge
 2. Clone the repo
 3. Open `speedkalandra.ahk` to test, edit files in `src_v2/`
 4. Automated test suite under `tests_v2/` (~1569 tests, pure AHK v2, no external deps). Run with `"C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe" tests_v2\run_tests.ahk`. Add tests for new behavior under `tests_v2/unit/<layer>/` — see `tests_v2/README.md` for conventions and the assertion API.
-5. The same suite runs on GitHub Actions for every push and PR (see `.github/workflows/test.yml`); the badge at the top of the README shows the latest status. Locally, you can replicate the CI invocation with `$env:SPEEDKALANDRA_TEST_NO_GUI="1"` before the command above — suppresses the final MsgBox and exits with code `0`/`1` so it composes with other scripts.
+5. The same suite runs on GitHub Actions for every push and PR (see `.github/workflows/test.yml`); the badge at the top of the README shows the latest status. To replicate the CI invocation locally, set `$env:SPEEDKALANDRA_TEST_NO_GUI="1"` before the command above — the final MsgBox is suppressed and the process exits with `0` on green, `1` on red.
 
 ### Style
 
