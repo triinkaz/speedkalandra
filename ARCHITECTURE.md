@@ -456,10 +456,10 @@ AutoHotkey64.exe tests_v2\run_tests.ahk regression_bug
 | `domain/` | Duration, Ids, WindowState, RunState, XpRules, OverlayLayout, AppSettings | ~135 |
 | `infra/io/` | AtomicWriter, TextEncoding, IniFile, CsvFile, JsonFile, RunExportFormat | ~140 |
 | `infra/` repos | ZonesCatalog, PersonalBest, RunState, RunHistory, Settings | ~150 |
-| `app/services/` | All 20 services | ~840 |
+| `app/services/` | All 20 services | ~842 |
 | `ui/` | Theme, HotkeyFormatter, WidgetBase, LayoutWidgetBase | ~115 |
 | `integration/` | SpeedKalandraApp full wire-up + regression suite (death-penalty handler, EventTraceLogger opt-in, UndoLastSave PB rebuild, hydration ordering) | ~33 |
-| **Total** | | **~1567** |
+| **Total** | | **~1569** |
 
 Tests run in ~25 s on a typical desktop. Headless mode (`headless := true` constructor arg on widgets/dialogs) skips Gui creation so the entire surface is exercisable.
 

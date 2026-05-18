@@ -1,6 +1,6 @@
 # SpeedKalandra Test Suite
 
-Self-contained AHK v2 test suite for SpeedKalandra. Pure AHK v2 — no external runner, no `pip install`, no `npm`. ~600 LOC of framework + ~1567 tests across `core/`, `domain/`, `infra/`, `app/`, `ui/`, and integration.
+Self-contained AHK v2 test suite for SpeedKalandra. Pure AHK v2 — no external runner, no `pip install`, no `npm`. ~600 LOC of framework + ~1569 tests across `core/`, `domain/`, `infra/`, `app/`, `ui/`, and integration.
 
 ## How to run
 
@@ -130,7 +130,7 @@ Fixtures.MakeInMemoryLogger()
 
 ## Current state
 
-**1567 tests across all layers, ~25 seconds wall time.** Breakdown by layer:
+**1569 tests across all layers, ~25 seconds wall time.** Breakdown by layer:
 
 | Layer | Approx. tests | Notable coverage |
 |---|---|---|
@@ -138,7 +138,7 @@ Fixtures.MakeInMemoryLogger()
 | `domain/` | 191 | Duration, Ids, WindowState, RunState, XpRules, OverlayPosition, OverlayLayout, AppSettings |
 | `infra/io/` | 160 | AtomicWriter, TextEncoding, IniFile, CsvFile, JsonFile, RunExportFormat |
 | `infra/` repos | 143 | ZonesCatalog, PersonalBestRepository, RunStateRepository, RunHistoryRepository, SettingsRepository |
-| `app/services/` pure | 346 | XpService, AppTickEmitter, HudPixelScanner, LoadingTotalsService, TimerService, ActCheckpointTracker, RunStatsRecorder, PersonalBestService, RunStatsPlotBuilder |
+| `app/services/` pure | 348 | XpService, AppTickEmitter, HudPixelScanner, LoadingTotalsService, TimerService, ActCheckpointTracker, RunStatsRecorder, PersonalBestService, RunStatsPlotBuilder |
 | `app/services/` stateful | 288 | ZoneTrackingService, LogMonitorService, LoadingDetectionService, RunService, AutoStartService, AutoFinalizeService |
 | `app/services/` OS hooks | 165 | OverlayModeService, OverlayModeApplier, HotkeyService, FocusAutoPauseService, OverlayInteractionService |
 | `ui/` | 113 | Theme, HotkeyFormatter, WidgetBase, LayoutWidgetBase |

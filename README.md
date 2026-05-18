@@ -33,7 +33,7 @@ I built this because some functionality was missing from the overlays available 
 
 Yes, I know other speedrun trackers exist, some maintained by teams. I don't care if there are 10 other people working on this — I'm not trying to compete with them. I'm doing this because it's fun, and because I want a tracker that works the way I want it to.
 
-The code was written with substantial help from AI. I directed what I wanted, reviewed the output, tested in actual runs, and iterated when things broke — but I won't pretend I wrote the architecture from scratch or deeply understand every line. I understand enough to use it, debug obvious problems, and make small adjustments.
+The code was written with substantial help from AI. I directed what I wanted, reviewed the output, tested in actual runs, and iterated when things broke. I keep this disclaimer because AI-assisted development should be transparent — but the project is real, maintained, and tested.
 
 **Use at your own risk.** Bugs are likely. Don't expect fast support.
 
@@ -90,7 +90,7 @@ The project ships with a self-contained AHK v2 test suite under `tests_v2/` (no 
 "C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe" tests_v2\run_tests.ahk
 ```
 
-~1567 tests covering core primitives, domain, persistence, services, UI bases, and end-to-end app wiring. Output goes to `tests_v2/tests_output.log` plus a final MsgBox with the pass/fail count. Filter by substring: `AutoHotkey64.exe tests_v2\run_tests.ahk EventBus`. Conventions and assertion API are in [`tests_v2/README.md`](tests_v2/README.md).
+~1569 tests covering core primitives, domain, persistence, services, UI bases, and end-to-end app wiring. Output goes to `tests_v2/tests_output.log` plus a final MsgBox with the pass/fail count. Filter by substring: `AutoHotkey64.exe tests_v2\run_tests.ahk EventBus`. Conventions and assertion API are in [`tests_v2/README.md`](tests_v2/README.md).
 
 ## Architecture
 

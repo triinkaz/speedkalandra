@@ -38,7 +38,7 @@ For non-trivial changes, open an issue first to check it's a direction I'd merge
 1. Install [AutoHotkey v2](https://www.autohotkey.com/) (it must be v2, not v1)
 2. Clone the repo
 3. Open `speedkalandra.ahk` to test, edit files in `src_v2/`
-4. Automated test suite under `tests_v2/` (~1567 tests, pure AHK v2, no external deps). Run with `"C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe" tests_v2\run_tests.ahk`. Add tests for new behavior under `tests_v2/unit/<layer>/` — see `tests_v2/README.md` for conventions and the assertion API.
+4. Automated test suite under `tests_v2/` (~1569 tests, pure AHK v2, no external deps). Run with `"C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe" tests_v2\run_tests.ahk`. Add tests for new behavior under `tests_v2/unit/<layer>/` — see `tests_v2/README.md` for conventions and the assertion API.
 
 ### Style
 
