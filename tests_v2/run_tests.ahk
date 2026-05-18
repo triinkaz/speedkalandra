@@ -55,6 +55,7 @@
 #Include ..\src_v2\core\log_service.ahk
 #Include ..\src_v2\core\event_bus.ahk
 #Include ..\src_v2\core\clock.ahk
+#Include ..\src_v2\core\warning_sink.ahk
 
 ; ------------------------------------------------------------
 ; SUT - domain
@@ -180,6 +181,7 @@ SpeedKalandraMsgBox(text, title := "", options := "") {
 #Include unit\core\null_logger_tests.ahk
 #Include unit\core\in_memory_logger_tests.ahk
 #Include unit\core\log_service_tests.ahk
+#Include unit\core\warning_sink_tests.ahk
 
 ; ------------------------------------------------------------
 ; Suites - domain/
@@ -208,6 +210,7 @@ SpeedKalandraMsgBox(text, title := "", options := "") {
 #Include unit\infra\zones_catalog_tests.ahk
 #Include unit\infra\personal_best_repository_tests.ahk
 #Include unit\infra\run_state_repository_tests.ahk
+#Include unit\infra\run_state_repository_warning_sink_tests.ahk
 #Include unit\infra\run_history_repository_tests.ahk
 #Include unit\infra\settings_repository_tests.ahk
 
@@ -222,6 +225,7 @@ SpeedKalandraMsgBox(text, title := "", options := "") {
 #Include unit\app\services\act_checkpoint_tracker_tests.ahk
 #Include unit\app\services\run_stats_recorder_tests.ahk
 #Include unit\app\services\personal_best_service_tests.ahk
+#Include unit\app\services\personal_best_service_warning_sink_tests.ahk
 #Include unit\app\services\run_stats_plot_builder_tests.ahk
 #Include unit\app\services\zone_tracking_service_tests.ahk
 #Include unit\app\services\log_monitor_service_tests.ahk

@@ -178,6 +178,7 @@ SpeedKalandraRunImportDebug()
 #Include "src_v2\core\clock.ahk"
 #Include "src_v2\core\event_bus.ahk"
 #Include "src_v2\core\log_service.ahk"
+#Include "src_v2\core\warning_sink.ahk"
 
 #Include "src_v2\version.ahk"
 
