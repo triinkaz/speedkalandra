@@ -79,6 +79,16 @@ class RunHistoryRepository
     ; runId or shorter than 1 s are rejected as garbage. buildResult
     ; shape: { runId, profile, patch, firstTs, totals, details,
     ; deathCount, totalMs, maxActReached, actCheckpoints }.
+    ;
+    ; Atomicity: the entire INI is serialized in memory then written
+    ; through AtomicWriter (.tmp + FileMove). Earlier versions made
+    ; ~N direct IniWrite calls against the destination file; a crash
+    ; in the middle of those left a partially-written run on disk
+    ; (e.g. [meta] complete, [totals] missing, [details] inconsistent
+    ; with count). With the in-memory build the destination only
+    ; receives a fully-formed file or nothing at all. Same encoding
+    ; (UTF-16 LE BOM) that IniWrite produces, so existing runs and
+    ; the Load path stay byte-compatible.
     Save(buildResult)
     {
         if !IsObject(buildResult)
@@ -94,37 +104,61 @@ class RunHistoryRepository
         if (totalMs < 1000)
             return false
 
-        path := this._PathForRunId(currentRunId)
-        ini := IniFile(path)
+        path    := this._PathForRunId(currentRunId)
+        content := this._SerializeBuildResultToIni(buildResult, currentRunId, totalMs)
 
-        ; --- [meta] ---
-        ini.Write(currentRunId, "meta", "runId")
-        ini.Write(buildResult.Has("profile") ? buildResult["profile"] : "", "meta", "profile")
-        ini.Write(buildResult.Has("patch")   ? buildResult["patch"]   : "", "meta", "patch")
-        ini.Write(buildResult.Has("firstTs") ? buildResult["firstTs"] : "", "meta", "firstTs")
-        ini.Write(totalMs, "meta", "totalMs")
-        ini.Write(buildResult.Has("deathCount") ? buildResult["deathCount"] : 0, "meta", "deathCount")
-        ini.Write(buildResult.Has("maxActReached") ? buildResult["maxActReached"] : 0, "meta", "maxActReached")
+        try
+        {
+            AtomicWriter.WriteAll(path, content, "UTF-16")
+            return true
+        }
+        catch as ex
+        {
+            ; Disk full, permission denied, locked destination, etc.
+            ; Surface via the injected sink so finalize-time save
+            ; failures don't disappear silently into the bus handler.
+            this._warn.Warn("Save failed for runId " . currentRunId, ex)
+            return false
+        }
+    }
 
-        ; --- [totals] ---
-        ; Wipe the section first so a category present in an older
-        ; save but absent now doesn't linger (defensive — unlikely in
-        ; practice).
-        ini.Delete("totals", "")
+    ; Builds the complete INI text for a run. Pure function over
+    ; buildResult — no I/O, no side effects, no exceptions for any
+    ; well-formed input. The output mirrors exactly what the previous
+    ; sequence of IniWrite calls produced, so Load() needs no change.
+    ; Sections always appear in the same order (meta → totals →
+    ; checkpoints → details) and use CRLF line endings so a user
+    ; opening the file in Notepad sees the conventional layout.
+    _SerializeBuildResultToIni(buildResult, currentRunId, totalMs)
+    {
+        sb := ""
+
+        ; ---- [meta] ----
+        sb .= "[meta]`r`n"
+        sb .= "runId=" . currentRunId . "`r`n"
+        sb .= "profile=" . (buildResult.Has("profile")       ? String(buildResult["profile"])       : "") . "`r`n"
+        sb .= "patch="   . (buildResult.Has("patch")         ? String(buildResult["patch"])         : "") . "`r`n"
+        sb .= "firstTs=" . (buildResult.Has("firstTs")       ? String(buildResult["firstTs"])       : "") . "`r`n"
+        sb .= "totalMs=" . Integer(totalMs)                                                                . "`r`n"
+        sb .= "deathCount="    . Integer(buildResult.Has("deathCount")    ? buildResult["deathCount"]    : 0) . "`r`n"
+        sb .= "maxActReached=" . Integer(buildResult.Has("maxActReached") ? buildResult["maxActReached"] : 0) . "`r`n"
+        sb .= "`r`n"
+
+        ; ---- [totals] ----
+        sb .= "[totals]`r`n"
         totals := buildResult.Has("totals") ? buildResult["totals"] : Map()
         if IsObject(totals)
         {
             for key, ms in totals
-                ini.Write(ms, "totals", key)
+                sb .= String(key) . "=" . String(ms) . "`r`n"
         }
+        sb .= "`r`n"
 
-        ; --- [checkpoints] ---
-        ; Total run time when each act ended (Map<actNum, ms>).
-        ; Persisted here so PersonalBestService.RebuildFromHistory
-        ; can rebuild per-act PBs after a delete. Runs saved before
-        ; this section was added Load with an empty Map and rebuild
-        ; just skips them.
-        ini.Delete("checkpoints", "")
+        ; ---- [checkpoints] ----
+        ; Map<actNum, ms>. Same validation as the old IniWrite path:
+        ; skip non-numeric / non-positive entries. Old runs saved
+        ; before this section existed Load with an empty Map.
+        sb .= "[checkpoints]`r`n"
         ckpts := buildResult.Has("actCheckpoints") ? buildResult["actCheckpoints"] : Map()
         if IsObject(ckpts)
         {
@@ -134,12 +168,16 @@ class RunHistoryRepository
                     continue
                 if !IsNumber(ms) || ms <= 0
                     continue
-                ini.Write(Integer(ms), "checkpoints", "Act" Integer(actNum) "Ms")
+                sb .= "Act" . Integer(actNum) . "Ms=" . Integer(ms) . "`r`n"
             }
         }
+        sb .= "`r`n"
 
-        ; --- [details] ---
-        ini.Delete("details", "")
+        ; ---- [details] ----
+        ; `count` is written last so it always matches the number of
+        ; rows above it, even when rows were filtered out for being
+        ; non-objects.
+        sb .= "[details]`r`n"
         details := buildResult.Has("details") ? buildResult["details"] : []
         n := 0
         if IsObject(details)
@@ -149,12 +187,13 @@ class RunHistoryRepository
                 if !IsObject(row)
                     continue
                 line := RunHistoryRepository._SerializeDetail(row)
-                ini.Write(line, "details", n)
+                sb .= String(n) . "=" . line . "`r`n"
                 n += 1
             }
         }
-        ini.Write(n, "details", "count")
-        return true
+        sb .= "count=" . n . "`r`n"
+
+        return sb
     }
 
     ; Lists run IDs available on disk, sorted by modification time

@@ -38,6 +38,10 @@ class RunHistoryRepositoryTests extends TestCase
         ; --- Save: re-save consistency ---
         "save_overwrites_previous_save_for_same_run_id",
 
+        ; --- Save: atomicity ---
+        "save_does_not_leave_tmp_file_behind",
+        "save_warns_when_atomic_writer_fails",
+
         ; --- ListRunIds ---
         "list_run_ids_returns_empty_when_dir_missing",
         "list_run_ids_extracts_run_id_without_extension",
@@ -244,6 +248,68 @@ class RunHistoryRepositoryTests extends TestCase
         loaded := repo.Load("20260512_142345")
         Assert.Equal(1,       loaded["details"].Length, "Re-save must replace, not accumulate")
         Assert.Equal(9999999, loaded["totalMs"])
+    }
+
+    ; ============================================================
+    ; Save: atomicity
+    ; ============================================================
+    ;
+    ; Before this refactor, Save made ~N direct IniWrite calls
+    ; against the destination file. A crash mid-sequence would leave
+    ; a partial run on disk (e.g. [meta] complete, [totals] missing,
+    ; [details] with count != actual rows). The current implementation
+    ; serializes the full INI in memory and writes through
+    ; AtomicWriter (.tmp + FileMove), so the destination only ever
+    ; sees a fully-formed file or no change at all.
+
+    save_does_not_leave_tmp_file_behind()
+    {
+        ; AtomicWriter writes a .tmp sibling and renames it to the
+        ; final path. Verify nothing is left behind after a normal
+        ; successful Save.
+        tmpDir := Fixtures.TempDir()
+        repo := RunHistoryRepository(tmpDir)
+        repo.Save(this._MakeBuildResult())
+
+        finalPath := tmpDir "\20260512_142345.ini"
+        tmpPath   := finalPath . ".tmp"
+
+        Assert.True(FileExist(finalPath),  "Final file exists after successful Save")
+        Assert.False(FileExist(tmpPath),   "No .tmp orphan left behind")
+    }
+
+    save_warns_when_atomic_writer_fails()
+    {
+        ; Force AtomicWriter to fail by pointing the run history dir
+        ; at a path whose parent dir is actually an existing file.
+        ; AtomicWriter creates missing parent directories when it can,
+        ; but cannot create a directory on top of an existing file —
+        ; DirCreate throws OSError. Save catches and routes through
+        ; the injected WarningSink.
+        tmpDir := Fixtures.TempDir()
+
+        ; Create a regular file where we want a dir to be.
+        parentAsFile := tmpDir "\not-a-dir.txt"
+        FileAppend("not a directory", parentAsFile, "UTF-8")
+
+        sink := InMemoryWarningSink()
+        ; Build a repo whose effective save directory sits under an
+        ; existing file. The constructor will fail to create the dir
+        ; (which is the file path) and warn; that's already covered
+        ; elsewhere. Here we focus on Save's own failure path — set
+        ; the dir field directly to bypass _EnsureDir's complaints
+        ; and trip AtomicWriter when Save runs.
+        repo := RunHistoryRepository(tmpDir, sink)
+        repo._dir := parentAsFile . "\subdir"
+        sink.Clear()   ; discard the constructor's _EnsureDir warning
+
+        result := repo.Save(this._MakeBuildResult())
+
+        Assert.False(result, "Save returns false when AtomicWriter throws")
+        Assert.True(sink.Count() >= 1,
+            "Save failure surfaces through the WarningSink")
+        Assert.True(sink.HasMessage("Save failed for runId"),
+            "Warning identifies the failed operation")
     }
 
     ; ============================================================
