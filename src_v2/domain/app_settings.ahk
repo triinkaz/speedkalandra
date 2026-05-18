@@ -1,36 +1,20 @@
-; ============================================================
-; AppSettings - general tracker settings (Wave 6)
-; ============================================================
+; AppSettings — general tracker settings, populated from the INI
+; on boot and edited via the Settings dialog.
 ;
-; POST-DEMOLITION VERSION:
-;   - Removed step-based fields: summariesAutoExportOnFinalize,
-;     summariesScope, stepSummaryFile, runSummaryFile, plotMetrics.
-;   - Removed hotkeys for extinct features: ToggleCompact (no Normal),
-;     CompleteStep, PrevAct, NextAct, Targets, CampaignEditor,
-;     ForceSyncZone, ReplayDialog, WidgetManager, Undo.
-;   - Added: autoFinalizeRegex, autoStartRegex (Waves 6/7).
-;
-;   v17.15 (Bug #15): removed fields for disconnected features:
-;     - panelOverlayKeys: PanelKeyService disconnected in v17.2
-;     - gamePauseDetectionEnabled: GamePauseDetectionService disconnected in v17.5
-;
-;   v17.15.1: re-added deathPenaltyEnabled/Ms after discovering that
-;   RunStatsPlotBuilder ALREADY consumed them. The initial audit
-;   misclassified them as dead settings.
-;
-; INI SECTIONS:
-;   [General]      ProfileName, GamePatch, LogFile
-;   [Character]    Name, Class, Level
-;   [CurrentArea]  Level, Code
-;   [Rules]        AutoPauseOnFocus, DeathPenaltyEnabled, DeathPenaltyMs
+; INI sections:
+;   [General]       ProfileName, GamePatch, LogFile
+;   [Character]     Name, Class, Level
+;   [CurrentArea]   Level, Code
+;   [Rules]         AutoPauseOnFocus, DeathPenaltyEnabled, DeathPenaltyMs
 ;   [LoadingVisual] Enabled, PollMs, MinMs, MaxMs
-;   [AutoFinalize] Regex (PCRE string — empty = disabled)
-;   [AutoStart]    Regex (PCRE string — empty = disabled)
+;   [AutoFinalize]  Regex (PCRE, empty = disabled)
+;   [AutoStart]     Regex (PCRE, empty = disabled)
 ;   [VendorRegexes] Slot1, Slot2, Slot3 (max 50 chars each)
-;   [Diagnostics]  EventTracingEnabled (v0.1.4 — opt-in only)
-;   [Hotkeys]      <action> -> keyBind
-;   [Window]       -> WindowState (composite)
-;   [Overlay]      -> OverlayLayout (composite)
+;   [Diagnostics]   EventTracingEnabled (opt-in)
+;   [Disclaimer]    Acknowledged (do-not-show-again flag)
+;   [Hotkeys]       <action> = keyBind
+;   [Window]        → WindowState (composite)
+;   [Overlay]       → OverlayLayout (composite)
 
 
 class AppSettings
@@ -59,58 +43,50 @@ class AppSettings
     autoPauseOnFocus := true
 
     ; --- Death Penalty (plot) ---
-    ; v17.15.1: re-added after #15 over-removal. These fields are
-    ; consumed by RunStatsPlotBuilder._AddDeathDetails which renders
-    ; the "Deaths" bar in the run plot as (deathCount * deathPenaltyMs).
-    ; The initial audit misclassified them as dead settings.
-    ;
-    ; deathPenaltyMs = 150000 = 2 minutes and 30 seconds (PoE2 default:
-    ; average time to return to death point considering waypoint +
-    ; traversal). Adjustable in the Settings dialog.
+    ; Consumed by RunStatsPlotBuilder._AddDeathDetails to render the
+    ; "Deaths" bar as (deathCount * deathPenaltyMs). 150_000 ms =
+    ; 2:30, a rough PoE2 average for waypoint + traversal back to
+    ; the death point. Adjustable in the Settings dialog.
     deathPenaltyEnabled := true
     deathPenaltyMs      := 150000
 
-    ; --- Disclaimer (v17.15.2) ---
-    ; Flag "user has seen the disclaimer and ticked do-not-show-again".
-    ; Default false = shown on every boot until the user ticks the checkbox.
-    ; Persisted in [Disclaimer].Acknowledged of speedkalandra.ini.
+    ; --- Disclaimer ---
+    ; "User has seen the disclaimer and ticked do-not-show-again."
+    ; Default false — shown on every boot until the checkbox.
     disclaimerAcknowledged := false
 
-    ; --- Diagnostics (v0.1.4) ---
-    ; Opt-in flag for the EventTraceLogger interceptor on the EventBus.
-    ; When true, every Publish is logged to speedkalandra.log including
-    ; the full payload (which itself contains raw Client.txt lines via
-    ; the LogLineRead event). Default false so a normal install never
-    ; persists that data — the user has to explicitly enable it for
-    ; diagnostics. Persisted in [Diagnostics].EventTracingEnabled.
+    ; --- Diagnostics ---
+    ; Opt-in flag for the EventTraceLogger interceptor on the
+    ; EventBus. When true, every Publish is logged to
+    ; speedkalandra.log, including payloads that carry raw Client.txt
+    ; lines (via LogLineRead). Default false so a normal install
+    ; never persists that data — user has to enable it explicitly
+    ; for diagnostics.
     eventTracingEnabled := false
 
-    ; --- Auto-finalize (Wave 6) ---
+    ; --- Auto-finalize ---
     autoFinalizeRegex := ""
 
-    ; --- Auto-start (Wave 6) ---
-    ; Wounded Man phrase right at the start of the PoE2 campaign. The
-    ; game log emits in the format "Wounded Man: By the First Ones! ..."
-    ; (NPC prefix + dialogue). Case-insensitive match via the PCRE `i)`
-    ; flag at the start of the pattern — resilient to small caps
-    ; variations in the log. AutoStartService matches against
-    ; Evt.LogLineRead and publishes Cmd.NewRunRequested.
+    ; --- Auto-start ---
+    ; The Wounded Man dialogue right at the start of the PoE2
+    ; campaign. The log format is "Wounded Man: By the First Ones! ..."
+    ; (NPC prefix + dialogue). PCRE `i)` flag for case-insensitivity
+    ; in case the game logs minor variations. AutoStartService matches
+    ; this against Evt.LogLineRead and publishes Cmd.NewRunRequested.
     ;
-    ; CAVEAT (Bug #11): PoE2 is localized. PT-BR / ES / DE / FR / etc.
-    ; players have that line translated in the log and the English
-    ; default will not match. Those players can edit it via the Settings
-    ; dialog (Auto-start regex) with the equivalent in their language,
-    ; or leave it empty to use the manual hotkey (^!n by default).
+    ; PoE2 is localized — players on PT-BR / ES / DE / FR / etc. have
+    ; this line translated in their log and this English default won't
+    ; match. They can edit it via the Settings dialog (Auto-start regex)
+    ; or leave it empty and rely on the manual hotkey (^!n by default).
     autoStartRegex := "i)Wounded Man: By the First Ones!"
 
-    ; --- Vendor Regex Slots (Wave 8) ---
-    ; 3 short strings (max 50 chars each) that the user can copy to
-    ; the clipboard via V1/V2/V3 buttons in the compact overlay during
-    ; the run. Typical use: regex filter for items at vendor NPCs
-    ; (resistances, jewels with specific mods, sockets/links etc.).
-    ;
-    ; 50-char truncation is applied on Load and Save to guarantee
-    ; the invariant even if the INI is edited by hand.
+    ; --- Vendor Regex Slots ---
+    ; Three short strings (max 50 chars each) the user copies to the
+    ; clipboard via V1/V2/V3 buttons in the compact overlay during a
+    ; run. Typical use: a vendor-item regex for resistances, jewels
+    ; with specific mods, sockets/links, etc. The 50-char cap is
+    ; enforced on Load and Save so a hand-edited INI can't break the
+    ; invariant.
     vendorRegexes := ["", "", ""]
 
     ; --- Hotkeys --- Map<actionName, keyBind>
@@ -159,7 +135,7 @@ class AppSettings
         ; --- Auto-pause ---
         cfg.autoPauseOnFocus := AppSettings._GetBool(data, "autoPauseOnFocus", cfg.autoPauseOnFocus)
 
-        ; --- Death Penalty (v17.15.1: re-added after #15 over-removal) ---
+        ; --- Death Penalty ---
         cfg.deathPenaltyEnabled := AppSettings._GetBool(data, "deathPenaltyEnabled", cfg.deathPenaltyEnabled)
         if data.Has("deathPenaltyMs")
         {
@@ -167,10 +143,10 @@ class AppSettings
             cfg.deathPenaltyMs := v >= 0 ? v : 0
         }
 
-        ; --- Disclaimer (v17.15.2) ---
+        ; --- Disclaimer ---
         cfg.disclaimerAcknowledged := AppSettings._GetBool(data, "disclaimerAcknowledged", cfg.disclaimerAcknowledged)
 
-        ; --- Diagnostics (v0.1.4) ---
+        ; --- Diagnostics ---
         cfg.eventTracingEnabled := AppSettings._GetBool(data, "eventTracingEnabled", cfg.eventTracingEnabled)
 
         ; --- Auto-finalize ---
@@ -228,9 +204,8 @@ class AppSettings
         )
     }
 
-    ; ------------------------------------------------------------
-    ; Internal helpers
-    ; ------------------------------------------------------------
+    ; ---- Internal helpers ----
+
     static _GetStr(data, key, default)
     {
         if !data.Has(key)

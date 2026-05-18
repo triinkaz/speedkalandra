@@ -1,52 +1,25 @@
-; ============================================================
-; LoadingDetectionService — measures loading time between zones (Phase 9.2)
-; ============================================================
+; LoadingDetectionService — measures loading time between zones by
+; watching the PoE2 HUD with the pixel scanner.
 ;
-; Port of the legacy loading_visual.ahk, in service-based architecture.
+; Flow:
+;   Arm    AreaLevelChanged (the "Generating level X area Y" log
+;          line) starts a measurement. Preconditions: setting on,
+;          run timer active, not already armed.
+;   Poll   SetTimer at ~25ms calls Tick() while state=active. Tick
+;          samples the HUD: visible → end; absent → continue;
+;          duration > maxMs → end with source=timeout.
+;   End    Publishes Evt.LoadingMeasured with from/to zone, duration,
+;          source, and scanner score for debug.
 ;
-; FLOW:
+; NotifyScene(name) is called by SyncEngine on a new SCENE. It only
+; marks sceneSeenTick — the end is gated on the HUD actually returning,
+; because SCENE often fires before the loading screen disappears.
 ;
-;   1. ARM (start measurement)
-;      Subscribe to Evt.AreaLevelChanged -> ArmFromAreaChange()
-;      The log monitor publishes this event upon detecting `Generating
-;      level X area Y with seed Z`. This is the loading `start`.
-;      Preconditions: setting enabled + timer running + not already armed.
+; SuppressForPanel cancels an in-flight measurement (user opened an
+; inventory panel) and silences sampling for 1.5s.
 ;
-;   2. POLL (HUD scan)
-;      SetTimer 25ms (configurable) calls Tick() while state=active.
-;      Each Tick: scanner samples the PoE2 HUD.
-;      - HUD visible -> END (publish Evt.LoadingMeasured, return to idle)
-;      - HUD absent -> continues
-;      - Time > maxMs -> END with source=timeout
-;
-;   3. END (publish event)
-;      Publish Evt.LoadingMeasured with:
-;        Map(
-;          "durationMs", n,
-;          "actIndex",   n,        ; from the snapshot on arm
-;          "stepId",     "..",     ; idem
-;          "fromZone",   "..",     ; zone when armed
-;          "toZone",     "..",     ; current zone on end (may be the same)
-;          "source",     "..",     ; "hud_returned_fast" | "scene_then_hud_return" | "timeout_no_hud_return" | etc
-;          "score",      n,        ; scanner score
-;          "anchor",     ".."      ; "hud_visible_life0_mana3_bar0" debug
-;        )
-;      App.ahk subscribes and (a) writes to loading.csv (b) injects into
-;      the next split as transitionMs.
-;
-; SUPPRESSION:
-;   SuppressForPanel() cancels the active loading (user opened a panel).
-;   Useful to avoid a false positive when HUD disappears due to inventory.
-;
-; SCENE NOTIFICATION:
-;   NotifyScene(mapName) is called by SyncEngine when it detects a new
-;   SCENE. Acts as an "end preview" — marks sceneSeenTick but does not
-;   end. The end only comes when HUD really returns. Reason: SCENE may
-;   arrive before the loading screen disappears.
-;
-; HEADLESS:
-;   In headless, Start() does not call a real SetTimer. Tick() can be
-;   called manually in tests. Everything else works.
+; Headless: Start() doesn't arm a real SetTimer; Tick() is called
+; manually by tests.
 
 class LoadingDetectionService
 {
@@ -77,22 +50,22 @@ class LoadingDetectionService
     _tickFn := ""
     _headless := false
 
-    ; Handler refs (fields to allow Unsubscribe in Stop)
+    ; Handler refs (fields, so Stop can Unsubscribe — inline
+    ; fat-arrow closures make a new ref each call).
     _handlerAreaLevelChanged := ""
     _handlerZoneChanged      := ""
-    ; v17.15 (Bug #31): _handlerPanelKeyPressed removed —
-    ; PanelKeyService disconnected in v17.2.
 
-    ; Default constants
     static DEFAULT_POLL_MS := 25
     static DEFAULT_MIN_MS  := 250
     static DEFAULT_MAX_MS  := 90000
 
-    ; v0.1.4: list of known PoE2 executables. Used by _DefaultWindowProvider
-    ; to locate the game window by ahk_exe (exact-match) instead of by
-    ; title substring. Keep in sync with FocusAutoPauseService.GAME_EXECUTABLES
-    ; — both lists must contain the same set of process names so a future
-    ; PoE2 build doesn't break one service while still working on the other.
+    ; Known PoE2 executables. _DefaultWindowProvider locates the
+    ; game window by ahk_exe (exact match) rather than by title
+    ; substring, which would match Chrome on the wiki or Discord
+    ; channels named after the game. Keep this list in sync with
+    ; FocusAutoPauseService.GAME_EXECUTABLES — a future build that
+    ; ships a new exe must update both at once or one service
+    ; silently breaks.
     static GAME_EXECUTABLES := [
         "PathOfExile2Steam.exe",
         "PathOfExile2_x64.exe",
@@ -132,27 +105,20 @@ class LoadingDetectionService
 
         this._tickFn := this.Tick.Bind(this)
 
-        ; Keep handler refs so that Stop() can Unsubscribe (inline
-        ; fat-arrow closures create new refs on each call;
-        ; see Section 17.32 / Section 18.5 of ARCHITECTURE.md).
+        ; Handlers kept as fields so Stop()/Dispose() can Unsubscribe.
+        ; Inline fat-arrow expressions return a fresh ref every call,
+        ; so subscribing one and unsubscribing another would silently
+        ; leak. See ARCHITECTURE.md §17.32 / §18.5.
         this._handlerAreaLevelChanged := (data) => this._OnAreaLevelChanged(data)
         this._handlerZoneChanged      := (data) => this._OnZoneChanged(data)
 
-        ; Subscribe arm (AreaLevelChanged triggers ArmFromAreaChange)
         this._bus.Subscribe(Events.AreaLevelChanged, this._handlerAreaLevelChanged)
-
-        ; Subscribe direct SCENE notification (eliminated the carrier
-        ; pigeon in app.ahk: Turn 7).
+        ; ZoneChanged doubles as the SCENE notification (no separate
+        ; carrier event in the bus).
         this._bus.Subscribe(Events.ZoneChanged, this._handlerZoneChanged)
-
-        ; v17.15 (Bug #31): subscribe to Cmd.PanelKeyPressed removed —
-        ; PanelKeyService disconnected in v17.2. SuppressForPanel is
-        ; still called internally from _CancelActive.
     }
 
-    ; ============================================================
-    ; Lifecycle
-    ; ============================================================
+    ; ---- Lifecycle ----
 
     Start()
     {
@@ -177,11 +143,7 @@ class LoadingDetectionService
         }
     }
 
-    ; ============================================================
-    ; Dispose — tears down subscriptions. Idempotent.
-    ;   Call when the service is no longer used (Stop+Start cycle
-    ;   of the same app instance, or destruction in tests).
-    ; ============================================================
+    ; Tears down subscriptions. Idempotent.
     Dispose()
     {
         if (this._handlerAreaLevelChanged != "")
@@ -194,7 +156,6 @@ class LoadingDetectionService
             this._bus.Unsubscribe(Events.ZoneChanged, this._handlerZoneChanged)
             this._handlerZoneChanged := ""
         }
-        ; v17.15 (Bug #31): unsubscribe from Cmd.PanelKeyPressed removed.
     }
 
     IsEnabled()  => this._enabled
@@ -203,19 +164,15 @@ class LoadingDetectionService
     GetLastScore() => this._lastScore
     GetLastAnchor() => this._lastAnchor
 
-    ; ============================================================
-    ; Arm
-    ; ============================================================
+    ; ---- Arm ----
 
-    ; ArmFromAreaChange — called via subscribe to Evt.AreaLevelChanged.
-    ;   Preconditions:
-    ;     - setting loadingVisualEnabled = true
-    ;     - timer service active (running or paused doesn't matter,
-    ;       but must have been started — parity with legacy)
-    ;     - state = idle (second Generating during loading does not
-    ;       restart)
-    ;
-    ; Returns true if armed, false otherwise.
+    ; Starts a measurement. Preconditions:
+    ;   - cfg.loadingVisualEnabled
+    ;   - timer service active (running or paused both fine, must
+    ;     have been started)
+    ;   - state = idle (a second AreaLevelChanged during an active
+    ;     measurement does not restart it)
+    ; Returns true on arm, false otherwise.
     ArmFromAreaChange(areaLevel := 0, areaCode := "")
     {
         if !this._settings.loadingVisualEnabled
@@ -240,9 +197,9 @@ class LoadingDetectionService
         return true
     }
 
-    ; NotifyScene — SyncEngine can call when it detects SCENE during
-    ;   an active loading. Marks sceneSeenTick but does not end. End
-    ;   only comes when HUD returns.
+    ; SyncEngine can call this when it sees SCENE during an active
+    ; measurement. Only marks sceneSeenTick — the actual end is gated
+    ; on the HUD returning.
     NotifyScene(mapName := "")
     {
         if (this._state != "active")
@@ -255,8 +212,8 @@ class LoadingDetectionService
         return true
     }
 
-    ; SuppressForPanel — user opened a panel; cancels the active
-    ;   loading and ignores samples for the next 1500ms.
+    ; Cancels an in-flight measurement (user opened an inventory
+    ; panel) and silences sampling for 1.5 s.
     SuppressForPanel(source := "panel")
     {
         if (this._state = "active")
@@ -264,9 +221,7 @@ class LoadingDetectionService
         this._ignoreUntilTick := this._clock.NowMs() + 1500
     }
 
-    ; ============================================================
-    ; Tick — HUD poll
-    ; ============================================================
+    ; ---- Tick (HUD poll) ----
 
     Tick()
     {
@@ -316,9 +271,7 @@ class LoadingDetectionService
         this._End(endSource)
     }
 
-    ; ============================================================
-    ; End / Cancel
-    ; ============================================================
+    ; ---- End / Cancel ----
 
     _End(source)
     {
@@ -332,21 +285,14 @@ class LoadingDetectionService
 
         this._ResetState()
 
-        ; v0.1.2 (Bug #5): BEFORE the filter was `< minMs || > maxMs`.
-        ; The `> maxMs` branch caused a silent timeout: when Tick
-        ; detects loading > maxMs it calls _End("timeout_no_hud_return"),
-        ; and _End discarded the event BY DEFINITION (durationMs > maxMs
-        ; was the condition that triggered the timeout). Result: ALL
-        ; loadings that exceeded 90s became invisible in the stats —
-        ; slow PCs had runs with substantially underestimated loading time.
-        ;
-        ; Fix: keep only the `< minMs` filter (discards very short HUD
-        ; fluctuations, scanner noise). The ceiling is controlled by
-        ; Tick that fires `timeout_no_hud_return` when it hits maxMs;
-        ; when that path runs, we want to publish the event with the
-        ; REAL duration (which will be >= maxMs by construction) so
-        ; downstream (LoadingTotalsService, RunStatsRecorder) integrates
-        ; the correct time into the run's sum.
+        ; Discard only very short scans (HUD flicker, scanner noise);
+        ; never discard the high end. A previous version filtered
+        ; `> maxMs` here as well, which made `timeout_no_hud_return`
+        ; events drop themselves — every loading over 90 s simply
+        ; vanished from the stats, and slow PCs ended up with runs
+        ; whose total loading time was substantially undercounted.
+        ; Tick already caps the duration via its timeout branch; this
+        ; method just has to publish whatever real duration came in.
         if (durationMs < this._GetMinMs())
             return false    ; discard very short scans (HUD flicker)
 
@@ -379,9 +325,7 @@ class LoadingDetectionService
         this._sceneSeenTick := 0
     }
 
-    ; ============================================================
-    ; Bus subscribers
-    ; ============================================================
+    ; ---- Bus subscribers ----
 
     _OnAreaLevelChanged(data)
     {
@@ -392,9 +336,8 @@ class LoadingDetectionService
         this.ArmFromAreaChange(areaLevel, areaCode)
     }
 
-    ; SyncEngine receives ZoneChanged and updates the physical zone;
-    ; here we reuse the same event to signal that a SCENE arrived
-    ; (proxy for loading end). The real end only comes when HUD returns.
+    ; ZoneChanged doubles as the SCENE notification — the real end
+    ; still waits for the HUD to return.
     _OnZoneChanged(data)
     {
         if !IsObject(data) || !data.Has("zoneName")
@@ -405,14 +348,7 @@ class LoadingDetectionService
         this.NotifyScene(zone)
     }
 
-    ; v17.15 (Bug #31): _OnPanelKeyPressed handler removed. PanelKeyService
-    ; was disconnected in v17.2 and there is no publisher for
-    ; Cmd.PanelKeyPressed. SuppressForPanel above is still usable
-    ; via _CancelActive.
-
-    ; ============================================================
-    ; Snapshot helpers
-    ; ============================================================
+    ; ---- Snapshot helpers ----
 
     _SnapshotZone()
     {
@@ -420,9 +356,8 @@ class LoadingDetectionService
             return String(this._zoneProvider.Call())
         catch as ex
         {
-            ; v17.15 (Bug #8): a snapshot failure is diagnostic, not
-            ; flow-breaking. Returns a safe fallback but records for
-            ; debug. The service has no logger, so OutputDebug.
+            ; Snapshot failure is diagnostic, not flow-breaking. The
+            ; service has no injected logger, so OutputDebug.
             OutputDebug("LoadingDetectionService._SnapshotZone failed: " ex.Message)
         }
         return ""
@@ -441,15 +376,12 @@ class LoadingDetectionService
         }
         catch as ex
         {
-            ; v17.15 (Bug #8): same as _SnapshotZone
             OutputDebug("LoadingDetectionService._SnapshotStep failed: " ex.Message)
         }
         return Map("actIndex", 0, "stepId", "")
     }
 
-    ; ============================================================
-    ; Settings accessors (small indirection for clamp + defaults)
-    ; ============================================================
+    ; ---- Settings accessors (clamp + defaults) ----
 
     _GetPollMs()
     {
@@ -469,23 +401,14 @@ class LoadingDetectionService
         return v > 0 ? Integer(v) : LoadingDetectionService.DEFAULT_MAX_MS
     }
 
-    ; ============================================================
-    ; Default window provider (in prod uses PoE2's WinGetPos)
-    ;
-    ; v0.1.4: rewritten to locate the game window by ahk_exe (exact
-    ; match on the process name) instead of by title substring. The
-    ; previous WinExist("Path of Exile 2") matched any window with
-    ; that substring in its title (Chrome on the PoE2 wiki, Discord
-    ; channel with that name, etc.) and the HUD scanner would read
-    ; pixels from the wrong window — producing garbage and effectively
-    ; disabling loading detection while those decoy windows were open.
-    ;
-    ; Once a match is found we lock all subsequent queries
-    ; (WinGetMinMax, WinGetPos) to the same HWND via "ahk_id" so a
-    ; second window with a colliding title cannot hijack the readout
-    ; between the two calls.
-    ; ============================================================
-
+    ; Locates the PoE2 game window by ahk_exe (exact match on the
+    ; process name) and locks all follow-up queries to its HWND via
+    ; ahk_id. Using a title substring instead would also match
+    ; windows like "PoE2 Wiki - Chrome" or a Discord channel named
+    ; after the game; the HUD scanner would then read garbage pixels
+    ; from the wrong window. Locking by HWND between WinGetMinMax
+    ; and WinGetPos also prevents another window from hijacking the
+    ; readout in the race window between those two calls.
     static _DefaultWindowProvider()
     {
         try

@@ -1,54 +1,39 @@
-; ============================================================
-; RunStatsPlotBuilder - aggregates a run snapshot into a renderable Map
-; ============================================================
+; RunStatsPlotBuilder — aggregates a run snapshot into a renderable
+; Map. The composition root passes data via Build(snapshot); no
+; persistence happens here (the result is consumed by the plot
+; renderer and optionally fed to RunHistoryRepository).
 ;
-; POST-DEMOLITION VERSION (Wave 5):
-;   - No RunRepository / LoadingRepository (no historical persistence).
-;   - Receives data via Map snapshot and aggregates it into totals + details.
-;   - Zeroed-up categories: mapa / cidade / loading / morte.
-;   - No transitionMs (was step-based, removed).
-;   - boss category REMOVED in v17.13 (boss tracking left the app).
-;
-; DATA SOURCE (snapshot):
+; Snapshot shape:
 ;   Map(
 ;     "runId":         "20260512_1423",
 ;     "profile":       "Default",
 ;     "patch":         "0.4",
 ;     "firstTs":       "2026-05-12 14:23:45",
 ;     "runDurationMs": 5040000,
-;     "zoneTotals":    Map<zoneName, totalMs>,        ; ZoneTrackingService.GetTotals()
-;     "loadingEvents": Array< Map{fromZone,toZone,durationMs,ts} >,
+;     "zoneTotals":    Map<zoneName, totalMs>,
+;     "zoneFirstEnteredAt": Map<zoneName, ts>,    (optional)
+;     "loadingEvents": Array<Map{fromZone, toZone, durationMs, ts}>,
 ;     "deathCount":    int
 ;   )
 ;
-; CATEGORIES:
-;   mapa     - aggregated time of zones with isTown=false
-;   cidade   - aggregated time of zones with isTown=true
-;   loading  - sum of durationMs across all loadingEvents
-;   morte    - deathCount * deathPenaltyMs (cfg)
+; Categories:
+;   mapa     — zones with isTown=false
+;   cidade   — zones with isTown=true
+;   loading  — sum of all loadingEvents.durationMs
+;   morte    — deathCount * cfg.deathPenaltyMs (gated by
+;              cfg.deathPenaltyEnabled)
 ;
-; OUTPUT (Map):
-;   runId         (string)
-;   profile       (string)
-;   patch         (string)
-;   firstTs       (string)
+; Output Map:
+;   runId / profile / patch / firstTs       (strings)
 ;   totals        (Map<key, ms>)
-;   details       (Array<Map>)    {category, categoryLabel, label, ms, note, timestamp}
-;   deathCount    (int)
-;   totalMs       (int)
-;   maxActReached (int)            ; v17.13 — highest act number visited in the run
-;                                  ; (derived from the `note` of details). Used by
-;                                  ; the "Min Act" filter in the plot dialog.
+;   details       (Array<Map>) with {category, categoryLabel, label,
+;                                    ms, note, timestamp}
+;   deathCount / totalMs / maxActReached    (ints)
 ;
-; CONSTRUCTION:
-;   builder := RunStatsPlotBuilder(catalog, cfg)
-;   data := builder.Build(snapshot)
-;
-; NOTE ON PARAMETER NAME:
-;   AHK v2 does case-insensitive variable lookup. Param `zonesCatalog`
-;   would collide with the `ZonesCatalog` class on the right side of
-;   `is` (fails with "Expected a Class but got a ZonesCatalog"). Hence
-;   `catalog` — case-insensitive-distinct.
+; AHK v2 gotcha: variable lookup is case-insensitive, so a parameter
+; named `zonesCatalog` would collide with the `ZonesCatalog` class on
+; the right side of `is` ("Expected a Class but got a ZonesCatalog").
+; The constructor uses `catalog` to stay case-insensitive-distinct.
 
 
 class RunStatsPlotBuilder
@@ -68,9 +53,8 @@ class RunStatsPlotBuilder
         this._settings     := cfg
     }
 
-    ; ============================================================
-    ; Category definitions (visual parity with legacy)
-    ; ============================================================
+    ; ---- Category definitions ----
+
     static SegmentDefinitions()
     {
         return [
@@ -97,9 +81,8 @@ class RunStatsPlotBuilder
         return ""
     }
 
-    ; ============================================================
-    ; Build(snapshot) -> Map
-    ; ============================================================
+    ; ---- Build ----
+
     Build(snapshot)
     {
         data := this._InitData(snapshot)
@@ -110,10 +93,10 @@ class RunStatsPlotBuilder
         this._AddLoadingDetails(data, snapshot)
         this._AddDeathDetails(data, snapshot)
 
-        ; v0.1.4: sort details chronologically by timestamp. Entries
-        ; without timestamp (legacy or aggregated like deaths) go to
-        ; the end so the chronologically-ordered ones stay grouped at
-        ; the top of the list.
+        ; Sort details chronologically by timestamp. Entries without
+        ; a timestamp (legacy snapshots, aggregated deaths) are
+        ; pushed to the end so the ordered ones stay grouped at the
+        ; top of the list.
         RunStatsPlotBuilder._SortDetailsByTimestamp(data["details"])
 
         data["totalMs"] := RunStatsPlotBuilder._TotalFromTotals(data["totals"])
@@ -121,20 +104,12 @@ class RunStatsPlotBuilder
         return data
     }
 
-    ; ============================================================
-    ; _SortDetailsByTimestamp (v0.1.4)
-    ;
-    ; Stable insertion sort over the details array. Sort key is the
-    ; "timestamp" field. Empty timestamps are pushed to the end
-    ; (treated as +infinity) so chronological entries appear first
-    ; in the popup. Stable order ensures that two entries with
-    ; identical timestamps (rare — happens when the same second
-    ; produced both events) keep their original insertion order.
-    ;
-    ; Insertion sort because details typically have < 50 entries
-    ; (one per unique zone, plus loadings, plus one death aggregate).
-    ; Avoids the complexity of an external sort routine in AHK.
-    ; ============================================================
+    ; Stable insertion sort on the details array by timestamp.
+    ; Empty timestamps are treated as +infinity (sentinel "~" sorts
+    ; after every "YYYY-MM-DD HH:MM:SS" because '~' > '9'). Stable
+    ; ordering preserves insertion order on ties (two events in the
+    ; same second). Insertion sort is fine — details typically run
+    ; under 50 entries.
     static _SortDetailsByTimestamp(details)
     {
         if !IsObject(details) || details.Length < 2
@@ -161,9 +136,8 @@ class RunStatsPlotBuilder
         }
     }
 
-    ; Returns the sort key for a detail. Entries without a timestamp
-    ; (empty string) get a sentinel "~" which sorts AFTER all real
-    ; "YYYY-MM-DD HH:MM:SS" strings (since '~' > '9').
+    ; Sort key for a detail. Empty timestamps get the sentinel "~"
+    ; so they sort after every real "YYYY-MM-DD HH:MM:SS" value.
     static _TimestampSortKey(detail)
     {
         if !IsObject(detail) || !detail.Has("timestamp")
@@ -174,12 +148,10 @@ class RunStatsPlotBuilder
         return String(ts)
     }
 
-    ; Derives the MAX act reached from the details. Iterates notes
-    ; looking for "Ato N" or "Act N" patterns (compat with runs saved
-    ; in v17.13 or earlier which used "Ato") and returns the highest
-    ; N. 0 if not found.
-    ;
-    ; v17.13: used by the dialog to filter comparable runs in the chart.
+    ; Highest act number visited in the run, derived from the `note`
+    ; field of each detail. Supports both "Act N" (current) and
+    ; "Ato N" (older saves in Portuguese) for back-compat. Used by
+    ; the history dialog's "Min Act" filter to compare like-with-like.
     static _DeriveMaxAct(details)
     {
         if !IsObject(details)
@@ -199,18 +171,17 @@ class RunStatsPlotBuilder
         return maxAct
     }
 
-    ; ============================================================
-    ; Init
-    ; ============================================================
+    ; ---- Init ----
+
     _InitData(snapshot)
     {
         totals := Map()
         for _, key in RunStatsPlotBuilder.SEGMENT_KEYS
             totals[key] := 0
 
-        ; v0.1.0: local `runId` collides case-insensitively with the `RunId`
-        ; class (#Warn LocalSameAsGlobal). Same resolution adopted elsewhere
-        ; in the project: use `currentRunId`.
+        ; Local `runId` collides case-insensitively with the `RunId`
+        ; domain class (#Warn LocalSameAsGlobal). Same workaround as
+        ; in the repositories: use `currentRunId`.
         currentRunId := IsObject(snapshot) && snapshot.Has("runId")      ? snapshot["runId"]      : ""
         profile      := IsObject(snapshot) && snapshot.Has("profile")    ? snapshot["profile"]    : ""
         patch        := IsObject(snapshot) && snapshot.Has("patch")      ? snapshot["patch"]      : ""
@@ -236,14 +207,11 @@ class RunStatsPlotBuilder
         )
     }
 
-    ; ============================================================
-    ; _AddZoneDetails - iterates zoneTotals; categorizes by isTown
-    ;
-    ; v0.1.4: populates `timestamp` on each detail using
-    ; snapshot["zoneFirstEnteredAt"] (Map<zoneName, ts>) when
-    ; available. Enables chronological ordering in the plot. Legacy
-    ; snapshots without this map leave timestamp empty.
-    ; ============================================================
+    ; Iterates zoneTotals and categorizes each entry via ZonesCatalog
+    ; (isTown → cidade, else → mapa). Falls back to "mapa" when the
+    ; catalog is absent or doesn't know the zone. If the snapshot
+    ; provides zoneFirstEnteredAt, the per-zone first-entry timestamp
+    ; is attached to the detail so chronological sorting works.
     _AddZoneDetails(data, snapshot)
     {
         if !snapshot.Has("zoneTotals") || !IsObject(snapshot["zoneTotals"])
@@ -274,9 +242,7 @@ class RunStatsPlotBuilder
         }
     }
 
-    ; ============================================================
-    ; _AddLoadingDetails - iterates loadingEvents
-    ; ============================================================
+    ; Walks loadingEvents and emits one "loading" detail per event.
     _AddLoadingDetails(data, snapshot)
     {
         if !snapshot.Has("loadingEvents") || !IsObject(snapshot["loadingEvents"])
@@ -304,12 +270,9 @@ class RunStatsPlotBuilder
         }
     }
 
-    ; ============================================================
-    ; _AddDeathDetails - uses snapshot.deathCount * cfg.deathPenaltyMs
-    ;
-    ; v17.15.1: respects cfg.deathPenaltyEnabled. If disabled, deaths
-    ; appear in deathCount but do not add a bar to the plot.
-    ; ============================================================
+    ; Adds an aggregated "morte" entry with (deathCount * penaltyMs).
+    ; Gated by cfg.deathPenaltyEnabled: when disabled, deaths still
+    ; appear in deathCount but contribute zero to the plot.
     _AddDeathDetails(data, snapshot)
     {
         count := data["deathCount"]
@@ -318,16 +281,15 @@ class RunStatsPlotBuilder
         if !this._settings.deathPenaltyEnabled
             return
         penalty := this._settings.deathPenaltyMs
-        ; Sum as a single aggregated entry -- per-death details stay out
-        ; of the simplified plot. The composition root can add more
-        ; detail by passing deathEvents in the snapshot in the future.
+        ; Single aggregated entry — per-death entries would clutter
+        ; the plot. If we ever want per-death detail, the composition
+        ; root can pass deathEvents in the snapshot.
         this._AddDetail(data, "morte", count " deaths",
             count * penalty, "Penalty " RunStatsPlotBuilder._FormatMs(penalty) " each", "")
     }
 
-    ; ============================================================
-    ; _AddDetail
-    ; ============================================================
+    ; ---- Detail builder ----
+
     _AddDetail(data, category, label, ms, note := "", timestamp := "")
     {
         n := RunStatsPlotBuilder._ToInt(ms)
@@ -354,9 +316,8 @@ class RunStatsPlotBuilder
             data["firstTs"] := ts
     }
 
-    ; ============================================================
-    ; Static helpers
-    ; ============================================================
+    ; ---- Static helpers ----
+
     static _ToInt(v)
     {
         n := 0
@@ -377,8 +338,7 @@ class RunStatsPlotBuilder
 
     static FormatMs(ms) => Duration.FormatMs(ms)
 
-    ; v0.1.2 (audit #19): _FormatMs consolidated into Duration.FormatMs.
-    ; Kept as an internal static alias for back-compat with this file's
-    ; call sites (including _AddDeathDetails which passes the penalty).
+    ; Internal alias kept so existing call sites in this file
+    ; (notably _AddDeathDetails) don't need rewriting.
     static _FormatMs(ms) => Duration.FormatMs(ms)
 }

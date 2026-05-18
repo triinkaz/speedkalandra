@@ -1,59 +1,46 @@
-; ============================================================
-; RunImportService - import runs from JSON (v0.1.0)
-; ============================================================
+; RunImportService — imports runs from a JSON exported earlier by
+; RunExportService.
 ;
 ; Preview/Execute pattern: the caller invokes Preview to see what
-; WILL happen (without mutating anything), inspects it, and only
-; then calls Execute with the chosen PB strategy.
+; WILL happen (no mutation), inspects the result, then calls Execute
+; with the chosen PB strategy. Execute does not re-read the file —
+; it uses the buildResults captured in memory by Preview, so changes
+; on disk between the two calls don't surprise the user.
 ;
-; CONFLICT RESOLUTION:
-;   - runId not present locally -> "new" (import directly)
-;   - runId exists + identical content (signature match) -> "identical"
-;     (skip, no-op for idempotent re-imports)
-;   - runId exists + different content -> "rename"
-;     (import with "_imported" suffix, or "_imported_2", _3... if needed)
+; Conflict resolution per run:
+;   runId absent locally               → "new" (write directly)
+;   runId present + content identical  → "identical" (skip, idempotent)
+;   runId present + content different  → "rename" (write as
+;                                       "_imported", "_imported_2"...)
 ;
 ; Identity signature: runId + totalMs + deathCount + maxActReached
 ; + details.Length. Enough to detect "this is the same run" without
-; comparing field-by-field (which would give false negatives over
-; trivial changes like a re-derived categoryLabel).
+; comparing field-by-field, which would give false negatives over
+; trivial differences like a re-derived categoryLabel.
 ;
-; PB STRATEGIES:
-;   "keep"    : doesn't touch PBs (default, non-destructive)
-;   "rebuild" : calls PersonalBestService.RebuildFromHistory with
-;               the CURRENT history (including freshly imported runs)
-;   "replace" : replaces local PBs with those from the import file
-;               (destructive - user must have chosen consciously)
+; PB strategies (chosen at Execute time):
+;   "keep"    — don't touch local PBs (default, non-destructive).
+;   "rebuild" — call PersonalBestService.RebuildFromHistory with the
+;               current history (which now includes freshly imported
+;               runs).
+;   "replace" — replace local PBs with those from the import file.
+;               Destructive; the user must have chosen consciously.
 ;
-; DEPS:
-;   bus          : EventBus (to publish Evt.RunsImported)
-;   runHistory   : RunHistoryRepository (Load for conflict check, Save for import)
-;   personalBest : PersonalBestService (optional, for rebuild/replace strategies)
+; Dependencies:
+;   bus          — EventBus, publishes Evt.RunsImported on Execute
+;   runHistory   — RunHistoryRepository, for Load (conflict check)
+;                  and Save
+;   personalBest — PersonalBestService, optional (only consulted for
+;                  rebuild/replace strategies)
 ;
-; ImportPreview:
-;   Map{
-;     success     : bool,
-;     path        : string,
-;     errors[]    : Array<string>,
-;     warnings[]  : Array<string>,
-;     meta        : Map{exportedAt, exportedBy, anonymized},
-;     toImport    : Array<Map{run, runId, totalMs, conflict, finalRunId}>,
-;     importedPbs : Map or "" (PB data from the file, for display + replace strategy),
-;     summary     : Map{total, new, identical, rename}
-;   }
+; ImportPreview shape:
+;   Map{ success, path, errors[], warnings[], meta,
+;        toImport: Array<{run, runId, totalMs, conflict, finalRunId}>,
+;        importedPbs: Map | "",
+;        summary: {total, new, identical, rename} }
 ;
-; ImportResult:
-;   Map{
-;     success  : bool,
-;     imported : int (runs effectively written),
-;     renamed  : int (subset of imported that were renamed due to conflict),
-;     skipped  : int (identical no-ops),
-;     errors[] : Array<string>,
-;     pbAction : string (description of what happened with PBs)
-;   }
-;
-; CONSTRUCTION:
-;   svc := RunImportService(bus, runHistory, personalBest)
+; ImportResult shape:
+;   Map{ success, imported, renamed, skipped, errors[], pbAction }
 
 
 class RunImportService
@@ -78,13 +65,9 @@ class RunImportService
         this._personalBest := personalBest
     }
 
-    ; ============================================================
-    ; Preview(inputPath) -> ImportPreview
-    ;
-    ; Reads the file, validates schema, deserializes, computes the
-    ; conflict resolution. Does NOT mutate anything on disk. Result
-    ; is consumed by Execute (or discarded if the user cancels).
-    ; ============================================================
+    ; Reads the file, validates the schema, deserializes, and works
+    ; out the per-run conflict resolution. Does NOT touch disk — the
+    ; result is consumed by Execute (or thrown away if the user cancels).
     Preview(inputPath)
     {
         result := Map(
@@ -109,7 +92,7 @@ class RunImportService
             return result
         }
 
-        ; --- Read ---
+        ; Read.
         jsonStr := ""
         try
             jsonStr := FileRead(inputPath, "UTF-8")
@@ -124,7 +107,7 @@ class RunImportService
             return result
         }
 
-        ; --- Parse JSON ---
+        ; Parse.
         parsed := ""
         try
             parsed := JsonFile.Parse(jsonStr)
@@ -134,7 +117,7 @@ class RunImportService
             return result
         }
 
-        ; --- Validate schema ---
+        ; Validate schema.
         validation := RunExportFormat.ValidateSchema(parsed)
         if !validation["valid"]
         {
@@ -145,7 +128,7 @@ class RunImportService
         for _, w in validation["warnings"]
             result["warnings"].Push(w)
 
-        ; --- Deserialize ---
+        ; Deserialize.
         decoded := ""
         try
             decoded := RunExportFormat.Deserialize(parsed)
@@ -159,11 +142,11 @@ class RunImportService
         if IsObject(decoded["personalBests"])
             result["importedPbs"] := decoded["personalBests"]
 
-        ; --- Conflict resolution per run ---
-        ; v0.1.0 Phase 5: track finalRunIds already reserved to detect
-        ; duplicates WITHIN the same file (e.g. file edited by hand with
-        ; 2 runs of the same runId, or a bug that duplicated entries).
-        ; Without this, the second Save would overwrite the first on disk.
+        ; Per-run conflict resolution.
+        ; Track every finalRunId we've reserved during this pass so
+        ; duplicates WITHIN the same file (hand-edited file with two
+        ; runs of the same runId, or a buggy export) don't end up
+        ; overwriting each other on Save.
         seenFinalIds := Map()
 
         for _, runItem in decoded["runs"]
@@ -222,7 +205,7 @@ class RunImportService
             result["toImport"].Push(entry)
         }
 
-        ; --- Summary ---
+        ; Summary.
         for _, entry in result["toImport"]
         {
             result["summary"]["total"] += 1
@@ -237,15 +220,12 @@ class RunImportService
         return result
     }
 
-    ; ============================================================
-    ; Execute(preview, pbStrategy) -> ImportResult
+    ; Applies the changes from a previously computed preview. Uses
+    ; the buildResults captured in memory by Preview — does NOT re-read
+    ; the file, so concurrent changes between Preview and Execute
+    ; don't surprise the user.
     ;
-    ; Applies the changes from a previously computed preview. Does
-    ; NOT re-read the file — uses the buildResults captured in memory
-    ; by the preview (resistant to mid-operation changes).
-    ;
-    ; pbStrategy in {"keep", "rebuild", "replace"}. Invalid = error.
-    ; ============================================================
+    ; pbStrategy must be one of "keep", "rebuild", "replace".
     Execute(preview, pbStrategy := "keep")
     {
         result := Map(
@@ -268,7 +248,7 @@ class RunImportService
             return result
         }
 
-        ; --- Apply imports ---
+        ; Apply each imported run.
         for _, entry in preview["toImport"]
         {
             conflict := entry["conflict"]
@@ -279,7 +259,7 @@ class RunImportService
                 continue
             }
 
-            ; "new" or "rename" - write with finalRunId
+            ; "new" or "rename" — write with finalRunId.
             runItem := entry["run"]
             runItem["runId"] := entry["finalRunId"]
 
@@ -304,7 +284,7 @@ class RunImportService
             }
         }
 
-        ; --- Apply PB strategy ---
+        ; Apply PB strategy.
         if (pbStrategy = "keep")
         {
             result["pbAction"] := "kept current (no change)"
@@ -362,7 +342,7 @@ class RunImportService
             }
         }
 
-        ; --- Publish event ---
+        ; Publish event.
         try this._bus.Publish(Events.RunsImported, Map(
             "path",     preview["path"],
             "imported", result["imported"],
@@ -370,19 +350,18 @@ class RunImportService
             "skipped",  result["skipped"]
         ))
 
-        ; Success if there were no errors OR if at least something was
-        ; imported. Partial errors don't block but are reported.
+        ; Success when there were no errors OR at least something
+        ; was imported. Partial failures don't block; they are
+        ; reported in `errors`.
         result["success"] := (result["errors"].Length = 0) || (result["imported"] > 0)
         return result
     }
 
-    ; ============================================================
-    ; Private helpers
-    ; ============================================================
+    ; ---- Private helpers ----
 
-    ; Compares two buildResults by minimum signature. Enough to detect
-    ; "this is the same run" without being fragile to trivial differences
-    ; (re-derived categoryLabel, etc.).
+    ; Compares two buildResults by a minimal signature — enough to
+    ; detect "this is the same run" without being fragile to trivial
+    ; differences like a re-derived categoryLabel.
     static _RunsAreIdentical(runA, runB)
     {
         if !IsObject(runA) || !IsObject(runB)
@@ -415,13 +394,14 @@ class RunImportService
         return true
     }
 
-    ; Allocates a unique runId based on "<original>_imported".
-    ; If it already exists (on disk OR in the `alreadyClaimed` set),
-    ; tries "_imported_2", "_imported_3"... up to MAX_RENAME_ATTEMPTS.
-    ; Returns "" if it can't (unlikely accident).
+    ; Allocates a unique runId based on "<original>_imported". If
+    ; it's already taken (on disk OR in the alreadyClaimed set), tries
+    ; "_imported_2", "_imported_3", ... up to MAX_RENAME_ATTEMPTS.
+    ; Returns "" if nothing fits in that range — an unlikely accident.
     ;
-    ; alreadyClaimed: optional Map<runId, true>. Used by Preview to
-    ; avoid collision with runs WITHIN the same file (duplicates).
+    ; alreadyClaimed lets Preview reserve finalRunIds during its pass
+    ; so two runs in the same file with the same runId can't collide
+    ; with each other.
     _GenerateRenamedId(originalId, alreadyClaimed := "")
     {
         claimed := IsObject(alreadyClaimed) ? alreadyClaimed : Map()
@@ -441,8 +421,8 @@ class RunImportService
         return ""
     }
 
-    ; Helper: a runId is "in use" if it already exists on disk OR was
-    ; pre-reserved by Preview (claimedIds set).
+    ; A runId is "in use" when it already exists on disk OR was
+    ; pre-reserved during the current Preview pass.
     _IsRunIdInUse(id, claimedIds)
     {
         if IsObject(claimedIds) && claimedIds.Has(id)

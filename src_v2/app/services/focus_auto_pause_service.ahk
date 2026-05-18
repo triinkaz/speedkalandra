@@ -1,80 +1,50 @@
-; ============================================================
-; FocusAutoPauseService — automatic pause on focus loss (event-driven)
-; ============================================================
+; FocusAutoPauseService — automatic pause when PoE2 loses focus,
+; auto-resume when it gains focus back. Hybrid path: a primary log
+; signal and two polling backups.
 ;
-; Automatically pauses the timer when PoE2 loses focus (alt-tab to
-; the wiki, browser, discord, etc.) and resumes when it gains focus
-; back.
+;   PRIMARY — LogMonitorService publishes Evt.WindowFocusChanged when
+;     it parses "[WINDOW] Lost focus" / "[WINDOW] Gained focus" in
+;     Client.txt. Instant response when the log behaves.
 ;
-; ARCHITECTURE (v0.1.4 — hybrid log+polling, with process death detection):
-;
-;   PRIMARY (log): consumes Evt.WindowFocusChanged published by
-;     LogMonitorService when it parses "[WINDOW] Lost focus" /
-;     "[WINDOW] Gained focus" in PoE2's Client.txt. Instant response
-;     when the log works.
-;
-;   BACKUP 1 (focus polling, v0.1.1): subscribes to Evt.Tick and polls
-;     WinActive every ~300ms. Current PoE2 EA does NOT reliably emit
-;     "Gained focus" — without polling the timer stayed paused
+;   BACKUP 1 (focus polling) — subscribes to Evt.Tick and polls
+;     WinActive every ~300 ms. Current PoE2 EA does NOT reliably
+;     emit "Gained focus"; without polling the timer stayed paused
 ;     indefinitely when the user came back.
 ;
-;   BACKUP 2 (process polling, v0.1.4): on the same Tick, also checks
-;     ProcessExist for any known PoE2 executable. When the process
-;     died between ticks (Alt+F4 / crash / process kill), the focus
-;     never publishes "lost" (window simply vanishes) and the WinActive
-;     polling can race with the closing window state. ProcessExist
-;     gives an unambiguous boolean: process exists or doesn't.
+;   BACKUP 2 (process polling) — same Tick also checks ProcessExist
+;     against every known PoE2 executable. A sudden process death
+;     (Alt+F4 / crash / kill task) never publishes "lost focus" —
+;     the window simply vanishes and the WinActive polling can race
+;     with the closing window. ProcessExist gives an unambiguous
+;     boolean, and we force a "lost" event when it flips alive→absent.
 ;
-;     If the process was alive and is no longer alive, we force a
-;     "lost" focus event regardless of what WinActive reported. The
-;     timer pauses immediately — the run is preserved for when the
-;     user reopens the game.
+; All paths converge on _OnWindowFocusChanged. It's idempotent:
+; Pause on an already-paused timer and Resume on a running timer
+; are both no-ops.
 ;
-;   All paths call the SAME handler (_OnWindowFocusChanged) which is
-;   idempotent (Pause when paused = no-op, Resume when running = no-op).
+; Window identity is checked by ahk_exe (exact match on the process
+; name), never by title substring. A substring match would also fire
+; for a browser tab named "Path of Exile 2 - Wiki" or a Discord
+; channel with the game's name, hijacking the auto-pause.
 ;
-; SUBSTRING MATCH BUG (resolved via ahk_exe):
-;   The previous version polled WinActive("Path of Exile 2"). In
-;   AHK v2, default TitleMatchMode is substring — browsers / Discord
-;   with "Path of Exile 2" in the title caused false positives. The
-;   fix uses WinActive("ahk_exe XXX.exe"), exact match by executable.
+; Known executables (focus AND process polling share the same list):
+;   PoE2 Steam:        PathOfExile_x64Steam.exe, PathOfExileSteam.exe
+;   PoE2 standalone:   PathOfExile2_x64.exe, PathOfExile2.exe
+;   PoE2 hypothetical: PathOfExile2Steam.exe  (defensive)
+;   PoE1 / shared:     PathOfExile_x64.exe, PathOfExile.exe
 ;
-; KNOWN EXECUTABLES (also used for ProcessExist polling):
-;   PoE2 EA Steam:      PathOfExile_x64Steam.exe, PathOfExileSteam.exe
-;   PoE2 EA Standalone: PathOfExile2_x64.exe, PathOfExile2.exe
-;   PoE2 EA hypothetical (covered defensively): PathOfExile2Steam.exe
-;   PoE1 / shared binary: PathOfExile_x64.exe, PathOfExile.exe
-;
-; Behavior:
-;   - If settings.autoPauseOnFocus = false: noop (handler does nothing)
-;   - Lost focus / process died + timer RUNNING: pause + pausedByFocus flag
-;   - Gained focus + pausedByFocus: resume + clears flag
-;   - If user manually paused/resumed between the two, the pausedByFocus
-;     flag is preserved/respected (does not re-resume what the user
-;     manually paused)
-;
-; Construction:
-;   service := FocusAutoPauseService(bus, timerService, appSettings, logService)
-;     logService is OPTIONAL (defaults to NullLogger). Used to log
-;     transitions (Info level) for diagnostics.
-;
-; Lifecycle:
-;   service.Start()    ; subscribe to Evt.WindowFocusChanged + Tick
-;   service.Stop()     ; unsubscribe both
-;
-; For tests:
-;   service := FocusAutoPauseService(bus, timer, settings)
-;   service.Start()
-;   bus.Publish(Events.WindowFocusChanged, Map("state", "lost"))
-;   ; ... assert timer.IsPaused() etc.
+; The pausedByFocus flag tracks whether WE paused the timer (vs.
+; the user pausing manually mid-alt-tab); only our pauses are
+; auto-resumed on focus gained.
 
 
 class FocusAutoPauseService
 {
-    ; List of executables considered to be "PoE2 game running".
-    ; Used by both _IsGameActive (focus check) and _IsGameProcessAlive
-    ; (process existence check). Updated in v0.1.4 to add
-    ; PathOfExileSteam.exe (sibling of x64Steam, observed in Steam install).
+    ; Every known PoE2 executable. _IsGameActive and
+    ; _IsGameProcessAlive both iterate this list. Keep it in sync
+    ; with LoadingDetectionService.GAME_EXECUTABLES — a future build
+    ; with a new exe must update both, otherwise one service silently
+    ; breaks.
     static GAME_EXECUTABLES := [
         "PathOfExile2Steam.exe",
         "PathOfExile2_x64.exe",
@@ -88,15 +58,15 @@ class FocusAutoPauseService
     _bus      := ""
     _timer    := ""    ; TimerService
     _settings := ""    ; AppSettings
-    _log      := ""    ; LogService (Info method) — optional, defaults to NullLogger
+    _log      := ""    ; LogService (Info method), defaults to NullLogger
 
     _enabled         := false
     _pausedByFocus   := false
-    _lastGameActive  := true     ; v0.1.1: cache to detect focus transitions via polling
-    _lastGameAlive   := true     ; v0.1.4: cache to detect process death between ticks
+    _lastGameActive  := true     ; Snapshot for focus-transition detection.
+    _lastGameAlive   := true     ; Snapshot for process-death detection.
 
     _handlerFocusChanged := ""
-    _handlerTick         := ""   ; v0.1.1: backup polling via Tick
+    _handlerTick         := ""
 
     __New(bus, timerSvc, cfg, logService := "")
     {
@@ -120,9 +90,7 @@ class FocusAutoPauseService
         this._handlerTick         := (data) => this._OnTick(data)
     }
 
-    ; ============================================================
-    ; Lifecycle
-    ; ============================================================
+    ; ---- Lifecycle ----
 
     Start()
     {
@@ -157,26 +125,20 @@ class FocusAutoPauseService
     IsEnabled()         => this._enabled
     WasPausedByFocus()  => this._pausedByFocus
 
-    ; ============================================================
-    ; Evt.Tick handler (v0.1.1, extended v0.1.4) — polling backup
+    ; Evt.Tick polling backup. Two checks per tick:
     ;
-    ; v0.1.4 — TWO checks per tick:
+    ; (1) Process existence — catches Alt+F4 / crash / kill task.
+    ;     When the process dies between ticks, the WinActive check
+    ;     can race with the closing window. If process was alive
+    ;     last tick and isn't now, force a "lost focus" event so
+    ;     the run pauses immediately and is preserved for re-launch.
     ;
-    ;   (1) Process existence: catches Alt+F4 / crash / kill task. When
-    ;       the process died between ticks the WinActive polling alone
-    ;       may not detect it reliably (race with closing window). If
-    ;       process was alive last tick and isn't now, we treat it as
-    ;       "lost focus" — the run pauses immediately, preserved for
-    ;       when the user reopens the game.
+    ; (2) Focus transitions — alt-tab between the game and another
+    ;     window. Identical to the log-based path's outcome.
     ;
-    ;   (2) Focus transitions: original behavior (alt-tab between game
-    ;       and another window). Same handler is called.
-    ;
-    ; Idempotency guarantee: a Pause on already-paused timer is no-op.
-    ; If both detections fire on the same tick (process died = both lost
-    ; focus AND not alive), the handler is called once for each, but
-    ; the second is a no-op.
-    ; ============================================================
+    ; Both call _OnWindowFocusChanged, which is idempotent: even
+    ; when both checks fire on the same tick (process died implies
+    ; focus lost too), the second invocation is a no-op.
     _OnTick(data)
     {
         if !this._enabled
@@ -184,14 +146,14 @@ class FocusAutoPauseService
         if !this._settings.autoPauseOnFocus
         {
             ; Setting disabled — keep snapshots fresh so re-enabling
-            ; doesn't trigger a phantom transition.
+            ; mid-session doesn't fire a phantom transition.
             this._lastGameActive := this._IsGameActive()
             this._lastGameAlive  := this._IsGameProcessAlive()
             this._pausedByFocus  := false
             return
         }
 
-        ; --- (1) Process check (v0.1.4): did the game die? ---
+        ; (1) Did the game process die?
         isAlive := this._IsGameProcessAlive()
         if (isAlive != this._lastGameAlive)
         {
@@ -204,21 +166,21 @@ class FocusAutoPauseService
                 . (isAlive ? "alive" : "absent") ")",
                 "FocusAutoPause")
 
-            ; Process died -> force lost focus. The timer will pause.
-            ; We don't fire "gained" on process-alive transitions
-            ; because the user must focus the game window themselves;
-            ; the focus check below handles that case.
+            ; Process died → force a lost-focus event. We do NOT
+            ; auto-fire "gained" on the alive transition; the user
+            ; still needs to focus the game window, which the focus
+            ; check below picks up.
             if !isAlive
             {
-                ; Sync the focus snapshot too — if process is gone,
-                ; focus is logically gone as well.
+                ; Process gone, focus is logically gone too — keep
+                ; the focus snapshot consistent.
                 this._lastGameActive := false
                 this._OnWindowFocusChanged(Map("state", "lost"))
-                return   ; nothing else to do this tick
+                return
             }
         }
 
-        ; --- (2) Focus check (v0.1.1): alt-tab / focus stolen by other window ---
+        ; (2) Alt-tab / focus stolen by another window.
         isActive := this._IsGameActive()
         if (isActive = this._lastGameActive)
             return   ; no change, no-op
@@ -231,17 +193,9 @@ class FocusAutoPauseService
         this._OnWindowFocusChanged(Map("state", isActive ? "gained" : "lost"))
     }
 
-    ; ============================================================
-    ; _IsGameActive (v0.1.1)
-    ;
-    ; Detects whether the PoE2 window is currently focused. Exact match
-    ; by ahk_exe to avoid substring-match false positives (browsers /
-    ; Discord with "Path of Exile 2" in the title).
-    ;
-    ; Returns false if no known executable is focused. Future PoE2
-    ; versions with a different name silently fall back to log-based
-    ; detection — until the executable list is updated.
-    ; ============================================================
+    ; Returns true when one of the known PoE2 executables owns the
+    ; foreground window. Exact match on ahk_exe avoids the substring
+    ; trap from default TitleMatchMode.
     _IsGameActive()
     {
         for _, exeName in FocusAutoPauseService.GAME_EXECUTABLES
@@ -252,17 +206,9 @@ class FocusAutoPauseService
         return false
     }
 
-    ; ============================================================
-    ; _IsGameProcessAlive (v0.1.4)
-    ;
-    ; Detects whether ANY known PoE2 executable is currently running,
-    ; regardless of focus state. Used by the polling backup to catch
-    ; sudden process death (Alt+F4 inside the game / crash / task kill)
-    ; that the focus-only check can miss.
-    ;
-    ; ProcessExist(name) returns the PID (truthy) or 0. We do not store
-    ; the PID — just the boolean "any process alive".
-    ; ============================================================
+    ; Returns true when ANY known PoE2 executable is running,
+    ; focused or not. ProcessExist returns the PID (truthy) or 0;
+    ; we don't need the PID, just the boolean.
     _IsGameProcessAlive()
     {
         for _, exeName in FocusAutoPauseService.GAME_EXECUTABLES
@@ -273,19 +219,11 @@ class FocusAutoPauseService
         return false
     }
 
-    ; ============================================================
-    ; Evt.WindowFocusChanged handler
-    ;
-    ; Expected payload: Map("state", "lost" | "gained")
-    ;
-    ; Idempotent — duplicate handlers or redundant states do not cause
-    ; side effects (Pause on already-paused timer = no-op).
-    ;
-    ; Called by:
-    ;   - log-based path (Evt.WindowFocusChanged subscriber)
-    ;   - focus polling backup (_OnTick check 2)
-    ;   - process polling backup (_OnTick check 1, "lost" only)
-    ; ============================================================
+    ; WindowFocusChanged handler. Payload: Map("state", "lost" | "gained").
+    ; Idempotent — Pause on already-paused timer, Resume on running
+    ; timer are both no-ops. Called from three paths: the bus
+    ; subscription, the focus-polling tick branch, and the
+    ; process-polling tick branch ("lost" only).
     _OnWindowFocusChanged(data)
     {
         if !this._enabled
@@ -304,7 +242,8 @@ class FocusAutoPauseService
 
         if (state = "lost")
         {
-            ; Pause only if the timer was RUNNING (not already stopped/paused).
+            ; Only Pause if the timer was actually RUNNING (not
+            ; already paused or stopped).
             if this._timer.IsRunning()
             {
                 this._timer.Pause()
@@ -316,8 +255,8 @@ class FocusAutoPauseService
 
         if (state = "gained")
         {
-            ; Resume only if WE paused (not if the user paused
-            ; manually during the alt-tab).
+            ; Only Resume if WE caused the pause. A user-initiated
+            ; pause during the alt-tab must NOT be auto-resumed.
             if (this._pausedByFocus && this._timer.IsPaused())
             {
                 this._timer.Resume()
@@ -327,6 +266,6 @@ class FocusAutoPauseService
             return
         }
 
-        ; Unknown state — silently ignored.
+        ; Anything else — silently ignored.
     }
 }

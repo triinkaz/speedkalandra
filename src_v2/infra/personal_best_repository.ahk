@@ -1,17 +1,8 @@
-; ============================================================
-; PersonalBestRepository - persists PB times to disk (v17.13)
-; ============================================================
+; PersonalBestRepository — persists PBs to data/personal_bests.ini.
+; Updated by PersonalBestService after each RunCompleted (cancelled
+; runs do not become PBs).
 ;
-; SCOPE:
-;   Persists 2 categories of Personal Bests:
-;     - Full-run PB (best runDurationMs in a completed run)
-;     - Per-zone PB (best final zoneTotalMs in a completed run)
-;
-;   Saves to INI `data/personal_bests.ini`. Updated by
-;   PersonalBestService after each RunCompleted (NOT on RunCancelled —
-;   cancelled runs do not become PBs).
-;
-; INI FORMAT:
+; INI format:
 ;
 ;   [Run]
 ;   BestMs=410000
@@ -20,33 +11,22 @@
 ;   [RunByAct]
 ;   Act1Ms=1725000
 ;   Act2Ms=3900000
-;   Act3Ms=6900000
 ;   ...
 ;
 ;   [Zones]
 ;   Mud Burrow=215000
 ;   Clearfell=180000
-;   The Riverbank=95000
 ;   ...
 ;
-; [RunByAct] (v17.13): PB of the TOTAL RUN TIME at the moment each
-; act ended. Key = "Act<N>Ms" where N is the act number (1-10).
-; Replaces the global full-run PB (which uselessly mixed Act-1-only
-; runs with full-campaign runs).
-;
-; NOTE ON ZONE AS KEY:
-;   PoE2 zone names have no `=`, `]`, or newlines, so they work as
-;   INI keys without escaping. Spaces are allowed. If a zone with
-;   problematic characters shows up, IniFile.Write will fail and the
-;   save is skipped (try silences it).
+; [RunByAct] keys are "Act<N>Ms". Zone names are used as raw INI
+; keys; PoE2 names contain no `=`, `]`, or newlines, so they don't
+; need escaping. Any zone with problematic characters is sanitized
+; or dropped at serialize time.
 ;
 ; API:
-;   Load() -> Map{ "runPbMs": int, "runPbRunId": string, "zonePbs": Map<zone, ms> }
-;   Save(data) -> bool
-;   GetPath() -> string
-;
-; CONSTRUCTION:
-;   repo := PersonalBestRepository(A_ScriptDir "\data\personal_bests.ini")
+;   Load() → Map{ runPbMs, runPbRunId, runPbByAct, zonePbs }
+;   Save(data) → bool
+;   GetPath() → string
 
 
 class PersonalBestRepository
@@ -62,9 +42,7 @@ class PersonalBestRepository
 
     GetPath() => this._path
 
-    ; ------------------------------------------------------------
-    ; Load - returns Map with PBs (empty if the file does not exist)
-    ; ------------------------------------------------------------
+    ; Returns a Map with PBs, empty when the file doesn't exist yet.
     Load()
     {
         result := Map(
@@ -89,7 +67,7 @@ class PersonalBestRepository
         catch
             result["runPbRunId"] := ""
 
-        ; [RunByAct] (v17.13) — per-act PB
+        ; [RunByAct] — per-act PB
         try
         {
             byActMap := ini.ReadSectionAsMap("RunByAct")
@@ -143,27 +121,22 @@ class PersonalBestRepository
         return result
     }
 
-    ; ------------------------------------------------------------
-    ; Save - persists PBs to disk ATOMICALLY (v17.15, Bug #7)
+    ; Persists PBs atomically: serializes the full INI in memory,
+    ; then writes through AtomicWriter (.tmp + FileMove). A crash
+    ; before the FileMove leaves an orphan .tmp but the previous INI
+    ; intact. Without this, a crash mid-write (between successive
+    ; IniWrite calls, or between a Delete and the following Write)
+    ; would lose every PB accumulated up to that point.
     ;
-    ; Before: 6-8 sequential IniWrites with Delete between them. A
-    ; crash between Delete("RunByAct") and Write -> PBs accumulated
-    ; over weeks were lost.
+    ; Encoding is UTF-16 LE with BOM. AHK v2 IniRead key-lookup
+    ; (`IniRead(path, section, key, default)`) does NOT work on
+    ; UTF-8 BOM files — it always returns the default. Only UTF-16
+    ; LE BOM works (the native format produced by IniWrite). The
+    ; project's TextEncoding migrator enforces the same convention.
     ;
-    ; Now: serializes the entire INI in memory and writes via
-    ; AtomicWriter (.tmp + FileMove). A crash before FileMove leaves
-    ; an orphan .tmp but the original INI intact.
-    ;
-    ; ENCODING (v0.1.0): AtomicWriter uses "UTF-16" instead of "UTF-8".
-    ; Discovered in Wave 4 testing: AHK v2 IniRead key-lookup
-    ; (`IniRead(path, section, key, default)`) does NOT work on UTF-8
-    ; BOM files, always returning the default. Works only on UTF-16
-    ; LE BOM (the native IniWrite format). Latent bug in the project's
-    ; R11 (TextEncoding.MigrateIniToUtf8) too.
-    ;
-    ; Failures: logs to OutputDebug and returns false. Caller (service)
-    ; decides what to do (currently silences, but at least has the signal).
-    ; ------------------------------------------------------------
+    ; Failures are logged via OutputDebug and the method returns
+    ; false; the caller (PersonalBestService) currently silences
+    ; them but at least has the signal.
     Save(data)
     {
         if !IsObject(data)
@@ -182,28 +155,24 @@ class PersonalBestRepository
         }
     }
 
-    ; ------------------------------------------------------------
-    ; _Serialize - builds the complete INI content as a string
+    ; Builds the full INI content as a string, ready for AtomicWriter.
+    ; Output is parseable by IniRead (used by Load above).
     ;
-    ; Output compatible with IniRead (which Load uses to parse it).
-    ; Defensive: validates types, sanitizes zone keys.
-    ;
-    ; LINE ENDINGS: uses CRLF (`r`n) because IniRead calls Win32
-    ; GetPrivateProfileString, which on UTF-8 BOM files does NOT
-    ; recognize key=value separated by pure LF. Section reads
-    ; (`IniRead(file, section)`) tolerate LF, but key lookups
-    ; (`IniRead(file, section, key, default)`) return the default.
-    ; v0.1.0 fix: Windows convention.
-    ; ------------------------------------------------------------
+    ; Line endings are CRLF, not LF. IniRead calls Win32's
+    ; GetPrivateProfileString under the hood; on UTF-16 BOM files,
+    ; key lookups (`IniRead(file, section, key, default)`) refuse to
+    ; recognize entries separated by pure LF and silently return the
+    ; default. Section-wide reads (`IniRead(file, section)`) tolerate
+    ; LF, which is what made this trap hard to spot.
     static _Serialize(data)
     {
         ; --- [Run] ---
         runMs := (data.Has("runPbMs") && IsNumber(data["runPbMs"]))
                  ? Integer(data["runPbMs"]) : 0
-        ; v0.1.0: renamed from `runId` to `currentRunId` (case-insensitive
-        ; collision with the domain class `RunId` was triggering #Warn).
+        ; Local `runId` collides case-insensitively with the `RunId`
+        ; domain class and trips #Warn; rename here.
         currentRunId := data.Has("runPbRunId") ? String(data["runPbRunId"]) : ""
-        ; Sanitize id (paranoia: should not have invalid characters)
+        ; Paranoia: strip newlines that would corrupt the INI.
         currentRunId := StrReplace(currentRunId, "`r", "")
         currentRunId := StrReplace(currentRunId, "`n", "")
 
@@ -239,7 +208,7 @@ class PersonalBestRepository
                     continue
                 if !IsNumber(ms) || ms <= 0
                     continue
-                ; Sanitize zone name against chars that would break the INI
+                ; Strip characters that would break the INI structure.
                 zStr := StrReplace(zStr, "`r", "")
                 zStr := StrReplace(zStr, "`n", "")
                 zStr := StrReplace(zStr, "=", "")

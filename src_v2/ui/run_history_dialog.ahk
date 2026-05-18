@@ -1,52 +1,37 @@
-; ============================================================
-; RunHistoryDialog - list of saved runs (Wave 7, v17.6)
-; ============================================================
+; RunHistoryDialog — lists every saved run on disk and gives the
+; user actions over them (open plot, set as PB, delete, export,
+; import). Subscribes to Cmd.OpenRunHistoryRequested.
 ;
-; Auxiliary window that shows all runs persisted on disk (via
-; RunHistoryRepository) and lets the user open the plot for a
-; specific run.
-;
-; LAYOUT:
+; Layout:
 ;
 ;   +-------------------------------------------+
-;   | Header: Run History (N saved)             |
+;   | Run History (N saved)                     |
 ;   |                                           |
-;   | ListView 5 columns:                       |
-;   |   Date  |  RunId  |  Duration  |  Deaths  | Profile
+;   | ListView 5 cols:                          |
+;   |   Date | RunId | Duration | Deaths | Profile
 ;   |                                           |
-;   | [Open plot] [Delete]      [Close]         |
+;   | [Open plot] [Set as PB] [Delete] [Close]  |
+;   | [Export selected] [Export all] [Import...]|
 ;   +-------------------------------------------+
 ;
-; FLOW:
-;   - Open() lists runs from the repository
-;   - Click on a row + "Open plot": publishes
-;     Commands.OpenRunStatsPlotRequested with the chosen runId
-;     (actually publishes directly by calling the plot dialog with
-;     the loaded buildResult, to avoid coupling)
-;   - "Delete" (v17.15.1): deletes a run + rebuilds PBs from the
-;     remaining runs (discards the deleted run's contributions to
-;     the global PB, per-act PB, and per-zone PBs).
-;   - "Set as PB" (v17.15.1): pins the selected run as the official
-;     Personal Best (runPbMs + runPbRunId). Per-act and per-zone PBs
-;     stay intact (still aggregated from all runs).
+; Set as PB updates only runPbMs + runPbRunId (and runPbByAct
+; checkpoints when the chosen run has them). Per-zone PBs stay
+; aggregated from all runs.
 ;
-; SUBSCRIPTIONS:
-;   Commands.OpenRunHistoryRequested -> Open()
-;
-; CONSTRUCTION:
-;   dialog := RunHistoryDialog(bus, runHistory, plotDialog,
-;                              personalBest, headless)
+; Delete removes the run from disk and triggers
+; PersonalBestService.RebuildFromHistory on the remaining set, so a
+; PB sourced from the deleted run gets replaced or cleared.
 
 
 class RunHistoryDialog
 {
     static WINDOW_W := 620
-    static WINDOW_H := 520    ; v0.1.0: 480->520 to fit a second row of buttons (Export)
+    static WINDOW_H := 520    ; Tall enough to fit the second row of buttons.
 
     _bus         := ""
     _repo        := ""
     _plotDialog  := ""
-    _personalBest := ""    ; v17.15.1 — for RebuildFromHistory after delete
+    _personalBest := ""    ; PersonalBestService, for RebuildFromHistory / SetAsRunPb
     _headless    := false
 
     _gui    := ""
@@ -64,8 +49,8 @@ class RunHistoryDialog
             throw TypeError("RunHistoryDialog: 'runHistory' must be RunHistoryRepository")
         if !(plotDialog is RunStatsPlotDialog)
             throw TypeError("RunHistoryDialog: 'plotDialog' must be RunStatsPlotDialog")
-        ; v17.15.1: personalBest can be "" for back-compat (tests), but
-        ; in production it must be PersonalBestService.
+        ; personalBest can be "" for back-compat (tests can build without
+        ; it); in production it must be PersonalBestService.
         if (personalBest != "" && !(personalBest is PersonalBestService))
             throw TypeError("RunHistoryDialog: 'personalBest' must be PersonalBestService or empty")
 
@@ -79,9 +64,9 @@ class RunHistoryDialog
 
         bus.Subscribe(Commands.OpenRunHistoryRequested, (data) => this.Open())
 
-        ; v0.1.0: automatic refresh when an import completes. If the
-        ; dialog is open, reloads the list to show freshly imported
-        ; runs. If closed, no-op (next Open will read from disk normally).
+        ; Auto-refresh on import: if the dialog is open, reload the
+        ; list so freshly imported runs show up; if closed, no-op
+        ; (the next Open reads from disk anyway).
         bus.Subscribe(Events.RunsImported, (data) => this._OnRunsImported(data))
     }
 
@@ -161,11 +146,10 @@ class RunHistoryDialog
         btnClose := g.Add("Button", "x494 y" btnY " w100 h28", "Close")
         btnClose.OnEvent("Click", (*) => this.Close())
 
-        ; ---- Second row: export buttons (v0.1.0) ----
-        ; "Export selected" takes only the runs marked in the ListView.
-        ; "Export all" exports all runs in history. Both publish
-        ; Cmd.ExportRunsRequested; the handler in app.ahk opens the
-        ; ExportOptionsDialog.
+        ; Second row: export / import buttons.
+        ; "Export selected" takes only the marked rows; "Export all"
+        ; takes the whole history. Both publish Cmd.ExportRunsRequested
+        ; and the app handler opens ExportOptionsDialog.
         btnRow2Y := btnY + 28 + 6
         btnExportSel := g.Add("Button", "x14 y" btnRow2Y " w130 h28", "Export selected")
         btnExportSel.OnEvent("Click", (*) => this._OnExportSelected())
@@ -182,9 +166,7 @@ class RunHistoryDialog
         g.Show("w" RunHistoryDialog.WINDOW_W " h" RunHistoryDialog.WINDOW_H)
     }
 
-    ; ============================================================
-    ; _RefreshList - loads summaries from the repo and populates the ListView
-    ; ============================================================
+    ; Loads summaries from the repo and repopulates the ListView.
     _RefreshList()
     {
         if !IsObject(this._ctrls) || !this._ctrls.Has("list")
@@ -203,7 +185,8 @@ class RunHistoryDialog
             firstTs := sm.Has("firstTs") && sm["firstTs"] != ""
                        ? sm["firstTs"]
                        : RunHistoryDialog._DeriveDateFromRunId(sm["runId"])
-            ; v0.1.1: local `runId` collides with the `RunId` class. Use `currentRunId`.
+            ; Local `runId` collides case-insensitively with the
+            ; `RunId` domain class; use `currentRunId`.
             currentRunId := sm.Has("runId")      ? sm["runId"]      : ""
             totalMs      := sm.Has("totalMs")    ? sm["totalMs"]    : 0
             deaths       := sm.Has("deathCount") ? sm["deathCount"] : 0
@@ -234,12 +217,10 @@ class RunHistoryDialog
         }
     }
 
-    ; ============================================================
-    ; _OnOpenSelected - loads the run's buildResult and opens the plot
-    ; ============================================================
+    ; Loads the selected run's buildResult and opens the plot dialog.
     _OnOpenSelected()
     {
-        ; v0.1.1: local `runId` collides with the `RunId` class. Use `currentRunId`.
+        ; Same `runId` collision; use `currentRunId`.
         currentRunId := this._GetSelectedRunId()
         if (currentRunId = "")
             return
@@ -251,23 +232,17 @@ class RunHistoryDialog
             return
         }
 
-        ; Opens the plot dialog with this buildResult. Closes the
-        ; history afterwards to avoid visual overlap.
+        ; Close the history afterwards to avoid visual overlap with
+        ; the plot dialog.
         try this._plotDialog.OpenWithData(buildResult)
         this.Close()
     }
 
-    ; ============================================================
-    ; _OnDeleteSelected - deletes the selected run (with confirmation)
-    ;
-    ; v17.15.1: after deleting from disk, calls PersonalBestService.
-    ; RebuildFromHistory to discard the deleted run's contribution to
-    ; the PBs (global, per-act, per-zone). Without this, deleting an
-    ; "accidental" run that was the PB did not fix the PB.
-    ; ============================================================
+    ; Deletes the selected run after confirmation, then calls
+    ; PersonalBestService.RebuildFromHistory so any PB sourced from
+    ; the deleted run is replaced or cleared.
     _OnDeleteSelected()
     {
-        ; v0.1.1: local `runId` collides with the `RunId` class. Use `currentRunId`.
         currentRunId := this._GetSelectedRunId()
         if (currentRunId = "")
             return
@@ -308,16 +283,13 @@ class RunHistoryDialog
         }
     }
 
-    ; ============================================================
-    ; _OnSetAsPbSelected - pins the selected run as PB (v17.15.1)
-    ;
-    ; Updates ONLY runPbMs + runPbRunId in the PB service. Per-act
-    ; and per-zone PBs stay intact (still aggregated from all runs).
-    ; ============================================================
+    ; Pins the selected run as PB. Updates ONLY runPbMs + runPbRunId
+    ; (and the per-act checkpoints when the run carries them). Per-zone
+    ; PBs stay aggregated across all runs.
     _OnSetAsPbSelected()
     {
-        ; v0.1.1: local `runId` and `run` collide with the `RunId` class
-        ; and the builtin `Run`. Use `currentRunId` and `runItem`.
+        ; Locals `runId` / `run` collide with the `RunId` class and
+        ; the built-in `Run` function; use `currentRunId` / `runItem`.
         currentRunId := this._GetSelectedRunId()
         if (currentRunId = "")
             return
@@ -340,10 +312,10 @@ class RunHistoryDialog
             return
         }
 
-        ; Shows context: run time + current PB
-        ; v17.15.1: a multi-line ternary with a string literal at the
-        ; start of the second line fails the AHK v2 parser (same family
-        ; as Bug #25). Use explicit if/else.
+        ; Shows context: run time + current PB.
+        ; A multi-line ternary with a string literal at the start of
+        ; the second line fails the AHK v2 parser; use explicit
+        ; if/else instead.
         currentPbStr := "none"
         if this._personalBest.HasRunPb()
         {
@@ -360,7 +332,7 @@ class RunHistoryDialog
         ckptCount := IsObject(ckpts) ? ckpts.Count : 0
         ckptNote := ckptCount > 0
             ? "Per-act PBs (shown in overlay) will be REPLACED by this run's checkpoints (" ckptCount " acts)."
-            : "This run has no act checkpoints (saved before v17.15.1) so per-act PBs will NOT change."
+            : "This run has no act checkpoints (saved before that section was added) so per-act PBs will NOT change."
 
         result := ""
         try
@@ -424,16 +396,15 @@ class RunHistoryDialog
         return this._runIdsByRow[row]
     }
 
-    ; ============================================================
-    ; _GetSelectedRunIds (v0.1.0) - all marked rows
+    ; ---- Multi-select helpers ----
+
+    ; All marked rows (not just the focused one). Unlike
+    ; _GetSelectedRunId which uses GetNext(0, "F"), this iterates
+    ; the Selected state, which can span multiple rows. Used by
+    ; "Export selected".
     ;
-    ; Unlike _GetSelectedRunId (which uses "F" to grab only the focused
-    ; row), this iterates the Selected state which may be on multiple
-    ; rows. Used by "Export selected".
-    ;
-    ; AHK v2 NOTE: GetNext accepts "" (default=Selected), "C" (Checked)
-    ; or "F" (Focused). "S" does NOT exist — it was from AHK v1.
-    ; ============================================================
+    ; AHK v2: GetNext accepts "" (default = Selected), "C" (Checked)
+    ; or "F" (Focused). "S" doesn't exist — it was an AHK v1 holdover.
     _GetSelectedRunIds()
     {
         out := []
@@ -452,12 +423,8 @@ class RunHistoryDialog
         return out
     }
 
-    ; ============================================================
-    ; _OnExportSelected (v0.1.0)
-    ;
-    ; Collects runIds from marked rows and publishes Cmd.ExportRunsRequested.
-    ; If no rows are marked, shows a friendly hint.
-    ; ============================================================
+    ; Collects runIds from marked rows and publishes
+    ; Cmd.ExportRunsRequested. Empty selection → friendly hint.
     _OnExportSelected()
     {
         runIds := this._GetSelectedRunIds()
@@ -470,11 +437,8 @@ class RunHistoryDialog
         this._bus.Publish(Commands.ExportRunsRequested, Map("runIds", runIds))
     }
 
-    ; ============================================================
-    ; _OnExportAll (v0.1.0)
-    ;
-    ; Collects ALL runIds from history and publishes Cmd.ExportRunsRequested.
-    ; ============================================================
+    ; Collects every runId from disk and publishes
+    ; Cmd.ExportRunsRequested.
     _OnExportAll()
     {
         runIds := []
@@ -492,13 +456,9 @@ class RunHistoryDialog
         this._bus.Publish(Commands.ExportRunsRequested, Map("runIds", runIds))
     }
 
-    ; ============================================================
-    ; _OnImportClicked (v0.1.0)
-    ;
-    ; Opens FileSelect with the default folder in exports/ and
-    ; publishes Cmd.ImportRunsRequested. The handler in app.ahk does
-    ; the rest.
-    ; ============================================================
+    ; Opens FileSelect in exports/ and publishes
+    ; Cmd.ImportRunsRequested. The app handler runs Preview and pops
+    ; up ImportPreviewDialog.
     _OnImportClicked()
     {
         path := ""
@@ -520,12 +480,8 @@ class RunHistoryDialog
         this._bus.Publish(Commands.ImportRunsRequested, Map("path", path))
     }
 
-    ; ============================================================
-    ; _OnRunsImported (v0.1.0)
-    ;
-    ; Subscriber of Evt.RunsImported. Refreshes the list if the dialog
-    ; is open. Otherwise, no-op.
-    ; ============================================================
+    ; Subscriber for Evt.RunsImported — refresh the list when the
+    ; dialog is already open; otherwise no-op.
     _OnRunsImported(data)
     {
         if this._isOpen && this._gui

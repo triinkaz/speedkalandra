@@ -1,48 +1,26 @@
-; ============================================================
-; EventTraceLogger - log every event published on the EventBus (v0.1.4)
-; ============================================================
+; EventTraceLogger — logs every event published on the EventBus.
+; Registers itself as a bus interceptor and writes one line per
+; Publish to LogService (level INFO, context "Event") with the
+; payload serialized as readable text. Useful for diagnosing
+; ordering bugs, building a session audit trail, or reproducing
+; user-reported scenarios from a log attachment.
 ;
-; Cross-cutting observer that registers as an interceptor on the
-; EventBus and writes one log line per Publish, including the full
-; payload serialized as text. Useful for:
-;
-;   - Diagnosing bugs that depend on event ordering or content
-;   - Audit trail of what the app did in a session
-;   - Reproducing user scenarios from real log files
-;
-; OUTPUT TARGET:
-;   Writes via the application LogService (the same file as Info/Warn/
-;   Error messages — speedkalandra.log). Uses level INFO with context
-;   "Event" so it can be filtered with `grep "[Event]"`. Rotation
-;   (size and daily) is handled by LogService itself.
-;
-; FORMAT (one event per line, prefixed by LogService):
+; Output format (LogService prefix included):
 ;   [yyyy-MM-dd HH:mm:ss] INFO [Event] EventName | key1=val1, key2=val2
 ;
-; PAYLOAD SERIALIZATION:
-;   - String, number, bool: direct (truncated > 200 chars)
-;   - Map: "{key1=val1, key2=val2}" (recursive, depth limit 2)
-;   - Array: "[item1, item2, ...]" (max 10 items)
-;   - Object: "<ClassName>" (we don't iterate arbitrary properties to
-;     avoid surprises with circular references)
-;   - Empty string / unset: "(none)"
+; Payload serialization:
+;   String / number / bool — direct, truncated past 200 chars
+;   Map                    — "{k=v, k=v}", recursive up to depth 2
+;   Array                  — "[item, ...]", up to 10 items
+;   Object                 — "<ClassName>" (no property iteration
+;                            so circular refs and slow getters
+;                            can't bite us)
+;   Empty / unset          — "(none)"
 ;
-; LIFECYCLE:
-;   logger := EventTraceLogger(bus, logService)
-;   logger.Start()    ; registers the interceptor (idempotent)
-;   logger.Stop()     ; unregisters
-;
-; CAVEAT:
-;   Event volume can be very high (every Tick at ~300ms = 3 events/s
-;   minimum, plus zone/timer/etc. events). In a long session this
-;   significantly inflates the log file. The LogService size-based
-;   rotation (5MB -> rotation) and daily rotation handle that.
-;
-;   To temporarily disable event trace without recompiling, just don't
-;   call Start() — the interceptor isn't registered and there is zero
-;   overhead per Publish.
-;
-; ============================================================
+; Event volume is high in normal play (a Tick every 300 ms, plus
+; gameplay events). LogService size-based + daily rotation handles
+; the file growth; opt-out is simply not calling Start() — the
+; interceptor isn't registered and Publish pays zero overhead.
 
 class EventTraceLogger
 {
@@ -63,13 +41,11 @@ class EventTraceLogger
             throw TypeError("EventTraceLogger: 'logService' must have Info() method")
         this._bus := bus
         this._log := logService
-        ; Bind once. Required so RemoveInterceptor finds the same reference.
+        ; Bind once — RemoveInterceptor matches by reference.
         this._interceptorFn := (eventName, data) => this._OnPublish(eventName, data)
     }
 
-    ; ============================================================
-    ; Lifecycle
-    ; ============================================================
+    ; ---- Lifecycle ----
 
     Start()
     {
@@ -89,32 +65,22 @@ class EventTraceLogger
 
     IsEnabled() => this._enabled
 
-    ; ============================================================
-    ; Public test helpers
-    ;
-    ; Exposes formatting in a static method so tests can assert on
-    ; the output format without depending on injected logger.
-    ; ============================================================
+    ; Exposes the formatting through a static method so tests can
+    ; assert on the output without an injected logger.
     static FormatPayload(data) => EventTraceLogger._SerializeValue(data, 0)
 
-    ; ============================================================
-    ; Interceptor body
-    ; ============================================================
+    ; ---- Interceptor body ----
 
     _OnPublish(eventName, data)
     {
         payload := EventTraceLogger._SerializeValue(data, 0)
-        ; LogService context becomes "[Event]" in the file, easy to grep.
+        ; Context "Event" becomes "[Event]" in the log file, easy to grep.
         try this._log.Info(eventName . " | " . payload, "Event")
     }
 
-    ; ============================================================
-    ; Payload serialization
-    ;
-    ; Format goal: 1 line, readable in `grep`, with enough info to
-    ; reproduce a scenario. We don't aim for round-trip JSON — we
-    ; aim for diagnostic readability.
-    ; ============================================================
+    ; ---- Payload serialization ----
+    ; Goal: one readable line per event, enough info to reproduce
+    ; a scenario. Not aiming for round-trip JSON.
 
     static _SerializeValue(value, depth)
     {
@@ -146,9 +112,9 @@ class EventTraceLogger
             return EventTraceLogger._SerializeMap(value, depth)
         }
 
-        ; Generic object: stamp the class name. We avoid iterating
-        ; arbitrary properties to dodge circular references and
-        ; performance surprises.
+        ; Generic object — stamp the class name only. Iterating
+        ; arbitrary properties would risk circular refs and slow
+        ; getters surfacing inside Publish.
         return "<" Type(value) ">"
     }
 
@@ -168,8 +134,8 @@ class EventTraceLogger
 
     static _SerializeArray(arr, depth)
     {
-        ; Local name `maxItems` (not `max`) to avoid AHK v2 warning about
-        ; shadowing the global `Max()` function.
+        ; Use `maxItems`, not `max` — the latter shadows the global
+        ; Max() function and trips an AHK v2 warning.
         if (arr.Length = 0)
             return "[]"
         items := []
@@ -193,8 +159,8 @@ class EventTraceLogger
 
     static _FormatString(s)
     {
-        ; Escapes newlines/tabs and truncates. The output stays on a
-        ; single line, readable in `grep`.
+        ; Escape newlines/tabs and truncate so the output stays on a
+        ; single line, grep-friendly.
         out := StrReplace(s, "`r", "\r")
         out := StrReplace(out, "`n", "\n")
         out := StrReplace(out, "`t", "\t")
@@ -203,15 +169,14 @@ class EventTraceLogger
 
     static _TruncateScalar(s)
     {
-        ; Local name `maxLen` (not `max`) to avoid AHK v2 warning about
-        ; shadowing the global `Max()` function.
+        ; Same shadowing reason as _SerializeArray — don't name this `max`.
         maxLen := EventTraceLogger.MAX_VALUE_LEN
         if (StrLen(s) <= maxLen)
             return s
         return SubStr(s, 1, maxLen) "...(+" (StrLen(s) - maxLen) ")"
     }
 
-    ; AHK v2 has no built-in Array.Join. Small helper.
+    ; AHK v2 has no Array.Join.
     static _JoinArray(arr, sep)
     {
         out := ""

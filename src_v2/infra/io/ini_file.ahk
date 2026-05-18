@@ -1,27 +1,23 @@
-﻿; ============================================================
-; IniFile — wrapper over IniRead/IniWrite/IniDelete
-; ============================================================
+﻿; IniFile — thin wrapper over IniRead / IniWrite / IniDelete.
+; Centralizes directory creation and error isolation, so repositories
+; can take an IniFile in their constructor and stay decoupled from
+; the filesystem (tests inject one pointing at a tempfile).
 ;
-; Why does it exist?
-;   - Legacy modules (settings.ahk, state.ahk) call IniRead/IniWrite
-;     with INI_FILE as a global passed around everywhere. The wrapper
-;     centralizes encoding, directory creation, and error isolation.
-;   - Phase 3 repositories receive an IniFile instance in their
-;     constructor. That decouples the repo from the global filesystem.
-;   - Tests inject an IniFile pointing at a tempfile.
-;
-; Encoding:
-;   AHK v2 auto-detects UTF-16-LE / UTF-8 / ANSI by the BOM.
-;   IniWrite uses UTF-16-LE when the file does not exist. For existing
-;   files, it keeps the original encoding. We don't need to specify.
+; Encoding: AHK v2 auto-detects UTF-16-LE / UTF-8 / ANSI from the
+; BOM. IniWrite creates new files as UTF-16 LE with BOM; existing
+; files keep their encoding. The project relies on the UTF-16 LE
+; BOM default because IniRead's key-lookup variant
+; (`IniRead(file, section, key, default)`) silently returns the
+; default on UTF-8 BOM files — see text_encoding.ahk for the full
+; story.
 ;
 ; Usage:
 ;   ini := IniFile(A_ScriptDir "\poe2_tracker.ini")
-;   ini.Read("General", "ProfileName", "Default")  ; with default
+;   ini.Read("General", "ProfileName", "Default")
 ;   ini.Write("Default", "General", "ProfileName")
 ;   ini.Delete("Progress", "a1_01_riverbank_miller")
 ;   ini.SectionExists("Run")
-;   ini.KeysIn("Progress")  ; -> Array<string>
+;   ini.KeysIn("Progress")  ; → Array<string>
 
 
 class IniFile
@@ -34,20 +30,10 @@ class IniFile
             throw ValueError("IniFile: 'path' is required")
         this.path := path
         this._EnsureDir()
-        ; Encoding: AHK v2 IniWrite creates UTF-16 LE BOM by default when
-        ; the file does not exist. We DO NOT try to migrate to UTF-8 —
-        ; AHK v2's IniRead key-lookup ONLY works in UTF-16 LE BOM (in
-        ; UTF-8 BOM, it silently returns the default). See R11.1 doc in
-        ; text_encoding.ahk and the pitfall test in
-        ; PersonalBestRepositoryTests.iniread_key_lookup_works_in_utf16_le_bom_but_not_utf8_bom.
     }
 
-    ; ------------------------------------------------------------
-    ; Read(section, key, default := "")
-    ;   Reads a specific value. If the key does not exist and a default
-    ;   was passed, returns the default. If default is "" and the key
-    ;   does not exist, returns "" (NEVER throws).
-    ; ------------------------------------------------------------
+    ; Reads a specific value. Returns `default` (or "") for missing
+    ; keys; never throws.
     Read(section, key, default := "")
     {
         try
@@ -56,11 +42,8 @@ class IniFile
             return default
     }
 
-    ; ------------------------------------------------------------
-    ; ReadSection(section) -> string (multi-line "key=value\n...")
-    ;   Useful to list all keys in a section. Returns "" if the
-    ;   section does not exist.
-    ; ------------------------------------------------------------
+    ; Returns the full section block as a "key=value\n..." string,
+    ; or "" when the section is absent. Useful for listing keys.
     ReadSection(section)
     {
         try
@@ -69,10 +52,7 @@ class IniFile
             return ""
     }
 
-    ; ------------------------------------------------------------
-    ; KeysIn(section) -> Array<string>
-    ;   Parses ReadSection and returns only the key names.
-    ; ------------------------------------------------------------
+    ; Parses ReadSection and returns only the key names.
     KeysIn(section)
     {
         keys := []
@@ -95,10 +75,7 @@ class IniFile
         return keys
     }
 
-    ; ------------------------------------------------------------
-    ; ReadSectionAsMap(section) -> Map<key, value>
-    ;   Reads all keys of a section as a Map.
-    ; ------------------------------------------------------------
+    ; Reads every key=value pair of a section into a Map.
     ReadSectionAsMap(section)
     {
         result := Map()
@@ -122,57 +99,44 @@ class IniFile
         return result
     }
 
-    ; ------------------------------------------------------------
-    ; Write(value, section, key)
-    ;   Arguments in the SAME order as native IniWrite (value, file,
-    ;   section, key) minus the file. Keeps consistency with the AHK API.
-    ; ------------------------------------------------------------
+    ; Arguments mirror native IniWrite (value, section, key), minus
+    ; the file path — it's already bound to this instance.
     Write(value, section, key)
     {
         IniWrite(value, this.path, section, key)
     }
 
-    ; ------------------------------------------------------------
-    ; WriteVerbatim(value, section, key)
+    ; Same as Write but preserves values that contain their own
+    ; leading/trailing double quotes (vendor regex strings being the
+    ; canonical case).
     ;
-    ; Like Write, but preserves values where the user typed leading/
-    ; trailing double-quotes (vendor regex strings being the canonical
-    ; case).
-    ;
-    ; AHK's IniRead has an undocumented-but-stable behavior: when a
-    ; value is enclosed in a SINGLE pair of double quotes
-    ; ("..." anywhere from start to end), IniRead strips that pair
-    ; on read. So:
+    ; IniRead has an undocumented-but-stable behavior: when a value
+    ; is wrapped in a single pair of double quotes from start to end,
+    ; IniRead strips that pair on read. So writing the user's raw
+    ; string would lose its outer quotes:
     ;
     ;     IniWrite('"!(uiv)" "melee"', file, sec, key)
-    ;     -> file content: key="!(uiv)" "melee"
-    ;     -> IniRead returns: !(uiv)" "melee   <-- outer quotes stripped
+    ;     → file content: key="!(uiv)" "melee"
+    ;     → IniRead returns: !(uiv)" "melee   (outer pair stripped)
     ;
-    ; The fix is to ALWAYS wrap in an extra pair of quotes on write.
-    ; Then IniRead strips the pair WE added, returning the user's
-    ; original string intact (including its own quotes):
+    ; The workaround: always wrap with one extra pair of quotes on
+    ; write. IniRead then strips the pair WE added and returns the
+    ; original string intact, quotes and all:
     ;
     ;     IniWrite('""!(uiv)" "melee""', ...)
-    ;     -> file content: key=""!(uiv)" "melee""
-    ;     -> IniRead returns: "!(uiv)" "melee"   <-- correct!
+    ;     → file content: key=""!(uiv)" "melee""
+    ;     → IniRead returns: "!(uiv)" "melee"   ✓
     ;
-    ; The wrapping is idempotent on reload because the next Write
-    ; re-wraps from the already-unwrapped value.
-    ;
-    ; Read for a verbatim value uses the regular Read method — no
-    ; special read-side handling is needed since IniRead does the
-    ; un-wrap automatically.
-    ; ------------------------------------------------------------
+    ; Idempotent across save/reload — the next Write wraps from the
+    ; already-unwrapped value. Reading a verbatim value uses Read()
+    ; with no special handling; IniRead does the unwrap automatically.
     WriteVerbatim(value, section, key)
     {
         IniWrite('"' . String(value) . '"', this.path, section, key)
     }
 
-    ; ------------------------------------------------------------
-    ; Delete(section, key := "")
-    ;   If key is empty, deletes the entire section. No effect if
-    ;   it does not exist (never throws).
-    ; ------------------------------------------------------------
+    ; Empty key deletes the entire section. No effect when missing;
+    ; never throws.
     Delete(section, key := "")
     {
         try
@@ -184,19 +148,11 @@ class IniFile
         }
     }
 
-    ; ------------------------------------------------------------
-    ; Exists() -> bool
-    ;   True if the file exists on disk.
-    ; ------------------------------------------------------------
     Exists()
     {
         return FileExist(this.path) != ""
     }
 
-    ; ------------------------------------------------------------
-    ; SectionExists(section) -> bool
-    ;   True if the section has at least one key.
-    ; ------------------------------------------------------------
     SectionExists(section)
     {
         return this.ReadSection(section) != ""
@@ -204,9 +160,8 @@ class IniFile
 
     GetPath() => this.path
 
-    ; ------------------------------------------------------------
-    ; Private helpers
-    ; ------------------------------------------------------------
+    ; ---- Private ----
+
     _EnsureDir()
     {
         SplitPath(this.path, , &dir)

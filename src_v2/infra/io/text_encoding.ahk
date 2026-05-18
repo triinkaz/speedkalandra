@@ -1,76 +1,45 @@
-﻿; ============================================================
-; TextEncoding — BOM detection (R11.1)
-; ============================================================
+﻿; TextEncoding — BOM detection only.
 ;
-; HISTORY:
-;   - R11 introduced TextEncoding with 3 methods:
-;       DetectBom            -> identifies encoding via BOM
-;       ConvertUtf16ToUtf8   -> rewrites UTF-16 LE as UTF-8 BOM
-;       MigrateIniToUtf8     -> detect+convert facade for INIs
+; Project invariant: every INI file ships and stays as UTF-16 LE
+; with BOM — the format IniWrite generates by default. The reason
+; is brutal: AHK v2's IniRead key-lookup
+; (`IniRead(path, section, key, default)`) ONLY recognizes entries
+; in UTF-16 LE BOM. On UTF-8 BOM it silently returns the default
+; for every key, no error, no warning — a saved INI looks empty
+; on the next boot, every PB/run state/setting reads as missing.
 ;
-;   - R11.1 (Bug #2, Wave 9 regression tests): ConvertUtf16ToUtf8 and
-;     MigrateIniToUtf8 were REMOVED. Keep only DetectBom.
+; Alternatives that were considered and rejected:
+;   - UTF-8 without BOM → AHK reads as ANSI/CP1252; accents break.
+;   - UTF-16 BE → no explicit BE flag in AHK v2 FileRead.
+;   - UTF-8 BOM → the silent IniRead failure above.
+;   - UTF-16 LE BOM → default already; the only working option.
 ;
-; WHY THE REMOVAL:
-;   AHK v2's IniRead key-lookup ONLY works in UTF-16 LE BOM files.
-;   On UTF-8 BOM, IniRead(path, section, key, default) always returns
-;   the default — regardless of line endings, correct encoding, etc.
+; This module used to ship ConvertUtf16ToUtf8 / MigrateIniToUtf8
+; helpers; both were removed once the IniRead failure was confirmed
+; empirically. The pitfall is also captured by the
+; PersonalBestRepository test
+; `iniread_key_lookup_works_in_utf16_le_bom_but_not_utf8_bom`.
 ;
-;   MigrateIniToUtf8 promised "auto-convert INIs from UTF-16 to UTF-8
-;   BOM to save space and improve diffs". But the side effect was
-;   catastrophic: EVERY repository's Load() silently failed, returning
-;   defaults for every key. PBs, run state, settings — all read as if
-;   they did not exist.
+; DetectBom is diagnostic only — useful for validating that a file
+; on disk is in the expected encoding. It does NOT convert.
 ;
-;   The bug stayed latent because IniFile.__New had the call wrapped
-;   in try/catch and the function was disabled before being widely
-;   tested. Wave 9 regression tests (text_encoding_tests
-;   `iniread_works_after_migration_*`) confirmed empirically that
-;   IniRead failed after the migration.
-;
-;   No viable fix path:
-;     - UTF-8 without BOM: AHK treats it as ANSI/CP1252; accents break.
-;     - UTF-16 BE: AHK v2 FileRead has no explicit BE flag.
-;     - UTF-8 BOM: what MigrateIniToUtf8 did — breaks IniRead.
-;     - Keep UTF-16 LE: what AHK already generates by default — the
-;                       function becomes a semantic no-op.
-;
-;   Conclusion: the migration was an UNFEASIBLE feature. The project's
-;   INIs remain in UTF-16 LE BOM (what AHK generates by default in
-;   IniWrite when the file does not exist). No migration = no bug.
-;
-; RELATED PITFALL (PersonalBestRepositoryTests):
-;   The test `iniread_key_lookup_works_in_utf16_le_bom_but_not_utf8_bom`
-;   documents the AHK v2 behavior that motivated this removal.
-;
-; CURRENT USAGE:
 ;   enc := TextEncoding.DetectBom(path)
 ;   ; enc in {"UTF-16-LE", "UTF-16-BE", "UTF-8-BOM", "NONE"}
-;
-;   ; Use cases: diagnosis, debug, validate that IniWrite produced
-;   ; the expected encoding. DO NOT use to convert — we no longer
-;   ; have that capability in the project.
 
 
 class TextEncoding
 {
-    ; ------------------------------------------------------------
-    ; DetectBom(path) -> "UTF-16-LE" | "UTF-16-BE" | "UTF-8-BOM" | "NONE"
-    ;
-    ; Reads the first 2-3 bytes of the file via FileRead(..., "RAW")
-    ; and identifies the BOM. "NONE" covers: empty file, no BOM, or
-    ; smaller than 2 bytes.
-    ;
-    ; Throws OSError if the file does not exist.
-    ; ------------------------------------------------------------
+    ; Reads the first 2-3 bytes via FileRead("RAW") and identifies
+    ; the BOM. "NONE" covers empty files, missing BOM, or anything
+    ; shorter than 2 bytes. Throws OSError when the file is missing.
     static DetectBom(path)
     {
         if !FileExist(path)
             throw OSError("TextEncoding.DetectBom: file does not exist: " path)
 
-        ; FileRead "RAW" returns a Buffer with raw bytes, no decode.
-        ; Limits to 4 bytes to avoid loading large files when we only
-        ; need the BOM.
+        ; FileRead with "RAW" returns a Buffer of raw bytes (no
+        ; decode). The BOM lives in the first 2-3, no need to load
+        ; large files.
         buf := FileRead(path, "RAW")
         if (buf.Size < 2)
             return "NONE"

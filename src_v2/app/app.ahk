@@ -1,47 +1,16 @@
-; ============================================================
-; SpeedKalandraApp - composition root (Wave 7, v17.10)
-; ============================================================
+; SpeedKalandraApp — composition root.
 ;
-; POST-DEMOLITION VERSION: focused on pure speedrun.
+; Persistence: timer base + loading total + per-zone totals are
+; written to the INI every 5s by _PersistRunData, with a hash cache
+; that skips IniWrite when nothing has changed (a naive write was
+; blocking the thread for 1–2s every tick).
 ;
-; RUN PERSISTENCE (crash recovery + perf):
-;   4 pieces are persisted to the INI:
-;     1. [RunState].(RunId,StartedAt,Status) — metadata (transitions only)
-;     2. [RunState].RunBaseMs                — timer (5s periodic tick)
-;     3. [RunState].LoadingTotalMs           — accumulated loading
-;     4. [RunZoneTotals]                     — Map<zone, ms>
-;
-;   CRITICAL OPTIMIZATION (v14.1): _PersistRunData uses a hash cache to
-;   skip unnecessary IniWrites. Previously did 25 IniWrites every 5s
-;   blocking the thread for 1-2s — caused 6s lag in pause-detection.
-;
-; RUN HISTORY (v17.6 + v17.10):
-;   Every run is saved to data/runs/{runId}.ini by RunHistoryRepository.
-;   Save happens on two events:
-;     - Evt.RunCompleted (Ctrl+Alt+F) — always saved
-;     - Evt.RunCancelled (Ctrl+Alt+N -> CancelRun, or Ctrl+Alt+R) —
-;       saved only if runMs >= MIN_CANCELLED_SAVE_MS (3min). Avoids
-;       garbage from quick aborts / tests.
-;
-;   SUBSCRIBE ORDER (v17.10):
-;     EventBus calls subscribers in FIFO order. RunStatsRecorder and
-;     ZoneTrackingService both clear their internal state on RunCancelled.
-;     If we subscribed our save handler in Start() (after them), the
-;     snapshot would already come back empty.
-;
-;     Solution: we subscribe the handlers in __New, RIGHT AFTER creating
-;     this.runHistory and BEFORE instantiating zoneTracker and statsRecorder.
-;     That way our handler is called FIRST when RunCancelled fires, with
-;     state intact.
-;
-;     The arrow function captures `this` by scope (not by value); when
-;     the handler is invoked, this.statsRecorder etc. already exist.
-;
-; AUTO-MICRO VIA PANEL KEYS (REMOVED in v17.2):
-;   PanelKeyService DISCONNECTED. MICRO only activates via Ctrl+F9.
-;
-; GAME PAUSE DETECTION (REMOVED in v17.5):
-;   GamePauseDetectionService DISCONNECTED (false positives).
+; Run history: every run is saved to data/runs/{runId}.ini, triggered
+; by RunCompleted (always) or RunCancelled (only if >= 3 min). The
+; save handlers are subscribed in __New BEFORE RunStatsRecorder and
+; ZoneTrackingService are constructed — the bus is FIFO, and those
+; services clear their state on the same events. Subscribing later
+; in Start() would hand the save handler an empty snapshot.
 
 
 class SpeedKalandraApp
@@ -67,13 +36,13 @@ class SpeedKalandraApp
     loadingDetection := ""
     loadingTotals    := ""
     personalBest     := ""
-    actCheckpoints   := ""   ; v17.13
+    actCheckpoints   := ""
     statsRecorder    := ""
     plotBuilder      := ""
     autoFinalize     := ""
     autoStart        := ""
 
-    runHistory      := ""    ; RunHistoryRepository — v17.6
+    runHistory      := ""
 
     overlayMode     := ""
     overlayApplier  := ""
@@ -82,39 +51,40 @@ class SpeedKalandraApp
     hotkeyService   := ""
     overlayInter    := ""
     tickEmitter     := ""
-    eventTracer     := ""    ; v0.1.4 — EventTraceLogger (logs every Publish)
+    eventTracer     := ""    ; EventTraceLogger — records every bus Publish; opt-in (see [Diagnostics] in the INI)
 
     compactWidget := ""
     microWidget   := ""
-    steveWidget   := ""    ; v17.14
+    steveWidget   := ""
     widgets       := ""
 
     settingsDialog     := ""
     plotDialog         := ""
     runHistoryDialog   := ""
-    exportDialog       := ""    ; v0.1.0 — export/import feature
-    importPreviewDialog := ""   ; v0.1.0 — export/import feature
+    exportDialog       := ""
+    importPreviewDialog := ""
 
-    runExportService   := ""    ; v0.1.0 — export/import feature
-    runImportService   := ""    ; v0.1.0 — export/import feature
+    runExportService   := ""
+    runImportService   := ""
 
     _started   := false
     _persistFn := ""
     _logMonitorTimer  := ""
     _runPersistTimer  := ""
-    _headless         := false    ; v17.13 — controls whether confirmation MsgBoxes are shown
+    _headless         := false
 
     _lastSavedLoadingTotal := -1
     _lastSavedZoneTotalsHash := ""
 
-    ; v17.15 (Bug #9): flag to reset level only on the FIRST entry
-    ; into Riverbank in the run. Previously, any re-entry (death
-    ; respawn, portal, party invite) silently reset characterLevel to 1.
+    ; First entry into the Riverbank in a run resets the cached
+    ; character level (the game shows the level-1 zone for the
+    ; first time of a fresh char). Subsequent re-entries (death,
+    ; portal, party invite) must NOT reset, or the cached level
+    ; goes back to 1 until the next CharacterLevelUp line.
     _riverbankSeenInRun := false
 
-    ; v17.14 — "Undo last save" (F1): runId of the most recent save
-    ; that can still be undone. Cleared after 60s by _undoTimerFn
-    ; or when undo is executed.
+    ; runId of the most recent save that can still be undone via
+    ; the F1 tray menu. Cleared after 60s or once undo runs.
     _lastSavedRunId := ""
     _undoTimerFn    := ""
 
@@ -139,13 +109,12 @@ class SpeedKalandraApp
 
         this.log   := LogService(logPath, "INFO", headless ? 1 : 32)
         this.bus   := EventBus(this.log)
-        ; v0.1.4: register the event-trace interceptor BEFORE any service
-        ; subscribes — guarantees the trace captures every Publish from
-        ; the moment the app starts wiring. Start() is called below in
-        ; Start(), not here; construction only prepares the object.
+        ; The event-trace interceptor is registered BEFORE any service
+        ; subscribes — guarantees the trace captures every Publish
+        ; from the moment wiring starts. It's only started later in
+        ; Start() (and only if cfg.eventTracingEnabled is set).
         this.eventTracer := EventTraceLogger(this.bus, this.log)
-        ; v0.1.1: clock injectable via cfgMap so integration tests can use FakeClock.
-        ; Default is RealClock (NowMs = A_TickCount).
+        ; Clock is injectable so integration tests can plug in FakeClock.
         this.clock := cfgMap.Has("clock") ? cfgMap["clock"] : RealClock()
 
         ini := IniFile(iniPath)
@@ -155,12 +124,12 @@ class SpeedKalandraApp
         this.zonesCatalog := ZonesCatalog(zonesCsvPath)
         this.log.Info("Zones catalog loaded: " this.zonesCatalog.Count() " zones", "App")
 
-        ; Run history (v17.6)
+        ; Run history
         this.runHistory := RunHistoryRepository(runHistoryDir)
 
-        ; Personal bests (v17.13) — loaded from the INI in the service
-        ; constructor (via repo.Load). Updated in _SaveRunSnapshot when
-        ; reason="completed".
+        ; Personal bests are loaded by the repository inside
+        ; PersonalBestService.__New, then updated in _SaveRunSnapshot
+        ; when reason="completed".
         this.personalBest := PersonalBestService(PersonalBestRepository(pbPath))
         if this.personalBest.HasRunPb()
         {
@@ -169,15 +138,10 @@ class SpeedKalandraApp
                 . this.personalBest.GetRunPbRunId() . ")", "App")
         }
 
-        ; (ActCheckpointTracker is instantiated FURTHER DOWN, after
-        ; this.timer is created — it depends on TimerService.GetRunMs.)
-
-        ; ============================================================
-        ; v17.10: HISTORY SAVE handlers — subscribed NOW, before the
-        ; services that clear state on RunCancelled (statsRecorder and
-        ; zoneTracker further down). EventBus FIFO order ensures our
-        ; handlers are called first, with the snapshot intact.
-        ; ============================================================
+        ; Save handlers subscribed NOW, before the services that
+        ; clear their state on RunCancelled (zoneTracker and
+        ; statsRecorder, further down). The bus is FIFO; our handler
+        ; needs to run first while the snapshot is still intact.
         this.bus.Subscribe(Events.RunCompleted,
             (data) => this._SaveRunSnapshot("completed"))
         this.bus.Subscribe(Events.RunCancelled,
@@ -187,34 +151,26 @@ class SpeedKalandraApp
         this.timer      := TimerService(this.clock, this.bus)
         this.runService := RunService(this.clock, this.bus, this.timer, this.runState)
 
-        ; Act checkpoint tracker (v17.13) — tracks total run time at
-        ; each act transition. Feeds per-act PB on finalize. Depends on
-        ; this.timer (for GetRunMs), so instantiated HERE right after
-        ; the timer.
+        ; Tracks total run time at each act transition; feeds the
+        ; per-act PB on finalize. Depends on this.timer for GetRunMs.
         this.actCheckpoints := ActCheckpointTracker(this.bus, this.timer)
 
         hydratedState := this.runState.Load()
         ; runService.Hydrate intentionally NOT called here. When the
         ; hydrated state has an active run, Hydrate publishes
-        ; Evt.RunStarted{hydrated:true} — and several services that
-        ; depend on that event (RunStatsRecorder, ZoneTrackingService,
-        ; the _OnRunStartedForXp handler, etc.) are constructed below.
-        ; If we hydrated here those subscribers would miss the event
-        ; and end up with stale state (notably RunStatsRecorder would
-        ; keep _runId="" and the finalized hydrated run would silently
-        ; fail to save to history). The call is deferred to the end of
-        ; __New, after every service is wired up.
+        ; Evt.RunStarted{hydrated:true} — several services that need
+        ; that event (RunStatsRecorder, ZoneTrackingService, the
+        ; _OnRunStartedForXp handler) are constructed below. Hydrating
+        ; here would leave RunStatsRecorder._runId="", which makes
+        ; the finalized hydrated run silently fail to save. Deferred
+        ; to the end of __New after every service is wired up.
 
-        ; v0.1.4: pass the LogService so transitions (focus/process) are
-        ; surfaced in speedkalandra.log for diagnostics.
+        ; LogService is passed so focus/process transitions appear in
+        ; speedkalandra.log for diagnostics.
         this.focusAutoPause := FocusAutoPauseService(this.bus, this.timer, this._cfg, this.log)
-
-        ; GamePauseDetection DISCONNECTED in v17.5
 
         this.hotkeyService := HotkeyService(this.bus, headless)
         this.hotkeyService.Hydrate(this._cfg.hotkeys)
-
-        ; PanelKeys DISCONNECTED in v17.2
 
         this.overlayMode := OverlayModeService(this.bus, this._cfg)
         this.overlayMode.Hydrate()
@@ -231,12 +187,12 @@ class SpeedKalandraApp
 
         this.logMonitor := LogMonitorService(this.clock, this.bus, this.log)
         this.logMonitor.Configure(this._cfg.logFile)
-        ; v17.15 (Bug #2): hydrates the character name for the
-        ; DeathDetected filter. Without this, real-time deaths between
-        ; boot and the first CharacterLevelUp would not be counted.
+        ; Character name is hydrated here so the DeathDetected filter
+        ; is armed before the first log line is read. Without this,
+        ; deaths between boot and the first CharacterLevelUp event
+        ; would be skipped.
         this.logMonitor.SetCharacterName(this._cfg.characterName)
 
-        ; zoneTracker subscribes to RunCancelled here — AFTER our save handler
         this.zoneTracker := ZoneTrackingService(this.bus, this.clock, this.zonesCatalog)
 
         try
@@ -286,19 +242,19 @@ class SpeedKalandraApp
                 . " | File: " . (ex.HasOwnProp("File") ? ex.File : "?"), "App")
         }
 
-        ; statsRecorder subscribes to RunCancelled here — AFTER our save handler
         this.statsRecorder := RunStatsRecorder(this.bus, this.clock)
         this.plotBuilder   := RunStatsPlotBuilder(this.zonesCatalog, this._cfg)
 
         this.autoFinalize := AutoFinalizeService(this.bus, this._cfg)
-        ; v17.15 (Bug #4): passes runService so that AutoStart knows
-        ; whether there is already a hydrated active run and does not
-        ; wipe it with the next log line matching autoStartRegex.
+        ; AutoStartService receives runService so it can read the
+        ; hydrated active-run state at construction. Without it, an
+        ; in-progress run would be overwritten by the next log line
+        ; that matches autoStartRegex.
         this.autoStart := AutoStartService(this.bus, this._cfg, this.runService)
 
         compactPos := this._GetWidgetPos("compactLayout", 10, 1.5)
         microPos   := this._GetWidgetPos("microLayout",   75, 92)
-        stevePos   := this._GetWidgetPos("steveLayout",   10, 1.5)   ; v17.14
+        stevePos   := this._GetWidgetPos("steveLayout",   10, 1.5)
 
         this._persistFn := () => this._PersistSettings()
 
@@ -335,7 +291,6 @@ class SpeedKalandraApp
         )
         this.runHistoryDialog := RunHistoryDialog(this.bus, this.runHistory, this.plotDialog, this.personalBest, headless)
 
-        ; v0.1.0 — Export/import feature
         this.runExportService := RunExportService(this.bus, this.runHistory, this.personalBest)
         this.runImportService := RunImportService(this.bus, this.runHistory, this.personalBest)
         this.exportDialog := ExportOptionsDialog(this.bus, this.runExportService, headless)
@@ -343,25 +298,23 @@ class SpeedKalandraApp
 
         this._WireEventHandlers()
 
-        ; Subscribers are all in place — NOW it is safe to hydrate the
+        ; Subscribers are all in place — now it is safe to hydrate the
         ; run service. If the loaded RunState has an active run, this
         ; publishes Evt.RunStarted{hydrated:true} which propagates to
-        ; RunStatsRecorder (sets _runId), ZoneTrackingService
-        ; (re-arms timing without wiping the totals we just hydrated
-        ; from disk), AutoStartService (sets _runActive), and the
-        ; app's _OnRunStartedForXp handler (which is a no-op for
-        ; hydrate by design).
+        ; RunStatsRecorder (sets _runId), ZoneTrackingService (re-arms
+        ; timing without wiping the totals just hydrated from disk),
+        ; AutoStartService (sets _runActive), and _OnRunStartedForXp
+        ; (no-op on hydrate by design).
         try
         {
             this.runService.Hydrate(hydratedState)
         }
         catch as ex
         {
-            ; Hydrate failure is recoverable (the user just starts a
-            ; fresh run) but must be surfaced in the log so it isn't
-            ; mistaken for normal first-boot behavior. Failure modes
-            ; we've seen: corrupt RunState INI, type mismatch on
-            ; loaded fields, TimerService internal error.
+            ; Recoverable (the user can start a fresh run) but logged
+            ; so it doesn't look like a clean first boot. Failure
+            ; modes seen so far: corrupt RunState INI, type mismatch
+            ; on loaded fields, TimerService internal error.
             try this.log.Warn("Failed to hydrate run service: " . ex.Message
                 . " | What: " . (ex.HasOwnProp("What") ? ex.What : "?")
                 . " | Line: " . (ex.HasOwnProp("Line") ? ex.Line : "?")
@@ -375,18 +328,10 @@ class SpeedKalandraApp
             return
         this._started := true
 
-        ; v17.15.2: shows disclaimer on boot if not yet acknowledged.
-        ; Modal — blocks the rest of Start() until the user dismisses it.
+        ; Three modal prompts on boot, blocking the rest of Start()
+        ; until each is dismissed. Skipped in headless mode.
         this._ShowDisclaimerIfNeeded()
-
-        ; v0.1.3: Client.txt setup on first run. Blocks the boot until
-        ; the user configures a valid path (or cancels, which closes
-        ; the app).
         this._PromptLogFileSetupIfNeeded()
-
-        ; v17.14 — F4: if there is a hydrated active run, ask the user
-        ; what to do before bringing up the widgets/hotkeys. Resolves
-        ; the ambiguity of a "dangling run" on boot.
         this._PromptHydratedRun()
 
         this.bus.Subscribe(Events.CharacterLevelUp,
@@ -402,9 +347,9 @@ class SpeedKalandraApp
         this.bus.Subscribe(Events.RunCancelled,
             (data) => this._OnRunEndedClearZones(data))
 
-        ; NOTE: the subscribes for RunCompleted/RunCancelled that CALL
-        ; _SaveRunSnapshot were already done in __New (before the
-        ; services that clear state). Do not re-subscribe here.
+        ; Note: the RunCompleted/RunCancelled subscriptions that drive
+        ; _SaveRunSnapshot live in __New (above the services that
+        ; clear state on those events). Do not re-subscribe here.
 
         if (this._cfg.logFile != "" && FileExist(this._cfg.logFile))
         {
@@ -415,15 +360,14 @@ class SpeedKalandraApp
         }
         else if (this._cfg.logFile = "")
         {
-            ; v17.15.2: fresh install — empty logFile is expected. INFO
-            ; instead of WARN so it does not trigger the "boot with
-            ; warnings" TrayTip on the user's first boot.
+            ; Fresh install — empty logFile is expected. INFO instead
+            ; of WARN so the boot doesn't trigger the "boot with
+            ; warnings" TrayTip on the user's first launch.
             this.log.Info("Log file not configured. Configure the Client.txt path in Settings (tray menu) to enable zone detection.", "App")
         }
         else
         {
-            ; logFile configured but missing — user got the path wrong.
-            ; Keep WARN to notify.
+            ; Path configured but missing — the user got it wrong.
             this.log.Warn("Log file configured but file does not exist: " this._cfg.logFile, "App")
         }
 
@@ -442,19 +386,12 @@ class SpeedKalandraApp
 
         this.tickEmitter.Start()
 
-        ; v0.1.4: start the event-trace interceptor AFTER all wiring is
-        ; done. Volume will be high (every Tick at ~300ms plus all
-        ; gameplay events) — LogService size-based rotation (5MB) and
-        ; daily rotation handle file growth.
-        ;
-        ; OPT-IN (v0.1.4): only starts when cfg.eventTracingEnabled is
-        ; true. The interceptor persists raw Client.txt lines (via the
-        ; LogLineRead event payload) to speedkalandra.log, which the
-        ; user may share when reporting bugs. A normal install keeps
-        ; this off so that log attaches contain only INFO/WARN/ERROR
-        ; messages and no raw game text. To enable it, set the flag
-        ; manually in speedkalandra.ini under [Diagnostics] or via the
-        ; Settings dialog when this surface is exposed there.
+        ; Event tracing is opt-in via cfg.eventTracingEnabled. When
+        ; on, the interceptor persists raw Client.txt lines (the
+        ; LogLineRead payload) to speedkalandra.log alongside the
+        ; usual INFO/WARN/ERROR entries — useful for bug reports,
+        ; noisy otherwise. Off by default so a normal install never
+        ; writes raw game text to disk.
         if this._cfg.eventTracingEnabled
         {
             try this.eventTracer.Start()
@@ -467,18 +404,11 @@ class SpeedKalandraApp
         this.bus.Publish(Events.AppStarted, Map())
         this.log.Info("SpeedKalandra started", "App")
 
-        ; ============================================================
-        ; Surface boot warnings/errors (v17.15).
-        ;
-        ; LogService counts WARN/ERROR regardless of minLevel. If the
-        ; boot logged anything, emit a TrayTip so the user knows —
-        ; without this, warnings stayed silent in the log file (case
-        ; of the "Map has no method Count" bug that ran for 3 days
-        ; without anyone noticing).
-        ;
-        ; Resets counters after surfacing: runtime warnings don't
-        ; accumulate in the next boot prompt.
-        ; ============================================================
+        ; LogService counts WARN/ERROR regardless of minLevel; if the
+        ; boot logged anything, surface it via TrayTip so silent
+        ; warnings don't go unnoticed. Counters are reset after
+        ; surfacing so runtime warnings don't pile up into the next
+        ; boot prompt.
         warnCount := this.log.GetWarnCount()
         errorCount := this.log.GetErrorCount()
         if (!this._headless && (warnCount > 0 || errorCount > 0))
@@ -568,57 +498,40 @@ class SpeedKalandraApp
         this.bus.Subscribe(Events.RunStarted,
             (data) => this._OnRunStartedForXp(data))
 
-        ; v17.13 — reset PBs via tray menu
         this.bus.Subscribe(Commands.ResetPersonalBestsRequested,
             (data) => this._OnResetPersonalBestsRequested())
 
-        ; v0.1.0 — run export (published by RunHistoryDialog buttons)
         this.bus.Subscribe(Commands.ExportRunsRequested,
             (data) => this._OnExportRunsRequested(data))
-
-        ; v0.1.0 — run import (published by the Import... button in RunHistoryDialog)
         this.bus.Subscribe(Commands.ImportRunsRequested,
             (data) => this._OnImportRunsRequested(data))
 
-        ; v0.1.0 Phase 5 — export/import logging for tracing in
-        ; data\speedkalandra.log. Subscriber-only, doesn't change services.
+        ; Export/import logging: services don't carry a log dependency
+        ; by design, so we mirror their outcome events here.
         this.bus.Subscribe(Events.RunsExported,
             (data) => this._LogRunsExported(data))
         this.bus.Subscribe(Events.RunsImported,
             (data) => this._LogRunsImported(data))
 
-        ; v0.1.3: apply death penalty to the timer in real time (it
-        ; was only visible post-finalize in the plot before).
+        ; Death penalty applied to the live timer (the post-finalize
+        ; plot already accounted for it; this makes the overlay agree
+        ; with the plot in real time).
         this.bus.Subscribe(Events.DeathDetected,
             (data) => this._OnDeathApplyTimerPenalty(data))
 
-        ; v0.1.4: hot-reload LogMonitor when the Client.txt path
-        ; changes via Settings — no full app reload needed.
+        ; Hot-reload paths: the Settings dialog publishes these so
+        ; the user doesn't have to reload the whole app on common
+        ; config changes (Client.txt path, hotkey bindings).
         this.bus.Subscribe(Events.LogFilePathChanged,
             (data) => this._OnLogFilePathChanged(data))
-
-        ; v0.1.4: hot-rebind hotkeys when the user changes them via
-        ; Settings — no full app reload needed.
         this.bus.Subscribe(Events.HotkeysChanged,
             (data) => this._OnHotkeysChanged(data))
     }
 
-    ; ============================================================
-    ; _OnDeathApplyTimerPenalty (v0.1.3)
-    ;
-    ; Handler for Evt.DeathDetected. If cfg.deathPenaltyEnabled and
-    ; the run is active, adds cfg.deathPenaltyMs to the timer via
-    ; TimerService.AddPenaltyMs. The user sees the pointer jump
-    ; forward in the overlay as soon as they die.
-    ;
-    ; The "Deaths" category in the post-finalize plot continues to
-    ; be count*penalty (RunStatsPlotBuilder._AddDeathDetails). The
-    ; plot's totalMs already includes that sum because
-    ; _AddZoneDetails / _AddLoadingDetails cover real time (no
-    ; penalty) and _AddDeathDetails provides the penalty separately
-    ; — same sum as the current runMs (which already has the penalty
-    ; baked in).
-    ; ============================================================
+    ; Adds the configured death penalty to the live timer when a
+    ; death is detected. The post-finalize plot already accounts for
+    ; this via count*penalty; applying it here keeps the visible
+    ; timer in sync.
     _OnDeathApplyTimerPenalty(data)
     {
         if !IsObject(this._cfg) || !this._cfg.deathPenaltyEnabled
@@ -633,37 +546,15 @@ class SpeedKalandraApp
             try this.log.Info("Death penalty applied to timer: +" . penaltyMs . " ms", "App")
     }
 
-    ; ============================================================
-    ; _OnHotkeysChanged (v0.1.4)
-    ;
-    ; Handler for Evt.HotkeysChanged. Published by SettingsDialog when
-    ; the user changes any hotkey binding via Settings. Performs a
-    ; full rebind cycle on HotkeyService so the new keys take effect
-    ; without a full app reload.
-    ;
-    ; Steps:
-    ;   1. Stop HotkeyService (unregisters every currently bound key)
-    ;   2. Hydrate with the new map from data["newHotkeys"]; falls
-    ;      back to cfg.hotkeys if data is missing/malformed
-    ;   3. Start HotkeyService (registers each non-empty binding)
-    ;
-    ; Failures inside any step are logged but do not propagate — a
-    ; bad rebind should not crash the app. The user can re-open
-    ; Settings to retry.
-    ;
-    ; Note: Hotkeys for actions opening dialogs (Settings, PlotRunStats)
-    ; do a modifier cleanup Send before publishing the command (see
-    ; FocusChangingActions in HotkeyService). That happens at fire
-    ; time, independent of this rebind.
-    ; ============================================================
+    ; Rebinds hotkeys live when the user changes them in Settings.
+    ; Stop + Hydrate + Start so the previous bindings are released
+    ; before the new ones are registered.
     _OnHotkeysChanged(data)
     {
         if !IsObject(this.hotkeyService)
             return
 
-        ; Prefer the new map from the event payload; fall back to
-        ; cfg.hotkeys when the payload is missing/malformed. Either
-        ; way the rebind goes through.
+        ; Prefer the payload; fall back to cfg if it's missing/malformed.
         newHotkeys := ""
         if (IsObject(data) && data.Has("newHotkeys") && data["newHotkeys"] is Map)
             newHotkeys := data["newHotkeys"]
@@ -685,28 +576,10 @@ class SpeedKalandraApp
             try TrayTip("SpeedKalandra", "Hotkeys updated.", "Mute")
     }
 
-    ; ============================================================
-    ; _OnLogFilePathChanged (v0.1.4)
-    ;
-    ; Handler for Evt.LogFilePathChanged. Published by SettingsDialog
-    ; when the user changes the Client.txt path. Restarts LogMonitor
-    ; against the new path so the user doesn't have to reload the app
-    ; (huge UX win on first install, when the path was empty and the
-    ; user just configured it).
-    ;
-    ; Steps:
-    ;   1. Stop the polling SetTimer (so Tick doesn't fire mid-restart)
-    ;   2. Stop the LogMonitor (closes the file handle / clears state)
-    ;   3. Reconfigure with the new path
-    ;   4. If the new path is valid, Start(seedFromTail=true) and
-    ;      re-arm the SetTimer
-    ;   5. If the new path is empty or invalid, leave it stopped —
-    ;      the user will see warn lines in the log but no crash.
-    ;
-    ; Also re-applies the character name (LogMonitor's Stop clears
-    ; nothing of its internal state, but this guarantees the death
-    ; filter remains active after the path swap).
-    ; ============================================================
+    ; Restarts LogMonitor against a new Client.txt path when the user
+    ; updates it in Settings. The polling timer is stopped first so a
+    ; Tick can't fire mid-restart. Empty path leaves the monitor
+    ; stopped; invalid path is logged but doesn't crash the app.
     _OnLogFilePathChanged(data)
     {
         if !IsObject(data)
@@ -717,28 +590,25 @@ class SpeedKalandraApp
         if IsObject(this.log)
             try this.log.Info("Log file path changed: '" . oldPath . "' -> '" . newPath . "'", "App")
 
-        ; (1) Stop the polling SetTimer first — if a Tick fires between
-        ; LogMonitor.Stop and LogMonitor.Start it might try to read a
-        ; half-configured state.
+        ; Stop the polling SetTimer first so a Tick can't fire between
+        ; Stop and Start and read a half-configured state.
         if (this._logMonitorTimer != "")
         {
             try SetTimer(this._logMonitorTimer, 0)
             this._logMonitorTimer := ""
         }
 
-        ; (2) Stop the LogMonitor (idempotent if already stopped).
         if IsObject(this.logMonitor)
             try this.logMonitor.Stop()
 
-        ; (3) Reconfigure with the new path.
         if IsObject(this.logMonitor)
             try this.logMonitor.Configure(newPath)
 
-        ; (4) If the path is valid, restart the tail loop and arm the timer.
         if (newPath != "" && FileExist(newPath))
         {
             try this.logMonitor.Start(true)
-            ; Re-apply character name so the DeathDetected filter remains active.
+            ; Re-apply the character name so the DeathDetected filter
+            ; survives the swap.
             try this.logMonitor.SetCharacterName(this._cfg.characterName)
             this._logMonitorTimer := () => this.logMonitor.Tick()
             try SetTimer(this._logMonitorTimer, 250)
@@ -759,13 +629,6 @@ class SpeedKalandraApp
         }
     }
 
-    ; ============================================================
-    ; _OnExportRunsRequested (v0.1.0)
-    ;
-    ; Handler for Commands.ExportRunsRequested. Expects `data` to have
-    ; the "runIds" field (Array<string>). Forwards to ExportOptionsDialog
-    ; which does the rest (options + path picker + service call).
-    ; ============================================================
     _OnExportRunsRequested(data)
     {
         if !IsObject(data)
@@ -780,15 +643,6 @@ class SpeedKalandraApp
             this.exportDialog.Open(runIds)
     }
 
-    ; ============================================================
-    ; _OnImportRunsRequested (v0.1.0)
-    ;
-    ; Handler for Commands.ImportRunsRequested. Expects `data` to have
-    ; the "path" field (string pointing to the .json). Calls Preview
-    ; on RunImportService; on success, opens the ImportPreviewDialog.
-    ; On failure (invalid file, wrong schema, etc.), shows a MsgBox
-    ; with the errors.
-    ; ============================================================
     _OnImportRunsRequested(data)
     {
         if !IsObject(data)
@@ -812,15 +666,6 @@ class SpeedKalandraApp
             this.importPreviewDialog.OpenWithPreview(preview)
     }
 
-    ; ============================================================
-    ; _LogRunsExported / _LogRunsImported (v0.1.0 Phase 5)
-    ;
-    ; Subscribers for Evt.RunsExported / Evt.RunsImported. Record to
-    ; LogService so that export/import operations appear in
-    ; data/speedkalandra.log. Without this, debug is blind — the
-    ; services have no injected log (deliberate decision to keep
-    ; them simple).
-    ; ============================================================
     _LogRunsExported(data)
     {
         if !IsObject(data) || !IsObject(this.log)
@@ -847,14 +692,15 @@ class SpeedKalandraApp
         if !IsObject(data)
             return
         name      := data.Has("character") ? data["character"] : ""
-        ; v0.1.1: `class` collides with the AHK v2 `class` keyword. Use `charClass`.
+        ; `class` collides with the AHK v2 `class` keyword; rename locally.
         charClass := data.Has("class")     ? data["class"]     : ""
         level     := data.Has("level")     ? data["level"]     : 0
         this.xpService.SetCharacter(name, charClass, level)
         if (name != "")
         {
             this._cfg.characterName := name
-            ; v17.15 (Bug #2): propagate to the DeathDetected filter
+            ; Propagate to the DeathDetected filter so deaths attributed
+            ; to this character are recognized.
             try this.logMonitor.SetCharacterName(name)
         }
         if (charClass != "")
@@ -878,19 +724,12 @@ class SpeedKalandraApp
 
     _OnZoneEnteredForLevel(data)
     {
-        ; v17.15 (Bug #9): only resets level to 1 on the FIRST entry
-        ; into Riverbank in a fresh run.
-        ;
-        ; Before: InStr(zone, "Riverbank") + unconditional reset.
-        ; Problem 1: substring match (any zone with "Riverbank" in
-        ;            its name would match — unlikely in PoE2 but
-        ;            fragile against name changes).
-        ; Problem 2: re-entry (death respawn, portal, party invite)
-        ;            reset the cached level, causing wrong XP display
-        ;            until the next CharacterLevelUp.
-        ;
-        ; Now: exact name "The Riverbank" + _riverbankSeenInRun flag.
-        ; Flag is cleared on RunStarted (NEW run) and RunEnded (Reset/Cancel).
+        ; The first entry into The Riverbank in a run resets the
+        ; cached level to 1 (fresh-character zone). Subsequent
+        ; re-entries (death respawn, portal back, party invite)
+        ; must NOT reset, or the cached level rolls back until the
+        ; next CharacterLevelUp line. The flag is cleared on
+        ; RunStarted (fresh) and RunReset/RunCancelled (end).
         if !IsObject(data) || !data.Has("zoneName")
             return
         zone := data["zoneName"]
@@ -903,16 +742,16 @@ class SpeedKalandraApp
         this._cfg.characterLevel := 1
     }
 
-    ; v17.14 — RunStarted handler that does NOT reset XP area when the
-    ; run comes from Hydrate (app reload). Hydrate restores persisted
-    ; state; resetting XP area would lose accumulated info from the run.
+    ; RunStarted handler that does NOT reset XP area when the event
+    ; comes from Hydrate (hydrated:true). On hydrate we want to keep
+    ; the persisted XP accumulators intact.
     _OnRunStartedForXp(data)
     {
         isHydrate := IsObject(data) && data.Has("hydrated") && data["hydrated"]
         if isHydrate
             return
         try this.xpService.ResetCurrentArea()
-        ; v17.15 (Bug #9): new run, release the level reset on Riverbank
+        ; Release the Riverbank reset flag for the new run.
         this._riverbankSeenInRun := false
     }
 
@@ -921,29 +760,15 @@ class SpeedKalandraApp
         try this.runState.ClearZoneTotals()
         this._lastSavedLoadingTotal := -1
         this._lastSavedZoneTotalsHash := ""
-        ; v17.15 (Bug #9): end of run, release the flag for the next one
+        ; Release the Riverbank reset flag for the next run.
         this._riverbankSeenInRun := false
     }
 
-    ; ============================================================
-    ; _PromptLogFileSetupIfNeeded (v0.1.3)
-    ;
-    ; Blocks boot until the user configures a valid Client.txt.
-    ;
-    ; Preconditions to SHOW the dialog:
-    ;   - !this._headless (tests silently skip)
-    ;   - cfg.logFile empty  OR  configured file does not exist
-    ;
-    ; The suggested default is the Steam path (PoE2 installed via Steam).
-    ; The standalone version (GGG launcher) has a different path; the
-    ; user changes it via Browse.
-    ;
-    ; Buttons:
-    ;   OK — if path is valid (FileExist), saves to the INI and proceeds.
-    ;        If path is invalid, shows an error and keeps the dialog open.
-    ;   Cancel — ExitApp() (closes the program). User explicitly asked
-    ;            that the app NOT run without Client.txt.
-    ; ============================================================
+    ; First-boot setup for the PoE2 Client.txt path. Blocks the boot
+    ; until a valid path is configured or the user cancels (cancel
+    ; calls ExitApp — the app refuses to run without Client.txt). The
+    ; suggested default is the Steam install location; standalone /
+    ; GGG-launcher installs need Browse.
     _PromptLogFileSetupIfNeeded()
     {
         if this._headless
@@ -1041,27 +866,25 @@ class SpeedKalandraApp
         ; OK: persist the chosen path
         this._cfg.logFile := choice.path
         try this._PersistSettings()
-        ; v0.1.4 fix: also reconfigure the LogMonitor with the chosen
-        ; path. Without this, _logFilePath stays as "" (set in __New
-        ; with the empty cfg.logFile of a fresh install). The Start()
-        ; that runs later in app.Start() then calls logMonitor.Start()
-        ; which early-returns because the path looks unconfigured.
-        ; Result before this fix: user has to reload the app for the
-        ; new path to take effect, defeating the auto-reload feature.
+        ; Also reconfigure LogMonitor with the chosen path. Without
+        ; this, the LogMonitor.Configure("") from __New stays in
+        ; effect, and the subsequent logMonitor.Start() in app.Start()
+        ; early-returns because the path looks unconfigured — the
+        ; user would have to reload the app for the new path to take
+        ; effect, defeating the live-setup flow.
         if IsObject(this.logMonitor)
             try this.logMonitor.Configure(choice.path)
         if IsObject(this.log)
             try this.log.Info("Client.txt path configured: " . choice.path, "App")
     }
 
-    ; Setup dialog helper: opens FileSelect and returns the chosen
-    ; path (or "" if cancelled). Kept as a separate method for closure
-    ; capture of the initial path.
+    ; FileSelect helper for the setup dialog. Kept out of the inline
+    ; closure so the path-edit field is captured correctly.
     _SetupBrowseLog(currentValue)
     {
         try
         {
-            ; v0.1.1: `file` collides with the builtin `File`. Use `selectedFile`.
+            ; `file` collides with the builtin `File` class; rename locally.
             selectedFile := FileSelect(1, currentValue,
                 "Select PoE2 Client.txt", "Log files (*.txt)")
             return selectedFile
@@ -1069,9 +892,8 @@ class SpeedKalandraApp
         return ""
     }
 
-    ; Setup dialog helper: validates that the path exists. On error,
-    ; updates the status label with a red message. Returns a bool
-    ; indicating whether to proceed.
+    ; Validates the chosen path exists. On error, updates the status
+    ; label with a red message. Returns a bool.
     _SetupValidatePath(path, statusLbl)
     {
         path := Trim(path)
@@ -1088,20 +910,10 @@ class SpeedKalandraApp
         return true
     }
 
-    ; ============================================================
-    ; _ShowDisclaimerIfNeeded (v17.15.2)
-    ;
-    ; Modal on boot. Shows a dialog with the disclaimer + a "Don't
-    ; show again" checkbox. If the user ticks the checkbox and clicks
-    ; "I understand", persists cfg.disclaimerAcknowledged = true and
-    ; does not show it again.
-    ;
-    ; Headless mode: skipped. Already-acknowledged: skipped.
-    ;
-    ; The text is in English to reach the largest possible audience
-    ; (PoE2 is global; Brazilian players usually already know gaming
-    ; English). We keep the text in a single place for easy editing.
-    ; ============================================================
+    ; First-boot disclaimer modal. Skipped when headless or when the
+    ; user has already ticked "Don't show again" (persisted via
+    ; cfg.disclaimerAcknowledged). The body text is in English to
+    ; reach the widest player audience.
     _ShowDisclaimerIfNeeded()
     {
         if this._headless
@@ -1190,21 +1002,12 @@ If it helps your runs, great. If it doesn't fit your needs, that's fine too - th
         }
     }
 
-    ; ============================================================
-    ; _PromptHydratedRun (v17.14 — F4)
-    ;
-    ; Called at the start of Start(). If there is a hydrated active
-    ; run (from the persisted INI), shows a custom GUI with 3 buttons:
-    ;   - Resume: no-op, the app continues with the hydrated run normally
-    ;   - Finalize & save: calls FinalizeRun -> _SaveRunSnapshot saves
-    ;     via threshold (>=3min) and updates PBs
-    ;   - Discard: calls ResetRun -> clears state without saving
-    ;
-    ; Headless mode: skipped (default = Resume, test behavior).
-    ;
-    ; GUI blocks until user picks (modal). No timeout — the decision
-    ; must be explicit to avoid inconsistent state.
-    ; ============================================================
+    ; Boot prompt for a hydrated active run: Resume / Finalize & save
+    ; / Discard. The decision is explicit — no timeout — because each
+    ; outcome has different state consequences. Skipped when headless
+    ; or when there is no active run. The timer is paused for the
+    ; duration of the prompt so the displayed run time doesn't keep
+    ; ticking while the user decides.
     _PromptHydratedRun()
     {
         if this._headless
@@ -1212,16 +1015,6 @@ If it helps your runs, great. If it doesn't fit your needs, that's fine too - th
         if !IsObject(this.runService) || !this.runService.IsActive()
             return
 
-        ; v17.15 (Bug #5): pause the timer during the user's decision.
-        ;
-        ; Before: a Sleep 50 loop blocked the main thread without
-        ; disabling the timer. A timer hydrated as "running" kept
-        ; counting during the decision time (potentially minutes) —
-        ; in a speedrun where 1s matters, that's unacceptable.
-        ;
-        ; Now: explicit pause before the prompt. If the user picks
-        ; Resume, the timer is resumed. Discard/Finalize clear the
-        ; timer anyway (via ResetRun/FinalizeRun).
         wasRunningBeforePrompt := IsObject(this.timer) && this.timer.IsRunning()
         if wasRunningBeforePrompt
             try this.timer.Pause()
@@ -1291,26 +1084,12 @@ If it helps your runs, great. If it doesn't fit your needs, that's fine too - th
         }
     }
 
-    ; ============================================================
-    ; _SaveRunSnapshot (v17.14 — no confirmation MsgBox, F1)
-    ;
-    ; Called on TWO events (subscribed in __New BEFORE the services
-    ; that clear state):
-    ;   - Evt.RunCompleted  (Ctrl+Alt+F)  -> reason = "completed"
-    ;   - Evt.RunCancelled  (direct CancelRun) -> reason = "cancelled"
-    ;
-    ; The MIN_CANCELLED_SAVE_MS threshold (3min) applies to BOTH reasons:
-    ;   - Run < 3min: silently discarded (test garbage)
-    ;   - Run >= 3min: saved directly, no MsgBox
-    ;
-    ; After a successful save of a completed run, marks the save as
-    ; "undoable" for 60s via the tray menu "Undo last save". User can
-    ; click to remove it from history (PBs are not reverted — to clear
-    ; an incorrect PB, use "Reset PBs" in the tray menu).
-    ;
-    ; Silent failures: we don't want to break the finalize flow because
-    ; of an I/O error in history.
-    ; ============================================================
+    ; Persists a finished/cancelled run to history. Subscribed in __New
+    ; on both RunCompleted and RunCancelled, BEFORE the services that
+    ; clear state on those events. The MIN_CANCELLED_SAVE_MS threshold
+    ; (3 min) applies to both reasons — below that, the run is
+    ; discarded as test/quick-abort garbage. Completed saves above
+    ; the threshold are marked undoable for 60 s via the tray menu.
     _SaveRunSnapshot(reason)
     {
         try
@@ -1321,14 +1100,14 @@ If it helps your runs, great. If it doesn't fit your needs, that's fine too - th
             zoneTotals := IsObject(this.zoneTracker)
                           ? this.zoneTracker.GetTotalsForSnapshot()
                           : Map()
-            ; v0.1.4: collect per-zone first-entry timestamps for
-            ; chronological ordering in the plot details.
+            ; Per-zone first-entry timestamps drive the chronological
+            ; ordering of zones in the plot details.
             zoneFirstEnteredAt := IsObject(this.zoneTracker)
                                   ? this.zoneTracker.GetFirstEnteredAtMap()
                                   : Map()
             runMs := IsObject(this.timer) ? this.timer.GetRunMs() : 0
 
-            ; Uniform threshold for completed AND cancelled (F1)
+            ; Uniform threshold for completed and cancelled.
             if (runMs < SpeedKalandraApp.MIN_CANCELLED_SAVE_MS)
             {
                 if IsObject(this.log)
@@ -1354,15 +1133,12 @@ If it helps your runs, great. If it doesn't fit your needs, that's fine too - th
             snapshot := this.statsRecorder.GetSnapshot(zoneTotals, runMs, zoneFirstEnteredAt)
             buildResult := this.plotBuilder.Build(snapshot)
 
-            ; v17.15.1: captures actCheckpoints NOW and injects into
-            ; buildResult before Save. Allows
-            ; PersonalBestService.RebuildFromHistory to rebuild per-act
-            ; PBs after run deletes. Runs saved before this change have
-            ; no persisted checkpoints — rebuild silently ignores them
-            ; (read returns an empty Map).
-            ;
-            ; Capturing here (no longer below) ensures the save
-            ; persists the same checkpoints that UpdateFromRun consumes.
+            ; Capture act checkpoints HERE and inject into buildResult
+            ; before Save. Lets PersonalBestService.RebuildFromHistory
+            ; rebuild per-act PBs after run deletes from the same
+            ; persisted checkpoints that UpdateFromRun consumes. Runs
+            ; saved before this was added carry no checkpoints; rebuild
+            ; silently ignores them.
             actCheckpoints := Map()
             if IsObject(this.actCheckpoints)
             {
@@ -1379,14 +1155,12 @@ If it helps your runs, great. If it doesn't fit your needs, that's fine too - th
                     . " (" . runMs . " ms)", "App")
             }
 
-            ; --- Personal bests (v17.13) ---
-            ; Updates PBs ONLY on completed runs. Cancelled does not
-            ; count toward PB (even if it crosses the threshold).
+            ; --- Personal bests ---
+            ; Completed runs only — cancelled doesn't count toward PB
+            ; even if it crosses the threshold.
             pbChanged := false
             if (reason = "completed" && IsObject(this.personalBest))
             {
-                ; v17.15.1: uses the actCheckpoints already captured above
-                ; (it used to be captured twice — unnecessary).
                 try pbChanged := this.personalBest.UpdateFromRun(runMs, rid, zoneTotals, actCheckpoints)
                 if (pbChanged && IsObject(this.log))
                 {
@@ -1401,9 +1175,8 @@ If it helps your runs, great. If it doesn't fit your needs, that's fine too - th
                 }
             }
 
-            ; --- TrayTip + tray menu "Undo last save" ---
-            ; Only for completed. Cancelled (rare now that NewRun
-            ; doesn't call CancelRun) is silent.
+            ; --- TrayTip + "Undo last save" tray menu item ---
+            ; Completed only; cancelled is silent.
             if (saved && reason = "completed" && !this._headless)
             {
                 durStr := SpeedKalandraApp._FormatMsForMsg(runMs)
@@ -1420,27 +1193,19 @@ If it helps your runs, great. If it doesn't fit your needs, that's fine too - th
         }
     }
 
-    ; ============================================================
-    ; Undo last save (v17.14 — F1)
+    ; Undo last save — F1 from the tray menu.
     ;
-    ; Flow:
-    ;   1. _SaveRunSnapshot saves run -> _MarkUndoableSave(runId)
-    ;   2. _MarkUndoableSave stores runId + adds tray menu item
-    ;      + arms a 60s SetTimer
-    ;   3a. User clicks "Undo last save" -> UndoLastSave() deletes
-    ;       file + rebuilds PBs from the remaining runs
-    ;   3b. 60s pass -> _ExpireUndoableSave() removes menu item and
-    ;       clears runId
+    ;   1. _SaveRunSnapshot saves a run → _MarkUndoableSave(runId)
+    ;   2. _MarkUndoableSave stores the runId, adds the tray menu
+    ;      item, and arms a 60 s SetTimer.
+    ;   3a. User clicks "Undo last save" → UndoLastSave() deletes
+    ;       the file and rebuilds PBs from the surviving runs.
+    ;   3b. 60 s pass → _ExpireUndoableSave() removes the menu item
+    ;       and clears the runId.
     ;
-    ; v0.1.4 — PBs ARE rebuilt on undo (changed from v17.14).
-    ;   Original v17.14 behavior left PBs pointing at the deleted run
-    ;   (the tray tip said "PBs were not reverted" and asked the user
-    ;   to use "Reset PBs" instead). That was inconsistent with the
-    ;   Delete button in RunHistoryDialog, which calls
-    ;   PersonalBestService.RebuildFromHistory to recompute PBs from
-    ;   the surviving runs. Now both paths share the same semantics:
-    ;   a deleted run no longer contributes to any PB.
-    ; ============================================================
+    ; The undo path rebuilds PBs (same semantics as the Delete button
+    ; in RunHistoryDialog), so a deleted run no longer contributes to
+    ; any PB.
     _MarkUndoableSave(runId)
     {
         if (runId = "")
@@ -1464,16 +1229,15 @@ If it helps your runs, great. If it doesn't fit your needs, that's fine too - th
 
     UndoLastSave()
     {
-        ; v0.1.1: local `runId` collides with the `RunId` class. Use `currentRunId`.
+        ; Local `runId` collides with the `RunId` domain class; rename.
         currentRunId := this._lastSavedRunId
         if (currentRunId = "")
         {
-            ; Stale menu item — clean up just in case
+            ; Stale menu item — clean up just in case.
             try SpeedKalandraTrayRemoveUndoItem()
             return
         }
 
-        ; Delete the history file
         deleted := false
         try
         {
@@ -1483,9 +1247,8 @@ If it helps your runs, great. If it doesn't fit your needs, that's fine too - th
         catch
             deleted := false
 
-        ; v0.1.4: rebuild PBs from the surviving runs so the deleted
-        ; run no longer contributes to global, per-act, or per-zone
-        ; PBs. Mirrors RunHistoryDialog._OnDeleteSelected.
+        ; Rebuild PBs from the surviving runs so the deleted run no
+        ; longer contributes. Mirrors RunHistoryDialog._OnDeleteSelected.
         pbChanged := false
         if deleted
         {
@@ -1523,19 +1286,11 @@ If it helps your runs, great. If it doesn't fit your needs, that's fine too - th
         }
     }
 
-    ; ============================================================
-    ; _RebuildPbsFromHistory (v0.1.4)
-    ;
-    ; Loads every surviving run from disk (full Load, including
-    ; details + actCheckpoints) and feeds them to
-    ; PersonalBestService.RebuildFromHistory. Returns true if any
-    ; PB changed, false otherwise.
-    ;
-    ; Cost: O(N) full INI reads. Typically N < 100, total < 500ms.
-    ; Acceptable for a user-initiated undo. Mirrors the helper of
-    ; the same name in RunHistoryDialog so both delete paths share
-    ; semantics.
-    ; ============================================================
+    ; Loads every surviving run from disk (full Load, with details
+    ; and actCheckpoints) and replays them through
+    ; PersonalBestService.RebuildFromHistory. Returns true if any PB
+    ; changed. Mirrors the helper of the same name in
+    ; RunHistoryDialog so both delete paths share semantics.
     _RebuildPbsFromHistory()
     {
         if !IsObject(this.personalBest)
@@ -1560,14 +1315,9 @@ If it helps your runs, great. If it doesn't fit your needs, that's fine too - th
         try SpeedKalandraTrayRemoveUndoItem()
     }
 
-    ; ============================================================
-    ; _OnResetPersonalBestsRequested (v17.13)
-    ;
     ; Subscribed to Commands.ResetPersonalBestsRequested (tray menu).
-    ; Shows a confirmation MsgBox (destructive action) and calls
-    ; Reset() on PersonalBestService. In headless mode, resets directly
-    ; without prompting.
-    ; ============================================================
+    ; Shows a confirmation MsgBox (destructive action). Headless mode
+    ; resets without prompting.
     _OnResetPersonalBestsRequested()
     {
         if !IsObject(this.personalBest)
@@ -1617,19 +1367,18 @@ If it helps your runs, great. If it doesn't fit your needs, that's fine too - th
         try TrayTip("SpeedKalandra", "Personal Bests reset.", "Mute")
     }
 
-    ; Static helper to format ms as MM:SS or H:MM:SS (for messages).
-    ; v0.1.2 (audit #19): delegates to Duration.FormatMs (used to be 4
-    ; identical copies scattered around; consolidated in
-    ; domain/values/duration.ahk).
+    ; Formats ms as MM:SS or H:MM:SS for user-facing messages.
+    ; Delegates to Duration.FormatMs (used to be four near-identical
+    ; copies scattered across services).
     static _FormatMsForMsg(ms) => Duration.FormatMs(ms)
 
     _PersistRunData()
     {
         try this.runService.PersistTick()
 
-        ; v17.15 (Bug #8): explicit catch — ARCHITECTURE.md forbids
-        ; silent try. _PersistRunData runs every 5s; if something
-        ; fails (disk full, corrupt INI), we need to know.
+        ; Explicit catch on both branches: this runs every 5 s, and
+        ; silent failure here (disk full, corrupt INI) would mean
+        ; persistent data loss with no signal.
         try
         {
             if IsObject(this.loadingTotals)
@@ -1672,10 +1421,8 @@ If it helps your runs, great. If it doesn't fit your needs, that's fine too - th
     {
         try this.runService.PersistTick()
 
-        ; v17.15 (Bug #8): explicit catch (same motivation as
-        ; _PersistRunData). _PersistRunDataFull is called in Stop()/
-        ; OnExit — last chance to save before closing. Failing
-        ; silently means data loss with no feedback.
+        ; Called from Stop() / OnExit — last chance to flush before
+        ; closing. Silent failure here would lose data without a peep.
         try
         {
             if IsObject(this.loadingTotals)

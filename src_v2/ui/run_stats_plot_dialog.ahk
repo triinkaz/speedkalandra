@@ -1,12 +1,12 @@
-; ============================================================
-; RunStatsPlotDialog - run stats window (v17.11)
-; ============================================================
+; RunStatsPlotDialog — run statistics window with three sections:
+; KPIs, a current-run stacked bar, and a line chart of evolution
+; across saved runs.
 ;
-; LAYOUT (900x760):
+; Layout (900×760):
 ;
 ;   +----------------------------------------------+
-;   | Header: Run XYZ - 01:01:59                   |
-;   | Sub: Profile X, Patch Y, Deaths Z            |
+;   | Header: Run XYZ — 01:01:59                   |
+;   | Sub: profile / version / deaths              |
 ;   |                                              |
 ;   | KPIs: MAP TOWN LOADING DEATHS                |
 ;   |                                              |
@@ -16,13 +16,7 @@
 ;   | [stacked bar segmented by granularity]       |
 ;   |                                              |
 ;   | EVOLUTION ACROSS RUNS:                       |
-;   |         ┌──────────────────────────────┐    |
-;   |   40m ──│ ⋅ ⋅ ⋅ ⋅ ⋅ ⋅ ⋅ ⋅ ⋅ ⋅ ⋅ ⋅ ⋅   │    |
-;   |   30m ──│        ╭──╮       /\         │    |
-;   |   20m ──│  ╱─╮  ╱    ╲──╮  /  \        │    |
-;   |   10m ──│ ╱   ╲╱        ╲╱             │    |
-;   |    0m ──└──────────────────────────────┘    |
-;   |          Run1  Run2  Run3  Run4  Run5       |
+;   |   [line chart, 1 line per series]            |
 ;   |                                              |
 ;   | LEGEND (click to hide/show):                 |
 ;   | ▌Item1 ▌Item2 ░Item3(hidden) ▌Item4 ...      |
@@ -30,61 +24,51 @@
 ;   | [Details...] [History...]       [Close]      |
 ;   +----------------------------------------------+
 ;
-; HIDE/SHOW SERIES (v17.11):
-;   Clicking a legend item (swatch or text) toggles the visibility
-;   of the corresponding series. Hidden series:
-;     - Are not drawn in the line chart
-;     - Are not drawn in the current stacked bar
-;     - Appear in the legend with gray swatch (surface3) and muted text
-;     - Are excluded from the yMax calculation — hiding the Deaths
-;       series (12min) that distorts the scale automatically releases it
+; Hide/show series:
+;   Clicking a legend entry (swatch or text) toggles visibility of
+;   the matching series. Hidden series are skipped by the line chart
+;   AND the stacked bar, AND excluded from the yMax computation —
+;   so hiding the Deaths series (often dominates the scale) zooms
+;   the chart into the remaining ones automatically.
 ;
-;   State held in this._hiddenSeries as Map<"gran:label", true>.
-;   Persists across rebuilds (granularity change, run reload) but is
-;   reset when the script restarts.
+;   State lives in this._hiddenSeries as Map<"granularity:label",
+;   true>. Persists across rebuilds (granularity change, run reload)
+;   and resets on script restart. The key embeds the granularity
+;   because labels differ between modes (Map: map names, Act:
+;   "Act 1"/"Act 2"/..., Run: 4 fixed categories) and each mode
+;   keeps its own hidden set.
 ;
-;   Because labels change between granularities (Map: map names,
-;   Act: "Act 1"/"Act 2"/..., Run: 5 fixed categories), the key
-;   includes the granularity so each mode has its own hidden set.
+; Line chart:
+;   X axis  — each saved run as one position (oldest left, newest right)
+;   Y axis  — time in ms, scaled 0 → yMax of VISIBLE series
+;   series  — one line per granularity item; missing series are
+;             rendered with `present: false` so the line breaks at
+;             that point instead of falling to zero (which earlier
+;             versions did, creating a misleading floor).
+;   Render  — GDI via LineChartRenderer into a Picture control.
 ;
-; LINE CHART:
-;   Horizontal X axis: each run a position (chronological, oldest on
-;                      the left, most recent on the right)
-;   Vertical Y axis:   time in ms (scale 0 -> maxMs across VISIBLE series)
-;   Series:            1 line per granularity item
+; Granularity options:
+;   "Full run"   — 4 lines (map, town, loading, deaths)
+;   "By act"     — 1 line per act, rotating palette
+;   "By map"     — 1 line per map, stable color via hash
+;   "By town"    — 1 line per town
+;   "By loading" — 1 line per loading
+; For the dynamic granularities we keep TOP_SERIES_MAX lines by total
+; time.
 ;
-;   Rendered via GDI (LineChartRenderer) in a Picture control.
+; Min-act filter: dropdown next to granularity restricts the line
+; chart to runs with maxActReached >= N. Helps compare runs of the
+; same length (e.g. only ones that reached Act 3+). "All" (default)
+; doesn't filter.
 ;
-; GRANULARITY:
-;   - "Full run"     : 4 lines (map, town, loading, deaths)
-;   - "By act"       : 1 line per act — rotating colors
-;   - "By map"       : 1 line per map — stable color via hash
-;   - "By town"      : 1 line per town
-;   - "By loading"   : 1 line per loading
+; Profile filter: third dropdown isolates the line chart to runs of
+; a single profile. On first open it picks up the current run's
+; profile by default (focus on same-profile comparison); afterwards
+; persists the user's choice.
 ;
-; "By boss" granularity REMOVED in v17.13 (boss tracking is gone).
-;
-;   For dynamic granularities, **TOP-N** lines by total time.
-;   Default TOP_SERIES_MAX = 8.
-;
-; MAX ACT FILTER (v17.13):
-;   Additional dropdown next to granularity lets you filter runs in
-;   the line chart by "min Act reached". Useful for comparing runs
-;   of the same size (e.g. only runs that went to Act 3+).
-;   - "All"        : doesn't filter (default)
-;   - "Act 1+"     : runs with maxActReached >= 1
-;   - "Act 2+"     : runs with maxActReached >= 2
-;   - ... up to Act 10+
-;
-; LINE CHART GAPS (v17.13):
-;   When a run lacks the series (e.g. "Act 2" in a run that only went
-;   to Act 1), the point is marked as `present: false` instead of
-;   `yMs: 0`. The renderer breaks the line at those points, avoiding
-;   the misleading "false floor" that appeared before.
-;
-; SUBSCRIPTIONS:
-;   Cmd.OpenRunStatsPlotRequested -> Open()
-;   Evt.RunCompleted              -> Open()  (auto-trigger)
+; Subscriptions:
+;   Cmd.OpenRunStatsPlotRequested → Open()
+;   Evt.RunCompleted              → Open()  (auto-trigger)
 
 
 class RunStatsPlotDialog
@@ -112,7 +96,7 @@ class RunStatsPlotDialog
     static GRAN_LABELS := ["Full run", "By act", "By map", "By town", "By loading"]
     static GRAN_KEYS   := ["run", "ato", "mapa", "cidade", "loading"]
 
-    ; Max-act-reached filter (v17.13). Index 1 = "All" (no filter).
+    ; Max-act-reached filter. Index 1 = "All" (no filter).
     static MIN_ACT_LABELS := ["All", "Act 1+", "Act 2+", "Act 3+", "Act 4+", "Act 5+", "Act 6+", "Act 7+", "Act 8+", "Act 9+", "Act 10+"]
 
     static ROTATING_PALETTE := [
@@ -138,9 +122,9 @@ class RunStatsPlotDialog
     _isOpen  := false
 
     _granularity   := "run"
-    _minActFilter  := 0       ; v17.13: 0 = all, N>=1 = runs with maxActReached >= N
-    _profileFilter        := ""    ; v17.14: "" = All profiles; otherwise = profile name
-    _profileFilterInited  := false ; v17.14: false = not yet initialized (will pick up current run's profile)
+    _minActFilter  := 0       ; 0 = all, N >= 1 = runs with maxActReached >= N
+    _profileFilter        := ""    ; "" = All profiles; otherwise = profile name
+    _profileFilterInited  := false ; false = first-open default still pending
     _currentData   := ""
     _hiddenSeries  := ""    ; Map<"granularity:label", true>
 
@@ -240,16 +224,15 @@ class RunStatsPlotDialog
     _BuildSnapshot()
     {
         zoneTotals := this._zoneTracker.GetTotals()
-        ; v0.1.4: include per-zone first-entry timestamps so the plot
-        ; details can be ordered chronologically.
+        ; Include per-zone first-entry timestamps so the details
+        ; popup can sort entries chronologically.
         zoneFirstEnteredAt := this._zoneTracker.GetFirstEnteredAtMap()
         runMs := this._timer.GetRunMs()
         return this._recorder.GetSnapshot(zoneTotals, runMs, zoneFirstEnteredAt)
     }
 
-    ; ============================================================
-    ; Hidden series state (v17.11)
-    ; ============================================================
+    ; ---- Hidden series state ----
+
     _HiddenKey(label) => this._granularity ":" label
     _IsSeriesHidden(label) => this._hiddenSeries.Has(this._HiddenKey(label))
 
@@ -269,9 +252,8 @@ class RunStatsPlotDialog
         return (*) => this._ToggleSeriesVisibility(label)
     }
 
-    ; ============================================================
-    ; GUI
-    ; ============================================================
+    ; ---- GUI ----
+
     _BuildGui(data)
     {
         g := Gui("+AlwaysOnTop -MaximizeBox", "SpeedKalandra - Run Statistics")
@@ -285,9 +267,9 @@ class RunStatsPlotDialog
         innerW := RunStatsPlotDialog.WINDOW_W - 28
 
         ; --- Header + Subheader ---
-        ; v0.1.1: local `runId` collides with the `RunId` class
-        ; (case-insensitive). Use `currentRunId`, consistent with the
-        ; x-axis labels further below.
+        ; Local `runId` collides case-insensitively with the `RunId`
+        ; domain class; use `currentRunId`. The same name shows up
+        ; again in the X-axis label loop further down for consistency.
         currentRunId := data.Has("runId")    ? data["runId"]    : ""
         profile      := data.Has("profile")  ? data["profile"]  : ""
         patch        := data.Has("patch")    ? data["patch"]    : ""
@@ -296,9 +278,8 @@ class RunStatsPlotDialog
         deathCnt     := data.Has("deathCount") ? data["deathCount"] : 0
 
         headerTxt := "Run " (currentRunId != "" ? currentRunId : "(in progress)") "  -  " RunStatsPlotBuilder.FormatMs(totalMs)
-        ; v0.1.3: Patch field removed from the display. Kept in
-        ; data["patch"] for back-compat with saved runs but no longer
-        ; shown in the subheader.
+        ; gamePatch is preserved in data["patch"] for back-compat with
+        ; saved runs but no longer displayed in the subheader.
         subTxt    := "Profile: " . profile . "   SpeedKalandra " . Version.STRING
         if (firstTs != "")
             subTxt .= "   Start: " firstTs
@@ -312,9 +293,9 @@ class RunStatsPlotDialog
         g.Add("Text", "x14 y" RunStatsPlotDialog.Y_SUBHEADER " w" innerW, subTxt)
 
         ; --- KPIs ---
-        ; SegmentDefinitions has 4 entries (map/town/loading/death) after
-        ; the boss category was removed in v17.13. colW splits the
-        ; usable space between those 4 columns (instead of the original 5).
+        ; SegmentDefinitions has 4 entries (map / town / loading /
+        ; death); colW splits the usable width between those four
+        ; columns.
         totals := data.Has("totals") ? data["totals"] : Map()
         colW := Floor((innerW - 16) / 4)
         i := 0
@@ -358,9 +339,10 @@ class RunStatsPlotDialog
         dd.OnEvent("Change", (ctrl, *) => this._OnGranularityChanged(ctrl))
         this._ctrls["dropdown_gran"] := dd
 
-        ; --- Min Act filter dropdown (v17.13) ---
-        ; Lets you restrict the line chart to runs that reached at least
-        ; act N — avoids comparing an Act-1-only run with a full campaign.
+        ; --- Min Act filter dropdown ---
+        ; Restricts the line chart to runs that reached at least act
+        ; N — avoids comparing an Act-1-only run against a full
+        ; campaign.
         g.SetFont("s8 bold c" Theme.Color("subtle"), Theme.FONT_UI)
         g.Add("Text", "x224 y" RunStatsPlotDialog.Y_GRAN_LABEL " w200", "MAX ACT FILTER")
 
@@ -372,13 +354,12 @@ class RunStatsPlotDialog
         ddMinAct.OnEvent("Change", (ctrl, *) => this._OnMinActFilterChanged(ctrl))
         this._ctrls["dropdown_min_act"] := ddMinAct
 
-        ; --- PROFILE filter dropdown (v17.14) ---
-        ; Lets you isolate runs from a specific profile in the line chart.
-        ; Default on first open: the current run's profile (focuses on
-        ; same-profile comparisons). Afterwards persists the user's choice.
-        ;
-        ; Profile list is built dynamically from the saved runs on disk
-        ; + the current run's profile.
+        ; --- Profile filter dropdown ---
+        ; Isolates the line chart to runs of a single profile. First
+        ; open defaults to the current run's profile (focus on
+        ; same-profile comparison); afterwards persists the user's
+        ; choice. The profile list is built dynamically from saved
+        ; runs + the current run.
         profiles := this._GetAvailableProfiles(data)
         profileLabels := ["All profiles"]
         for _, p in profiles
@@ -541,8 +522,9 @@ class RunStatsPlotDialog
                     "gridColor",    "303338"
                 ))
 
-            ; X axis labels (1 per run, placed below the chart)
-            ; v0.1.1: uses currentRunId already declared at the top of _BuildGui
+            ; X axis labels (one per run, below the chart). Reuses
+            ; the currentRunId already declared at the top of
+            ; _BuildGui.
             xLabelW := 80
             if (nRuns > 1)
             {
@@ -631,19 +613,15 @@ class RunStatsPlotDialog
         g.Show("w" RunStatsPlotDialog.WINDOW_W " h" RunStatsPlotDialog.WINDOW_H)
     }
 
-    ; ============================================================
-    ; _CollectRunsForChart - lists runs in chronological order
-    ;
-    ; v17.13: applies the _minActFilter — runs with maxActReached <
-    ; minAct are excluded (except the in-progress current run, which
-    ; always appears).
-    ; ============================================================
+    ; Returns the runs to plot in chronological order, applying both
+    ; the min-act and profile filters. The currently in-progress run
+    ; always appears regardless of filters.
     _CollectRunsForChart(currentData)
     {
         all := []
         currentRunId := currentData.Has("runId") ? currentData["runId"] : ""
         minAct := this._minActFilter
-        profileFilter := this._profileFilter   ; v17.14
+        profileFilter := this._profileFilter
 
         if IsObject(this._runHistory)
         {
@@ -658,9 +636,9 @@ class RunStatsPlotDialog
                     if (smId != "" && smId = currentRunId)
                         continue
 
-                    ; Applies the min act filter (v17.13). Runs saved in
-                    ; older versions may not have maxActReached — treated
-                    ; as 0 (only appear if filter=All).
+                    ; Apply the min-act filter. Runs saved before this
+                    ; field existed have maxActReached = 0, so they
+                    ; only appear when the filter is "All".
                     if (minAct > 0)
                     {
                         smMaxAct := sm.Has("maxActReached") ? sm["maxActReached"] : 0
@@ -668,10 +646,10 @@ class RunStatsPlotDialog
                             continue
                     }
 
-                    ; Applies the profile filter (v17.14). Empty filter =
-                    ; "All profiles" (filters nothing). Runs without a
-                    ; saved profile (legacy) are excluded when there is
-                    ; an active filter — no exact match possible.
+                    ; Apply the profile filter. Empty filter = "All
+                    ; profiles" (no filter). Legacy runs without a
+                    ; saved profile are excluded when a filter is
+                    ; active — no exact match possible.
                     if (profileFilter != "")
                     {
                         smProfile := sm.Has("profile") ? String(sm["profile"]) : ""
@@ -743,15 +721,15 @@ class RunStatsPlotDialog
         return all
     }
 
-    ; ============================================================
-    ; _BuildLineChartSeries - builds series for the line chart
+    ; Builds the line-chart series. Points get `present: false` when
+    ; the series is absent from that run (e.g. "Act 2" in a run that
+    ; only reached Act 1) — the renderer breaks the line there
+    ; instead of dropping to zero, which earlier versions did and
+    ; created a misleading floor.
     ;
-    ; v17.13: marks points with `present: false` when the series does
-    ; not appear in that run — except for "run" granularity where the
-    ; 4 fixed categories (map/town/loading/death) are always present
-    ; (ms=0 is valid data: "run without deaths" instead of "run
-    ; without data").
-    ; ============================================================
+    ; Exception: under "run" granularity the 4 fixed categories
+    ; (map / town / loading / death) are always considered present.
+    ; ms = 0 there is real data ("run without deaths"), not absence.
     _BuildLineChartSeries(runs)
     {
         if !IsObject(runs) || runs.Length = 0
@@ -759,8 +737,8 @@ class RunStatsPlotDialog
 
         useGap := this._granularity != "run"
 
-        ; v0.1.1: local `run` collides with the builtin `Run`
-        ; (case-insensitive). Use `runItem` in all loops in this function.
+        ; Local `run` collides case-insensitively with the built-in
+        ; `Run` function; use `runItem` throughout this method.
         universe := Map()
         for _, runItem in runs
         {
@@ -795,8 +773,8 @@ class RunStatsPlotDialog
 
                 if useGap && !found
                 {
-                    ; "By act/map/etc" granularity and the label does
-                    ; not exist in this run -> GAP (line breaks). v17.13.
+                    ; Dynamic granularity and this run doesn't carry
+                    ; the label → GAP (the renderer breaks the line).
                     points.Push(Map("xIdx", idx - 1, "yMs", 0, "present", false))
                 }
                 else
@@ -904,8 +882,8 @@ class RunStatsPlotDialog
             this._ShowWithData(this._currentData)
     }
 
-    ; v17.13 — handler of the min-act filter dropdown.
-    ; idx=1 -> All (filter=0), idx=N -> Act (N-1)+
+    ; Handler of the min-act dropdown.
+    ; idx = 1 → All (filter = 0); idx = N → Act (N - 1)+
     _OnMinActFilterChanged(ctrl)
     {
         try
@@ -920,9 +898,9 @@ class RunStatsPlotDialog
             this._ShowWithData(this._currentData)
     }
 
-    ; v17.14 — handler of the profile filter dropdown.
-    ; idx=1 -> "All profiles" -> empty filter ("")
-    ; idx>1 -> labels[idx] (profile name)
+    ; Handler of the profile dropdown.
+    ; idx = 1 → "All profiles" (filter = "")
+    ; idx > 1 → labels[idx] (profile name)
     _OnProfileFilterChanged(ctrl, labels)
     {
         try
@@ -937,9 +915,9 @@ class RunStatsPlotDialog
             this._ShowWithData(this._currentData)
     }
 
-    ; v17.14 — lists unique profiles from saved runs + current run.
-    ; Returns an array of strings sorted alphabetically. Empty profiles
-    ; (old runs) are ignored — they fall under "All profiles" implicitly.
+    ; Returns the unique profile names across saved runs + the
+    ; current run, sorted alphabetically. Empty profiles (legacy
+    ; runs) are ignored — they fall under "All profiles" implicitly.
     _GetAvailableProfiles(currentData)
     {
         seen := Map()
@@ -1047,8 +1025,8 @@ class RunStatsPlotDialog
                 continue
             note := d.Has("note") ? d["note"] : ""
             actNum := 0
-            ; Accepts "Ato N" (legacy) or "Act N" (v17.13b) for compat
-            ; with runs saved in previous versions.
+            ; Accept both "Ato N" (legacy Portuguese saves) and
+            ; "Act N" (current) so older runs still plot correctly.
             if RegExMatch(note, "(?:Ato|Act)\s+(\d+)", &m)
                 actNum := Integer(m[1] + 0)
             if (actNum <= 0)
@@ -1144,15 +1122,11 @@ class RunStatsPlotDialog
         return segs
     }
 
-    ; ============================================================
-    ; _BuildLegend - granularity items with color + label + time
-    ;
-    ; Shows ALL series (visible + hidden). Hidden series have a gray
-    ; swatch (surface3) and muted text; visible ones have the real color.
-    ;
-    ; Each item (swatch + text) has 0x100 (SS_NOTIFY) + Click handler
-    ; to toggle visibility.
-    ; ============================================================
+    ; Builds the legend, one item per series (visible + hidden).
+    ; Hidden series get a gray swatch (surface3) and muted text;
+    ; visible ones get the real color. Each item (swatch + text)
+    ; carries 0x100 (SS_NOTIFY) + a Click handler that toggles
+    ; visibility.
     _BuildLegend(g, segs, innerW)
     {
         if !IsObject(segs) || segs.Length = 0
@@ -1223,19 +1197,14 @@ class RunStatsPlotDialog
         this._ShowWithData(bres)
     }
 
-    ; ============================================================
-    ; Details popup
-    ;
-    ; v0.1.4: splits details into TWO tabs to reduce cognitive load:
-    ;   - "Activities": map / town / death entries
-    ;   - "Loading": loading events isolated (high-volume — typical
-    ;     run has 50+ loadings vs ~30 zones)
-    ;
-    ; Entries within each tab are presented in chronological order
-    ; (ascending timestamp) so the user can read the run from
-    ; beginning to end. Entries without timestamp (legacy or aggregated)
-    ; appear at the end of their tab.
-    ; ============================================================
+    ; Details popup. Splits the details list into two tabs so the
+    ; user isn't overwhelmed:
+    ;   Activities — map / town / death entries
+    ;   Loading    — loading events on their own (a typical run has
+    ;                50+ loadings vs ~30 zones, very different cadence)
+    ; Entries within each tab are already in chronological order
+    ; (the builder sorted them). Entries without a timestamp
+    ; (legacy / aggregated) end up at the bottom of their tab.
     _OpenDetailsPopup()
     {
         if !IsObject(this._currentData)
@@ -1248,7 +1217,8 @@ class RunStatsPlotDialog
         }
 
         details      := this._currentData.Has("details") ? this._currentData["details"] : []
-        ; v0.1.1: local `runId` collides with the `RunId` class. Use `currentRunId`.
+        ; Local `runId` collides with the `RunId` domain class; use
+        ; `currentRunId`.
         currentRunId := this._currentData.Has("runId")   ? this._currentData["runId"]   : ""
 
         g := Gui("+AlwaysOnTop -MaximizeBox",
@@ -1326,8 +1296,8 @@ class RunStatsPlotDialog
             )
         }
 
-        ; --- Reset tab context for the buttons (avoids them being
-        ; added inside the active tab) ---
+        ; Reset the tab context before adding the buttons — otherwise
+        ; they'd be parented to the currently active tab.
         tab.UseTab()
 
         btnClose := g.Add("Button", "x694 y386 w100 h28", "Close")

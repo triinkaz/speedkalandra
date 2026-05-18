@@ -1,44 +1,27 @@
-﻿; ============================================================
-; LogMonitorService — tail loop on Client.txt + parsing + raw events
-; ============================================================
-;
-; Responsibility:
-;   - Maintain position in the Client.txt file (tail loop)
-;   - Detect/parse known lines from the Path of Exile 2 log
-;   - Publish RAW EVENTS to the EventBus
-;
-; PHILOSOPHY:
-; "Dumb" service focused on I/O. Does not make decisions. Whoever
-; decides what to do (e.g. trigger timer.Pause on Lost Focus, sync
-; zone -> step) is:
-;   - The App composition root (Phase 5) wires events to commands
-;     of other services. E.g.: bus.Subscribe(WindowFocusChanged, (data) =>
-;       data["state"] = "lost" ? timerService.Pause() : timerService.Resume())
-;   - The SyncEngine (Phase 5) has route sync logic (FindBestMatchingStep)
+﻿; LogMonitorService — tail loop on PoE2's Client.txt that parses
+; known lines and publishes raw events on the bus. Deliberately
+; "dumb": it doesn't decide what to do with events. The composition
+; root wires events to commands of other services.
 ;
 ; Recognized lines:
-;   1. "X (Class) is now level N"             -> Evt.CharacterLevelUp
-;   2. "Generating level N area X with seed"  -> Evt.AreaLevelChanged
-;   3. "[SCENE] Set Source [name]"            -> Evt.SceneEntered
-;   4. "You have entered ..."                 -> Evt.ZoneChanged
-;   5. "X has been slain."                    -> Evt.DeathDetected
-;   6. "[WINDOW] Lost focus" / "Gained focus" -> Evt.WindowFocusChanged
+;   "X (Class) is now level N"             → Evt.CharacterLevelUp
+;   "Generating level N area X with seed"  → Evt.AreaLevelChanged
+;   "[SCENE] Set Source [name]"            → Evt.SceneEntered + Evt.ZoneChanged
+;   "You have entered ..."                 → Evt.ZoneChanged
+;   "X has been slain."                    → Evt.DeathDetected (player only)
+;   "[WINDOW] Lost / Gained focus"         → Evt.WindowFocusChanged
 ;
-; OUT OF SCOPE (Phase 5 SyncEngine):
-;   - Step.completionRegex/engageRegex/bossStartRegex matching
-;     (those are sync logic, not raw log)
-;   - Boss fight timing
-;   - Auto-start on the Wounded Man line (App composition root via
-;     subscribe to NpcDialogue or similar)
+; Every line also goes out as Evt.LogLineRead in raw form so other
+; subscribers (e.g. AutoStartService matching against autoStartRegex)
+; can parse on their own.
 ;
-; Construction:
+; Usage:
 ;   monitor := LogMonitorService(clock, bus, log)
 ;   monitor.Configure(logFilePath)
 ;   monitor.Start(seedFromTail := true)
-;   ; then, periodically:
 ;   SetTimer(() => monitor.Tick(), 250)
 ;
-; For tests: can call monitor.ProcessText(text) directly without I/O.
+; Tests call monitor.ProcessText(text) directly, no I/O.
 
 
 class LogMonitorService
@@ -51,7 +34,7 @@ class LogMonitorService
     _partialLine  := ""
     _isRunning    := false
     _lastReadMs   := 0
-    _characterName := ""   ; v17.15 (Bug #2): filter for DeathDetected
+    _characterName := ""   ; Filter for DeathDetected (player vs boss/monster).
 
     ; Tail size swept in Start(seedFromTail=true)
     static SEED_BYTES := 65536
@@ -76,19 +59,13 @@ class LogMonitorService
         this._logFilePath := logFilePathStr
     }
 
-    ; ============================================================
-    ; SetCharacterName (v17.15 - Bug #2)
-    ;
-    ; Sets the current player's name. Used to filter DeathDetected:
-    ; PoE2 logs "<Name> has been slain." both for the player and for
-    ; bosses, so without this filter deathCount would inflate with kills.
-    ;
-    ; Called by the composition root:
-    ;   - On boot, after instantiating logMonitor, with cfg.characterName.
-    ;   - On CharacterLevelUp, with the name from the event.
-    ;
-    ; Empty string = filter disabled (no death is published).
-    ; ============================================================
+    ; Sets the player's character name, used to filter DeathDetected.
+    ; PoE2 logs "<Name> has been slain." for both the player and
+    ; bosses; without the filter every boss kill would be counted as
+    ; a player death. The composition root sets this on boot from
+    ; cfg.characterName and re-applies it on every CharacterLevelUp
+    ; event. Empty string disables the filter entirely (no deaths
+    ; published).
     SetCharacterName(name)
     {
         this._characterName := String(name)
@@ -210,9 +187,7 @@ class LogMonitorService
         this._ProcessChunk(text)
     }
 
-    ; ============================================================
-    ; Processing (private)
-    ; ============================================================
+    ; ---- Processing (private) ----
 
     ; Splits a chunk into lines, handling partial lines between chunks.
     _ProcessChunk(textStr)
@@ -232,20 +207,16 @@ class LogMonitorService
             this._ProcessLine(Trim(lineStr))
     }
 
-    ; Tries to extract information from a line. Each extractor is
-    ; tried in order; the first one to match publishes the event and
-    ; returns.
-    ;
-    ; Also publishes Evt.LogLineRead with the raw line ALWAYS (even
-    ; if some extractor matched). This event is consumed by
-    ; specialized parsers (BossFightTracker of Phase 5.3, etc.).
+    ; Tries each extractor in order; the first that matches publishes
+    ; the event and returns. Every line also goes out as
+    ; Evt.LogLineRead in raw form for downstream parsers (e.g.
+    ; AutoStartService).
     _ProcessLine(lineStr)
     {
         if (lineStr = "")
             return
 
         ; Broadcast the raw line before any specific parsing.
-        ; Subscribers (e.g. BossFightTracker) decide if the line matters.
         this._bus.Publish(Events.LogLineRead, Map("line", lineStr))
 
         ; Character level up
@@ -276,18 +247,17 @@ class LogMonitorService
             this._bus.Publish(Events.SceneEntered, Map(
                 "sceneId", scene
             ))
-            ; v17.15 (Bug #21): publishes ZoneChanged also for each SCENE.
-            ; Current PoE2 no longer emits "You have entered" on all zone
-            ; transitions — only "[SCENE] Set Source". Republishing as
-            ; ZoneChanged ensures that ZoneTrackingService and status
-            ; widgets receive the change.
+            ; Republish as ZoneChanged too. Current PoE2 no longer
+            ; emits "You have entered" on every zone transition
+            ; (only "[SCENE] Set Source" is reliable), so without
+            ; this branch ZoneTrackingService and the status widgets
+            ; would miss the change.
             this._bus.Publish(Events.ZoneChanged, Map(
                 "zoneName", scene,
                 "sceneId",  scene
             ))
-            ; v17.15 (Bug #21): Scene/Zone published log moved from
-            ; INFO to DEBUG. In a full campaign the player enters
-            ; 100+ zones — at INFO it became spam in the log file.
+            ; DEBUG, not INFO: a full campaign hits 100+ zones and
+            ; an INFO line per scene drowned the log file.
             this._log.Debug("Scene/Zone published: " scene, "LogMonitor")
             return
         }
@@ -303,13 +273,10 @@ class LogMonitorService
             return
         }
 
-        ; Death (PLAYER ONLY since v17.15 - Bug #2)
-        ;
-        ; PoE2 logs "<Name> has been slain." for the player AND for
-        ; bosses (see boss_catalog.ini with defeat_regex). Without a
-        ; filter, each boss kill inflated the run's deathCount.
-        ; Filters by the current character name (hydrated from cfg +
-        ; updated on CharacterLevelUp).
+        ; Death — player only. PoE2 logs "<Name> has been slain."
+        ; for the player AND for bosses (see boss_catalog.ini with
+        ; defeat_regex). Filter by the configured character name to
+        ; keep the run's deathCount honest.
         death := this._ExtractDeath(lineStr)
         if (death != "")
         {
@@ -319,8 +286,7 @@ class LogMonitorService
                     "character", death
                 ))
             }
-            ; If it doesn't match the player, it's a boss/monster kill —
-            ; silently ignore (common case in the log).
+            ; Non-player kill — just drop it.
             return
         }
 
@@ -384,10 +350,10 @@ class LogMonitorService
             this._bus.Publish(Events.SceneEntered, Map(
                 "sceneId", lastScene
             ))
-            ; v17.15 (Bug #20): same ZoneChanged republication also on
-            ; the initial seed — essential for ZoneTrackingService to
-            ; start with the correct zone after a boot in the middle
-            ; of a run.
+            ; Republish as ZoneChanged on the seed too — same
+            ; rationale as _ProcessLine. Without this,
+            ; ZoneTrackingService would boot mid-run without knowing
+            ; the current zone.
             this._bus.Publish(Events.ZoneChanged, Map(
                 "zoneName", lastScene,
                 "sceneId",  lastScene
@@ -395,9 +361,7 @@ class LogMonitorService
         }
     }
 
-    ; ============================================================
-    ; Extractors — pure regex functions
-    ; ============================================================
+    ; ---- Extractors (pure regex) ----
 
     ; Pattern: ":<NAME> (<CLASS>) is now level <N>"
     ; E.g.: ": Harvest (Warrior) is now level 42"

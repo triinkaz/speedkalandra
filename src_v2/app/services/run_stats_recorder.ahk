@@ -1,42 +1,16 @@
-; ============================================================
-; RunStatsRecorder - in-memory buffer of current-run events
-; ============================================================
+; RunStatsRecorder — in-memory buffer of run-relevant events
+; (loadings, deaths, runId metadata). The composition root combines
+; the snapshot from GetSnapshot() with ZoneTrackingService.GetTotals()
+; to feed RunStatsPlotBuilder.Build at the end of a run.
 ;
-; Reactive service that listens to the events relevant to the final
-; plot and accumulates them in arrays/counters. The composition root
-; uses GetSnapshot() to build the input for RunStatsPlotBuilder.Build(snapshot).
-;
-; SUBSCRIPTIONS:
-;   Evt.LoadingMeasured  -> push loadingEvents
-;   Evt.DeathDetected    -> deathCount++
-;   Evt.RunStarted       -> Reset() + snapshot _runId/_startedAt
-;   Evt.RunReset         -> Reset()
-;   Evt.RunCancelled     -> Reset()
-;   Evt.RunCompleted     -> snapshot final duration (Reset happens on the next RunStarted)
-;
-; ZONE TOTALS:
-;   NOT accumulated here. ZoneTrackingService.GetTotals() already
-;   does that. The composition root combines the two services when
-;   building the snapshot.
-;
-; BOSS EVENTS (REMOVED in v17.13):
-;   Boss tracking feature was removed from the app (class voice lines
-;   were not going into PoE2's Client.txt). Snapshot no longer
-;   includes bossEvents.
-;
-; GetSnapshot(zoneTotalsMap, runDurationMs) -> Map:
-;   Map(
-;     "runId":         this._runId,
-;     "firstTs":       this._firstTs,
-;     "runDurationMs": runDurationMs,
-;     "zoneTotals":    zoneTotalsMap,
-;     "loadingEvents": [...],
-;     "deathCount":    int
-;   )
-;
-; CONSTRUCTION:
-;   recorder := RunStatsRecorder(bus, clock)
-
+; Subscribes:
+;   LoadingMeasured  → push to _loadingEvents
+;   DeathDetected    → _deathCount++
+;   RunStarted       → Reset() + capture runId/startedAt
+;   RunReset         → Reset()
+;   RunCancelled     → Reset()
+;   RunCompleted     → no-op (next RunStarted resets; data stays
+;                    available to the plot builder in between)
 
 class RunStatsRecorder
 {
@@ -72,7 +46,7 @@ class RunStatsRecorder
         this._handlerRunStarted      := (data) => this._OnRunStarted(data)
         this._handlerRunReset        := (data) => this.Reset()
         this._handlerRunCancelled    := (data) => this.Reset()
-        this._handlerRunCompleted    := (data) => 0    ; keeps data for the final plot
+        this._handlerRunCompleted    := (data) => 0    ; keep data for the plot builder
 
         bus.Subscribe(Events.LoadingMeasured, this._handlerLoadingMeasured)
         bus.Subscribe(Events.DeathDetected,   this._handlerDeathDetected)
@@ -116,22 +90,18 @@ class RunStatsRecorder
         }
     }
 
-    ; ============================================================
-    ; Queries
-    ; ============================================================
+    ; ---- Queries ----
     GetRunId()         => this._runId
     GetFirstTs()       => this._firstTs
     GetLoadingEvents() => this._CopyArrayOfMaps(this._loadingEvents)
     GetDeathCount()    => this._deathCount
 
-    ; GetSnapshot - builds the Map snapshot consumed by the plot builder.
-    ; zoneTotalsMap is provided by the caller (ZoneTrackingService.GetTotals()).
-    ; zoneFirstEnteredAt (v0.1.4): optional Map<zoneName, "YYYY-MM-DD HH:MM:SS">
-    ;   with the first-entry timestamp per zone. Used by the plot
-    ;   builder to populate `timestamp` on zone details, enabling
-    ;   chronological ordering. Empty = no timestamp for zones (legacy
-    ;   path for runs without this info).
-    ; runDurationMs idem (TimerService.GetRunMs()).
+    ; Builds the snapshot consumed by RunStatsPlotBuilder. zoneTotalsMap
+    ; comes from ZoneTrackingService.GetTotals (or GetTotalsForSnapshot).
+    ; zoneFirstEnteredAt is the per-zone first-entry timestamp map
+    ; (also from ZoneTrackingService); the plot builder uses it for
+    ; chronological ordering of zone details. Empty when not provided
+    ; — plot falls back to whatever order the totals iterate in.
     GetSnapshot(zoneTotalsMap := "", runDurationMs := 0, zoneFirstEnteredAt := "")
     {
         return Map(
@@ -145,9 +115,6 @@ class RunStatsRecorder
         )
     }
 
-    ; ============================================================
-    ; Reset
-    ; ============================================================
     Reset()
     {
         this._runId         := ""
@@ -157,9 +124,8 @@ class RunStatsRecorder
         this._deathCount    := 0
     }
 
-    ; ============================================================
-    ; Handlers
-    ; ============================================================
+    ; ---- Handlers ----
+
     _OnRunStarted(data)
     {
         this.Reset()
@@ -193,9 +159,8 @@ class RunStatsRecorder
         this._deathCount += 1
     }
 
-    ; ============================================================
-    ; Helpers
-    ; ============================================================
+    ; ---- Helpers ----
+
     _CopyArrayOfMaps(arr)
     {
         out := []
@@ -215,7 +180,6 @@ class RunStatsRecorder
 
     _NowTimestamp()
     {
-        ; YYYY-MM-DD HH:MM:SS in local time
         return FormatTime(A_Now, "yyyy-MM-dd HH:mm:ss")
     }
 }

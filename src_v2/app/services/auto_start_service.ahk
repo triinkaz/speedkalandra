@@ -1,33 +1,12 @@
-; ============================================================
-; AutoStartService - automatically starts a run via log regex
-; ============================================================
+; AutoStartService — publishes Cmd.NewRunRequested when a log line
+; matches cfg.autoStartRegex. The canonical trigger for PoE2 speedruns
+; is the Wounded Man's first line ("By the First Ones! You're alive!"),
+; which appears at the start of the campaign and standardizes the
+; run zero-point across players without a manual hotkey.
 ;
-; Subscribes to Evt.LogLineRead and tests each line against
-; cfg.autoStartRegex. Match -> publishes Cmd.NewRunRequested (which
-; RunService consumes).
-;
-; CANONICAL USE CASE:
-;   PoE2 speedrun — the Wounded Man's line ("By the First Ones! You're
-;   alive!") appears in the first contact right at the start of the
-;   campaign, before Clearfell Encampment. Using that line as the
-;   start trigger standardizes the run zero-point for all players
-;   and removes the need for a manual hotkey.
-;
-; PHILOSOPHY:
-;   - Simple service, no complex state.
-;   - Does not fire if there is already an active run (tracked via
-;     the _runActive flag, updated by Evt.RunStarted / RunReset /
-;     RunCancelled / RunCompleted).
-;   - Empty regex -> service is a no-op (but stays subscribed).
-;   - Invalid regex -> silences (next user edit fixes it without crash).
-;
-; EVENTS:
-;   Subscribe:  Evt.LogLineRead, Evt.RunStarted, Evt.RunReset,
-;               Evt.RunCancelled, Evt.RunCompleted
-;   Publishes:  Cmd.NewRunRequested  { source: "auto" }
-;
-; CONSTRUCTION:
-;   svc := AutoStartService(bus, cfg)
+; Does not fire while a run is already active. Empty regex makes the
+; service a no-op (still subscribed). Invalid regex is silently
+; tolerated so the user can edit it without crashing the tracker.
 
 
 class AutoStartService
@@ -52,14 +31,13 @@ class AutoStartService
         this._bus := bus
         this._cfg := cfg
 
-        ; v17.15 (Bug #4): query runService on boot.
-        ;
-        ; Without this, on reload with a run in progress, RunService.Hydrate
-        ; would publish RunStarted{hydrated:true} BEFORE this service
-        ; existed. AutoStartService would end up with _runActive=false
-        ; despite the active run, and any log line matching autoStartRegex
-        ; (e.g. zone re-entry, cinematic replay) would fire
-        ; NewRunRequested -> RunService.ResetRun -> wiping the run.
+        ; The composition root passes runService so this service can
+        ; read the hydrated active-run state at construction time.
+        ; Without it, after a reload mid-run, RunService.Hydrate would
+        ; have already published RunStarted{hydrated:true} before this
+        ; service existed, leaving _runActive=false despite the active
+        ; run — the next log line matching autoStartRegex would then
+        ; reset the run.
         if (IsObject(runService) && runService.HasMethod("IsActive"))
             this._runActive := runService.IsActive()
 
@@ -109,9 +87,8 @@ class AutoStartService
 
     _OnLogLine(data)
     {
-        ; Does not fire if there's already a run in progress — the
-        ; user may be doing a second session run and the LogMonitor
-        ; could be reading a log chunk that contains the old line.
+        ; Don't fire if a run is in progress — the LogMonitor could
+        ; be reading a chunk that contains the same trigger line.
         if this._runActive
             return
         if !IsObject(data) || !data.Has("line")
@@ -123,8 +100,8 @@ class AutoStartService
         if (regex = "")
             return
 
-        ; Tolerant of invalid regex — user may be editing in settings;
-        ; we don't want to crash the tracker over that.
+        ; Tolerant of invalid regex (user editing settings); never
+        ; crash the tracker over a malformed pattern.
         matched := false
         try
         {
@@ -137,10 +114,8 @@ class AutoStartService
         if !matched
             return
 
-        ; Optimistically mark — the RunStarted handler will confirm.
-        ; If NewRun silently fails (unlikely), the next LogLineRead
-        ; with the same phrase won't re-fire during this "pseudo run".
-        ; Reset/Cancel free the flag.
+        ; Optimistically mark active. RunStarted will confirm; Reset/
+        ; Cancel free the flag if NewRun somehow silently fails.
         this._runActive := true
         this._bus.Publish(Commands.NewRunRequested, Map("source", "auto"))
     }

@@ -1,37 +1,24 @@
-; ============================================================
-; SettingsDialog - settings window (Wave 6, minimal)
-; ============================================================
+; SettingsDialog — lets the user edit the persisted AppSettings.
+; Subscribes to Cmd.OpenSettingsRequested to open. The composition
+; root constructs it; the dialog calls SettingsRepository.Save on
+; OK and publishes the granular change events the runtime needs
+; (LogFilePathChanged, HotkeysChanged, VendorRegexesChanged) so
+; services can hot-reload without a full app restart.
 ;
-; Minimalist dialog aligned with the new AppSettings. Lets you edit:
-;   - General: ProfileName, GamePatch, LogFile path
-;   - AutoStart: Regex (PoE2 is localized — user configures per language)
-;   - AutoFinalize: Regex
-;   - VendorRegexes: 3 slots (max 50 chars each) for V1/V2/V3 shortcuts
-;   - Rules: AutoPauseOnFocus, DeathPenaltyEnabled + Penalty seconds
-;   - Hotkeys (all actions registered in cfg.hotkeys)
+; Sections in the GUI:
+;   General           ProfileName, LogFile path
+;   AutoStart         Regex (PoE2 is localized — user configures per language)
+;   AutoFinalize      Regex
+;   VendorRegexes     3 slots (max 50 chars each) for V1/V2/V3 shortcuts
+;   Rules             AutoPauseOnFocus, DeathPenaltyEnabled + seconds
+;   Hotkeys           Every action registered in cfg.hotkeys
 ;
-;   v17.15 (Bug #15): removed UI lines for PanelKeys.
-;   v17.15.1: re-added UI for death penalty (it was discovered that
-;   the plot consumed these fields).
-;
-; SUBSCRIPTIONS:
-;   Cmd.OpenSettingsRequested -> Open()
-;
-; CONSTRUCTION:
-;   dialog := SettingsDialog(bus, settingsRepo, cfg, headless := false)
-;   ; bus.Publish(Commands.OpenSettingsRequested) opens it
-;
-; NOTE ON FONTS IN Gui.Add:
-;   AHK v2 does NOT accept "s<size>" or "c<hex>" as inline options in
-;   the Gui.Add("Edit", ...) string. Font size and color are
-;   configured via g.SetFont(...) BEFORE the Add, and the control
-;   inherits those settings. That's why the _AddEdit() helper sets
-;   the font before adding.
-;
-;   Cases where inline "c<hex>" IS accepted: Text, Link, Checkbox,
-;   Radio, Button, GroupBox, Slider, Tab. But inline "s<size>" does
-;   not work on any control. For uniformity, all dialog inputs use
-;   SetFont.
+; AHK v2 gotcha on Gui.Add: "s<size>" and "c<hex>" inline options are
+; rejected on Edit (and most input controls). Set font + color via
+; g.SetFont(...) BEFORE the Add and the control inherits both. Inline
+; "c<hex>" IS accepted on Text/Link/Checkbox/Radio/Button/GroupBox/
+; Slider/Tab; inline "s<size>" works on none of them. _AddEdit
+; centralizes this contract.
 
 
 class SettingsDialog
@@ -120,20 +107,15 @@ class SettingsDialog
         this._ctrls["profileName"] := this._AddEdit(g, 180, y, 360, this._cfg.profileName)
         y += 26
 
-        ; v0.1.3: "Patch" field removed from the dialog. cfg.gamePatch
-        ; still exists internally (default "Unknown") for back-compat
-        ; with old runs saved in history, but the user no longer needs
-        ; to maintain it manually.
+        ; cfg.gamePatch isn't editable in the dialog — it's preserved
+        ; internally (default "Unknown") for back-compat with old
+        ; saved runs but the user no longer maintains it.
 
         this._Label(g, y, "PoE2 log (Client.txt)")
         this._ctrls["logFile"] := this._AddEdit(g, 180, y, 280, this._cfg.logFile)
         btnBrowse := g.Add("Button", "x466 y" (y - 2) " w74 h22", "Browse...")
         btnBrowse.OnEvent("Click", (*) => this._OnBrowseLog())
         y += 32
-
-        ; v17.15 (Bug #15): "Panel keys (csv)" line removed.
-        ; PanelKeyService was disconnected in v17.2 and the
-        ; panelOverlayKeys field no longer exists in AppSettings.
 
         ; ============ AutoStart ============
         this._SectionHeader(g, y, "AUTO-START (starts run when regex matches in log)")
@@ -149,7 +131,7 @@ class SettingsDialog
         this._ctrls["autoFinalizeRegex"] := this._AddEdit(g, 180, y, 360, this._cfg.autoFinalizeRegex)
         y += 32
 
-        ; ============ Vendor Regex Slots (Wave 8) ============
+        ; ============ Vendor Regex Slots ============
         ; Edits limited to 50 chars via "Limit50". V1/V2/V3 buttons in
         ; CompactLayoutWidget copy each slot to clipboard via Ctrl+click.
         this._SectionHeader(g, y, "VENDOR SHORTCUTS (clipboard via V1/V2/V3 in overlay, max 50 chars)")
@@ -174,8 +156,8 @@ class SettingsDialog
             "x180 y" y (this._cfg.autoPauseOnFocus ? " Checked" : ""),
             "Pause when PoE2 loses focus")
         y += 24
-        ; v17.15.1: death penalty (re-added after the #15 over-removal).
-        ; UI shows seconds to be friendly; converted to ms on save.
+        ; Death penalty: UI shows seconds for friendliness;
+        ; conversion to ms happens on save.
         this._ctrls["deathPenaltyEnabled"] := g.Add("Checkbox",
             "x180 y" y (this._cfg.deathPenaltyEnabled ? " Checked" : ""),
             "Apply death penalty in run plot")
@@ -189,8 +171,8 @@ class SettingsDialog
         this._SectionHeader(g, y, "HOTKEYS")
         y += 22
 
-        ; v0.1.0: hint about the capture UX. The Edit field is ReadOnly;
-        ; the user only interacts via buttons (Capture + Clear).
+        ; Hint about the capture UX — the Edit field is ReadOnly;
+        ; the user only interacts via Capture + Clear buttons.
         g.SetFont("s8 c" Theme.Color("muted"), Theme.FONT_UI)
         g.Add("Text", "x16 y" y " w520",
             "Click 'Capture' to record a key combo (Esc cancels). 'Clear' to unbind.")
@@ -205,20 +187,20 @@ class SettingsDialog
         for _, action in this._hotkeyActions
         {
             this._Label(g, y, action)
-            ; v0.1.0: Edit is ReadOnly. Display in human format
-            ; ("Ctrl+Alt+F") via HotkeyFormatter. Interaction only via
-            ; Capture/Clear buttons. _OnSave converts back to AHK syntax
-            ; ("^!f") at persist time.
+            ; Edit is ReadOnly. Display in human format ("Ctrl+Alt+F")
+            ; via HotkeyFormatter; interaction only through Capture/
+            ; Clear. _OnSave converts back to AHK syntax ("^!f") at
+            ; persist time.
             displayVal := HotkeyFormatter.ToHuman(this._cfg.GetHotkey(action))
             this._ctrls["hk_" action] := this._AddEdit(g, 180, y, 200, displayVal, "ReadOnly")
 
-            ; Capture button: grabs the next combo via InputHook
+            ; Capture: grabs the next combo via InputHook.
             g.SetFont("s9 c" Theme.Color("text"), Theme.FONT_UI)
             btnCap := g.Add("Button", "x384 y" (y-1) " w60 h22", "Capture")
             btnCap.OnEvent("Click", this._MakeCaptureHandler(action))
             this._ctrls["btn_capture_" action] := btnCap
 
-            ; Clear button: unbinds the hotkey (clears the edit)
+            ; Clear: unbinds the hotkey (empty edit).
             btnClr := g.Add("Button", "x448 y" (y-1) " w50 h22", "Clear")
             btnClr.OnEvent("Click", this._MakeClearHandler(action))
             this._ctrls["btn_clear_" action] := btnClr
@@ -238,19 +220,16 @@ class SettingsDialog
         g.Show("w" SettingsDialog.WINDOW_W " h" finalH)
     }
 
-    ; ============================================================
-    ; _AddEdit - helper that sets the font BEFORE and adds an Edit
-    ;   with simple options (no inline font options, which AHK v2
-    ;   rejects).
+    ; Sets the font (Theme.InputFont) before adding the Edit so the
+    ; control inherits it — the inline "s<size>" / "c<hex>" options
+    ; that AHK v2 rejects on Edit are never passed here.
     ;
-    ;   extraOpts: additional options valid for Edit (e.g. "Number",
-    ;     "ReadOnly", "Multi", "Password"). NEVER pass s<n> or c<hex>.
+    ; extraOpts accepts options valid for Edit ("Number", "ReadOnly",
+    ; "Multi", "Password", etc.). NEVER pass s<n> or c<hex>.
     ;
-    ;   v0.1.3: fixed height h22 to prevent the Edit from auto-expanding
-    ;   to multiple lines when the value is long (the logFile case with
-    ;   the full Steam path). Previously, the logFile Edit grew to 3
-    ;   lines and visually overlapped the field below.
-    ; ============================================================
+    ; Height is fixed at h22 so a long value (like a full Steam path
+    ; in logFile) doesn't make the Edit auto-expand into multiple
+    ; lines and overlap the field below.
     _AddEdit(g, x, y, w, value, extraOpts := "")
     {
         g.SetFont(Theme.InputFont(), Theme.FONT_UI)
@@ -276,7 +255,8 @@ class SettingsDialog
     {
         try
         {
-            ; v0.1.1: `file` collides with the builtin `File`. Use `selectedFile`.
+            ; Local `file` collides case-insensitively with the
+            ; built-in `File` class; use `selectedFile`.
             selectedFile := FileSelect(1, this._cfg.logFile, "Select Client.txt", "Logs (*.txt)")
             if (selectedFile != "")
                 this._ctrls["logFile"].Value := selectedFile
@@ -287,23 +267,22 @@ class SettingsDialog
     {
         cfg := this._cfg
         cfg.profileName := this._ctrls["profileName"].Value
-        ; v0.1.3: gamePatch is no longer editable in the dialog. Keeps
-        ; the value that was already in cfg (default "Unknown" on fresh
-        ; install).
+        ; gamePatch keeps whatever was already in cfg (default
+        ; "Unknown" on a fresh install); the dialog doesn't expose it.
 
-        ; v0.1.4: track the previous logFile to detect a change and
-        ; trigger LogMonitorService restart — no full app reload needed.
+        ; Snapshot the old log path so we can detect a change and
+        ; restart LogMonitor without a full app reload.
         oldLogFile := cfg.logFile
         cfg.logFile     := this._ctrls["logFile"].Value
         cfg.autoStartRegex    := this._ctrls["autoStartRegex"].Value
         cfg.autoFinalizeRegex := this._ctrls["autoFinalizeRegex"].Value
 
-        ; Vendor regex slots (Wave 8) — defensive clamp to 50 chars
+        ; Vendor regex slots — defensive 50-char clamp matches the
+        ; Edit's Limit50.
         ;
-        ; v0.1.4: snapshot oldVendorRegexes BEFORE rewriting cfg so we
-        ; can detect a change and emit Evt.VendorRegexesChanged. The
-        ; CompactLayoutWidget will refresh its V1/V2/V3 button labels
-        ; without a full app reload.
+        ; Snapshot vendorRegexes BEFORE rewriting cfg so we can emit
+        ; Evt.VendorRegexesChanged on real changes and the
+        ; CompactLayoutWidget refreshes its V1/V2/V3 button labels.
         oldVendorRegexes := SettingsDialog._CloneStringArray(cfg.vendorRegexes)
         vrOut := ["", "", ""]
         Loop 3
@@ -322,9 +301,8 @@ class SettingsDialog
 
         cfg.autoPauseOnFocus := this._ctrls["autoPauseOnFocus"].Value = 1
 
-        ; v17.15.1: death penalty re-added. UI uses seconds, persists
-        ; in ms. Defensive: if input is empty/invalid, falls back to
-        ; the 150s default.
+        ; Death penalty: UI uses seconds, persists as ms. Empty or
+        ; invalid input falls back to the 150 s default.
         cfg.deathPenaltyEnabled := this._ctrls["deathPenaltyEnabled"].Value = 1
         try
         {
@@ -334,13 +312,13 @@ class SettingsDialog
         catch
             cfg.deathPenaltyMs := 150000
 
-        ; Hotkeys
-        ; v0.1.0: user types human-readable format ("Ctrl+Alt+F");
+        ; Hotkeys.
+        ; The user types in human format ("Ctrl+Alt+F");
         ; HotkeyFormatter.ToAhk converts to internal syntax ("^!f")
-        ; before persisting. Tolerant of old-format passthrough.
+        ; before persisting. Old-format input passes through as-is.
         ;
-        ; v0.1.4: snapshot oldHotkeys BEFORE the loop so we can detect
-        ; a change and trigger a hot-rebind via Evt.HotkeysChanged.
+        ; Snapshot oldHotkeys BEFORE the loop so we can emit
+        ; Evt.HotkeysChanged and trigger a hot rebind in HotkeyService.
         oldHotkeys := SettingsDialog._CloneStringMap(cfg.hotkeys)
         for _, action in this._hotkeyActions
         {
@@ -354,30 +332,27 @@ class SettingsDialog
         hotkeysChanged := !SettingsDialog._StringMapsEqual(oldHotkeys, cfg.hotkeys)
 
         try this._settingsRepo.Save(cfg)
-        ; v0.1.4: publish event when logFile actually changed so the
-        ; app composition root can restart LogMonitor against the new
-        ; path. Empty new path is also published (the user may want to
-        ; disable monitoring).
+        ; logFile change → publish so the composition root can
+        ; restart LogMonitor against the new path. Empty new path is
+        ; also published (the user may want monitoring disabled).
         if (Trim(oldLogFile) != Trim(cfg.logFile))
         {
             try this._bus.Publish(Events.LogFilePathChanged, Map(
                 "oldPath", oldLogFile,
                 "newPath", cfg.logFile))
         }
-        ; v0.1.4: publish event when hotkeys changed so the app
-        ; composition root can rebind HotkeyService without a full
-        ; app reload. Sends a defensive copy of the new map so the
-        ; handler can’t accidentally mutate cfg.hotkeys.
+        ; hotkeys change → publish so HotkeyService can rebind
+        ; without a full app reload. Send a defensive copy of the new
+        ; map so the handler can't accidentally mutate cfg.hotkeys.
         if hotkeysChanged
         {
             try this._bus.Publish(Events.HotkeysChanged, Map(
                 "oldHotkeys", oldHotkeys,
                 "newHotkeys", SettingsDialog._CloneStringMap(cfg.hotkeys)))
         }
-        ; v0.1.4: publish event when any vendor regex slot changed so
-        ; the CompactLayoutWidget refreshes its V1/V2/V3 button labels
-        ; (filled vs empty) without a full app reload. Sends a copy of
-        ; the new array so the handler can’t mutate cfg.vendorRegexes.
+        ; vendor regex change → publish so CompactLayoutWidget can
+        ; refresh its V1/V2/V3 button labels (filled vs empty)
+        ; without a full app reload. Send a copy of the new array.
         if vendorRegexesChanged
         {
             try this._bus.Publish(Events.VendorRegexesChanged, Map(
@@ -388,19 +363,11 @@ class SettingsDialog
         this.Close()
     }
 
-    ; ============================================================
-    ; _CloneStringMap / _StringMapsEqual (v0.1.4)
-    ;
-    ; Helpers for the hotkeys snapshot/diff. cfg.hotkeys is a
-    ; Map<actionName, keyBind>, both sides strings. We need:
-    ;   - a defensive copy before the loop that mutates cfg.hotkeys,
-    ;     so we can compare before/after
-    ;   - an equality check after the loop
-    ;
-    ; Kept static so the same logic can be reused (and unit-tested
-    ; if we add coverage later). Empty inputs return empty Map / true
-    ; — callers do not need to null-check.
-    ; ============================================================
+    ; Defensive Map<string, string> snapshot/diff helpers for
+    ; cfg.hotkeys. We need a copy before the loop mutates cfg.hotkeys
+    ; and an equality check after so we know whether to publish
+    ; Evt.HotkeysChanged. Empty input returns an empty Map / true so
+    ; callers don't need a null check.
     static _CloneStringMap(m)
     {
         out := Map()
@@ -427,14 +394,9 @@ class SettingsDialog
         return true
     }
 
-    ; ============================================================
-    ; _CloneStringArray / _StringArraysEqual (v0.1.4)
-    ;
-    ; Helpers for the vendorRegexes snapshot/diff. cfg.vendorRegexes
-    ; is Array<string> (3 fixed slots). Mirrors _CloneStringMap /
-    ; _StringMapsEqual above; kept separate because Array and Map
-    ; have different iteration semantics in AHK v2.
-    ; ============================================================
+    ; Same idea as _CloneStringMap/_StringMapsEqual but for
+    ; cfg.vendorRegexes (Array<string>, 3 fixed slots). Kept separate
+    ; because Array and Map iterate differently in AHK v2.
     static _CloneStringArray(arr)
     {
         out := []
@@ -479,35 +441,31 @@ class SettingsDialog
         }
     }
 
-    ; ============================================================
-    ; Hotkey CAPTURE mode (v0.1.0)
-    ; ============================================================
-    ;
-    ; Flow:
-    ;   1. User clicks "Capture" next to a hotkey
-    ;   2. Button label changes to "Press..." and global input is suppressed
+    ; Hotkey capture flow:
+    ;   1. User clicks "Capture" next to a binding
+    ;   2. Button label flips to "Press..." and global input is
+    ;      suppressed
     ;   3. User presses the combo (e.g. Ctrl+Alt+G)
-    ;   4. InputHook OnKeyDown captures the NON-modifier key; modifier
-    ;      state is read via GetKeyState at the exact moment
-    ;   5. Edit is updated with the combo in human-readable format
+    ;   4. InputHook.OnKeyDown captures the NON-modifier key; modifier
+    ;      state is read via GetKeyState at that exact moment
+    ;   5. Edit is updated with the combo in human-readable form
     ;
-    ; CANCEL:
-    ;   - Esc alone (no modifier) cancels the capture
-    ;   - Esc+modifier (Ctrl+Esc, etc) is a valid bind
-    ;   - 10s timeout also cancels silently
+    ; Cancel paths:
+    ;   - Esc alone (no modifier) cancels
+    ;   - Esc + modifier (Ctrl+Esc, etc.) is a valid bind
+    ;   - 10 s timeout cancels silently
     ;
-    ; _MakeCaptureHandler is necessary because fat-arrows in a loop
-    ; do not capture the iteration variable's value correctly (the
-    ; closure picks up the last assignment). Wrapping in a method
-    ; creates a fresh scope per call, fixing `action`.
-    ; ============================================================
+    ; _MakeCaptureHandler exists because fat-arrow closures inside a
+    ; loop don't capture the iteration variable's value correctly
+    ; (every closure picks up the last assignment). Wrapping in a
+    ; method gives each call a fresh scope so `action` binds correctly.
     _MakeCaptureHandler(action)
     {
         return (*) => this._OnCaptureHotkey(action)
     }
 
-    ; v0.1.0: Clear button handler. Clears the edit; _OnSave persists
-    ; as empty string, unbinding the hotkey.
+    ; Clear button: empties the edit; _OnSave then persists an empty
+    ; string, which unbinds the hotkey.
     _MakeClearHandler(action)
     {
         return (*) => this._OnClearHotkey(action)
@@ -528,8 +486,8 @@ class SettingsDialog
         if !this._ctrls.Has(editKey) || !this._ctrls.Has(btnKey)
             return
 
-        ; v0.1.1: `edit` collides with the builtin `Edit` (Gui control).
-        ; `btn` may also collide (Button). Use Ctrl suffixes.
+        ; Locals `edit` / `btn` collide case-insensitively with the
+        ; `Edit` and `Button` Gui-control classes; use Ctrl suffixes.
         editCtrl := this._ctrls[editKey]
         btnCtrl  := this._ctrls[btnKey]
 

@@ -1,37 +1,27 @@
-; ============================================================
-; RunExportService - orchestrates export of runs to JSON (v0.1.0)
-; ============================================================
+; RunExportService — orchestrates exporting runs to JSON. Given a
+; list of runIds, an output path, and options, it loads each run
+; through RunHistoryRepository, serializes via RunExportFormat, and
+; writes through JsonFile (which itself uses AtomicWriter).
 ;
-; Single responsibility: given a list of runIds + output path +
-; options, load the runs from RunHistoryRepository, build the
-; payload via RunExportFormat, and write to disk via JsonFile.
+; The service has no UI; ExportOptionsDialog drives the picker.
+; The service has no policy on which runs to export; the caller
+; decides.
 ;
-; Does NOT do UI — that is ExportOptionsDialog's job. Does NOT pick
-; which runs to export — the caller decides.
+; Dependencies:
+;   bus          — EventBus, used to publish Evt.RunsExported on success
+;   runHistory   — RunHistoryRepository, for Load(runId)
+;   personalBest — PersonalBestService, optional (only consulted when
+;                  options.includePbs is true)
 ;
-; DEPS:
-;   bus          : EventBus (to publish Evt.RunsExported on success)
-;   runHistory   : RunHistoryRepository (for Load(runId))
-;   personalBest : PersonalBestService (optional, for includePbs)
+; ExportResult shape:
+;   Map{ success: bool, path: string, runsExported: int,
+;        errors: Array<string> }
 ;
-; ExportResult:
-;   Map{
-;     success      : bool,
-;     path         : string (final file path),
-;     runsExported : int (how many runs were effectively written),
-;     errors       : Array<string> (problems, possibly partial)
-;   }
-;
-; ERROR SEMANTICS:
-;   - If ONE run fails to Load, it is recorded in errors and skipped,
-;     but the export continues with the others (partial success).
-;   - If NO run loads (all failed or empty list), returns
-;     success=false without writing the file.
-;   - If the write itself fails (disk, permission), returns
-;     success=false with a descriptive error.
-;
-; CONSTRUCTION:
-;   svc := RunExportService(bus, runHistory, personalBest)
+; Error semantics:
+;   - One run fails to Load → recorded in errors and skipped; the
+;     export continues with the others (partial success path).
+;   - Zero runs load successfully → success=false and no file written.
+;   - Write itself fails → success=false with a descriptive error.
 
 
 class RunExportService
@@ -56,15 +46,10 @@ class RunExportService
         this._personalBest := personalBest
     }
 
-    ; ============================================================
-    ; Export(runIds, outputPath, options) -> ExportResult
-    ;
-    ; runIds      : Array<string> of runIds to export
-    ; outputPath  : absolute path of the .json
-    ; options     : Map with:
-    ;   "anonymized" : bool (default false) - blank profile name
-    ;   "includePbs" : bool (default true)  - includes personalBests block
-    ; ============================================================
+    ; Loads each run, optionally collects PBs, serializes, writes.
+    ; options accepts:
+    ;   "anonymized" (default false) — blank profile name in payload
+    ;   "includePbs" (default true)  — include personalBests block
     Export(runIds, outputPath, options := "")
     {
         errors := []
@@ -91,7 +76,7 @@ class RunExportService
         anonymize := opts.Has("anonymized") && opts["anonymized"]
         includePbs := !opts.Has("includePbs") || opts["includePbs"]   ; default true
 
-        ; --- Load each run ---
+        ; Load each run.
         runs := []
         for _, rid in runIds
         {
@@ -103,8 +88,8 @@ class RunExportService
             }
             try
             {
-                ; v0.1.1: local `run` collides with builtin `Run` (case-insensitive).
-                ; Use `runItem`.
+                ; Local `run` collides case-insensitively with the
+                ; built-in `Run` function; use `runItem`.
                 runItem := this._runHistory.Load(ridStr)
                 if !IsObject(runItem)
                 {
@@ -125,7 +110,7 @@ class RunExportService
             return this._FailResult(outputPath, errors)
         }
 
-        ; --- Collect PBs if requested ---
+        ; Collect PBs if requested.
         pbData := ""
         if includePbs && IsObject(this._personalBest)
         {
@@ -140,13 +125,13 @@ class RunExportService
             }
             catch as ex
             {
-                ; Doesn't block the export — just logs and proceeds without PBs
+                ; Doesn't block the export — logs and proceeds without PBs.
                 errors.Push("Failed to collect PBs (export will proceed without them): " ex.Message)
                 pbData := ""
             }
         }
 
-        ; --- Ensure output directory ---
+        ; Ensure output directory.
         try
         {
             RunExportService._EnsureDirFor(outputPath)
@@ -157,7 +142,7 @@ class RunExportService
             return this._FailResult(outputPath, errors)
         }
 
-        ; --- Serialize via RunExportFormat ---
+        ; Serialize.
         payload := ""
         try
         {
@@ -172,7 +157,7 @@ class RunExportService
             return this._FailResult(outputPath, errors)
         }
 
-        ; --- Write to disk (via JsonFile which uses AtomicWriter) ---
+        ; Write through JsonFile (which uses AtomicWriter).
         try
         {
             jf := JsonFile(outputPath)
@@ -184,7 +169,7 @@ class RunExportService
             return this._FailResult(outputPath, errors)
         }
 
-        ; --- Publish success event ---
+        ; Publish success.
         try this._bus.Publish(Events.RunsExported, Map(
             "path", outputPath,
             "count", runs.Length
@@ -198,20 +183,14 @@ class RunExportService
         )
     }
 
-    ; ============================================================
-    ; GetDefaultExportPath() - generates default path in exports/ dir
-    ;
-    ; Format: exports/runs-YYYYMMDD_HHMMSS.json
-    ; ============================================================
+    ; Default output path: exports/runs-YYYYMMDD_HHMMSS.json
     static GetDefaultExportPath()
     {
         ts := FormatTime(A_Now, "yyyyMMdd_HHmmss")
         return RunExportService.DEFAULT_EXPORT_DIR "\runs-" ts ".json"
     }
 
-    ; ============================================================
-    ; EnsureExportDir() - creates default directory if missing
-    ; ============================================================
+    ; Creates the default exports/ directory if missing.
     static EnsureExportDir()
     {
         dir := RunExportService.DEFAULT_EXPORT_DIR
@@ -222,9 +201,7 @@ class RunExportService
         return dir
     }
 
-    ; ============================================================
-    ; Private helpers
-    ; ============================================================
+    ; ---- Private helpers ----
 
     _FailResult(path, errors)
     {

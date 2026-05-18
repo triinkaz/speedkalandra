@@ -1,54 +1,22 @@
-; ============================================================
-; PersonalBestService - keeps PBs in memory, updates on runs
-; ============================================================
+; PersonalBestService — PBs in memory, updated when the
+; composition root finalizes a run. Loads from disk on construction;
+; UpdateFromRun() is called from inside _SaveRunSnapshot with the
+; aggregated data, so the service stays pull-based and never has to
+; race subscribers that clear state on RunCompleted.
 ;
-; SCOPE:
-;   Service that loads PBs from disk on startup and exposes queries
-;   for the UI to read current times. Externally updated via
-;   UpdateFromRun() when a run is finalized (called by the composition
-;   root inside _SaveRunSnapshot, with state intact).
+; Three PB categories:
+;   Run PB (legacy)   — lowest runDurationMs across completed runs.
+;                       Kept for back-compat; the overlay no longer
+;                       reads it directly.
+;   Per-act run PB    — total run time at each act transition.
+;                       Independent per act, so an Act-1-only run
+;                       and a full campaign can still be compared
+;                       fairly on Act 1.
+;   Zone PB           — lowest zoneTotalMs in a completed run
+;                       (total = sum of all visits in that run).
 ;
-; WHY IT DOES NOT SUBSCRIBE TO EVENTS DIRECTLY:
-;   On RunCompleted, ZoneTrackingService and RunStatsRecorder MAY
-;   clear their internal state (EventBus FIFO order). To avoid
-;   timing-dependent subscribes (which would require the v17.10
-;   pattern of subscribing in __New BEFORE those services), the
-;   service is pull-based: the app passes already-aggregated data
-;   via UpdateFromRun.
-;
-;   That also keeps the service simple and testable without mocking
-;   the bus.
-;
-; PB CRITERIA:
-;   - Run PB (legacy): lowest runDurationMs among all COMPLETED runs.
-;     Cancelled run (Cmd.CancelRunRequested -> NewRun or Ctrl+Alt+R)
-;     DOES NOT count — only updates when the run is explicitly
-;     finalized with Ctrl+Alt+F.
-;     **KEPT FOR BACK-COMPAT** but the overlay no longer consults it.
-;
-;   - Per-act run PB (v17.13): TOTAL RUN time at the moment each
-;     act ended. Multiple PBs (one per act). Allows fair comparison
-;     between runs of different sizes (Act 1 only vs full campaign)
-;     — each act has its own independent checkpoint.
-;
-;   - Zone PB: for each zone, lowest zoneTotalMs in a completed run.
-;     Total = sum of all visits to the zone in that run
-;     (GetTotalsForSnapshot already delivers this).
-;
-; QUERIES:
-;   GetRunPbMs()                  -> int (0 if no PB)        [LEGACY]
-;   GetRunPbRunId()               -> string                  [LEGACY]
-;   GetRunPbForAct(actNum)        -> int (0 if no PB for that act) [v17.13]
-;   HasRunPbForAct(actNum)        -> bool                          [v17.13]
-;   GetAllRunPbsByAct()           -> Map<actNum, ms> (clone)       [v17.13]
-;   GetZonePbMs(zoneName)         -> int (0 if no PB)
-;   HasRunPb()                    -> bool
-;   HasZonePb(zoneName)           -> bool
-;   GetAllZonePbs()               -> Map<zoneName, ms> (clone)
-;
-; CONSTRUCTION:
-;   svc := PersonalBestService(repo)
-;   svc.UpdateFromRun(runMs, runId, zoneTotalsMap, actCheckpointsMap)
+; Cancelled runs never become PBs — only an explicit FinalizeRun
+; (Ctrl+Alt+F) triggers UpdateFromRun.
 
 
 class PersonalBestService
@@ -57,7 +25,7 @@ class PersonalBestService
 
     _runPbMs    := 0
     _runPbRunId := ""
-    _runPbByAct := ""    ; Map<actNum, ms>  (v17.13)
+    _runPbByAct := ""    ; Map<actNum, ms>
     _zonePbs    := ""    ; Map<zoneName, ms>
 
     __New(repo)
@@ -70,9 +38,7 @@ class PersonalBestService
         this._LoadFromRepo()
     }
 
-    ; ============================================================
-    ; Queries
-    ; ============================================================
+    ; ---- Queries ----
 
     GetRunPbMs()      => this._runPbMs
     GetRunPbRunId()   => this._runPbRunId
@@ -94,9 +60,7 @@ class PersonalBestService
         return out
     }
 
-    ; ============================================================
-    ; Per-act PB (v17.13)
-    ; ============================================================
+    ; ---- Per-act PB ----
 
     GetRunPbForAct(actNum)
     {
@@ -127,26 +91,19 @@ class PersonalBestService
         return n
     }
 
-    ; ============================================================
-    ; Update - called by the composition root after a completed run
-    ;
-    ; runMs:              final runDurationMs (TimerService.GetRunMs())
-    ; runId:              id of the completed run
-    ; zoneTotalsMap:      ZoneTrackingService.GetTotalsForSnapshot() — Map<zone, ms>
-    ; actCheckpointsMap:  ActCheckpointTracker.GetCheckpoints() — Map<actNum, runMs>
-    ;                     (v17.13) TOTAL RUN times at the moment each act ended
-    ;
-    ; Returns true if any PB was updated (global run, run-per-act,
-    ; and/or zone).
-    ;
-    ; Persists to the INI immediately if something changed. Silent
-    ; I/O failure (try) so we don't break the finalization flow.
-    ; ============================================================
+    ; Called by the composition root after a completed run.
+    ;   runMs              — final runDurationMs (TimerService.GetRunMs)
+    ;   runId              — id of the completed run
+    ;   zoneTotalsMap      — ZoneTrackingService.GetTotalsForSnapshot()
+    ;   actCheckpointsMap  — ActCheckpointTracker.GetCheckpoints()
+    ; Returns true if any PB was updated. Persists immediately on
+    ; change; I/O failure is swallowed so the finalize flow isn't
+    ; broken.
     UpdateFromRun(runMs, runId := "", zoneTotalsMap := "", actCheckpointsMap := "")
     {
         changed := false
 
-        ; --- Global run PB (legacy, preserved) ---
+        ; Global run PB (legacy, preserved).
         if (IsNumber(runMs) && runMs > 0)
         {
             if (this._runPbMs = 0 || runMs < this._runPbMs)
@@ -157,7 +114,7 @@ class PersonalBestService
             }
         }
 
-        ; --- Per-act run PB (v17.13) ---
+        ; Per-act run PB.
         if IsObject(actCheckpointsMap)
         {
             for actNum, actMs in actCheckpointsMap
@@ -177,7 +134,7 @@ class PersonalBestService
             }
         }
 
-        ; --- Zone PBs ---
+        ; Zone PBs.
         if IsObject(zoneTotalsMap)
         {
             for zone, ms in zoneTotalsMap
@@ -202,14 +159,8 @@ class PersonalBestService
         return changed
     }
 
-    ; ============================================================
-    ; Reset - deletes all PBs (memory + INI)
-    ;
-    ; Called externally when the user requests reset via the tray menu.
-    ; After finishing, GetRunPbMs() and GetZonePbMs() return 0 for
-    ; everything. Persists to the INI — until a completed run, old PBs
-    ; are not recreated.
-    ; ============================================================
+    ; Wipes every PB in memory and on disk. Called via the tray
+    ; menu "Reset PBs".
     Reset()
     {
         this._runPbMs    := 0
@@ -219,22 +170,13 @@ class PersonalBestService
         try this._PersistToRepo()
     }
 
-    ; ============================================================
-    ; LoadFromExternal(pbData) - replaces PBs with external data (v0.1.0)
+    ; Replaces all local PBs with external data, used by
+    ; RunImportService when the user picks pbStrategy="replace".
+    ; Destructive on purpose — the user made the choice consciously.
     ;
-    ; Used by RunImportService when the user chooses pbStrategy="replace".
-    ; FULLY replaces local PBs with the data from the import file
-    ; (destructive action, the user must have chosen consciously).
-    ;
-    ; pbData: Map with 4 optional fields:
-    ;   runPbMs    : int >= 0
-    ;   runPbRunId : string
-    ;   runPbByAct : Map<int, int>
-    ;   zonePbs    : Map<str, int>
-    ;
-    ; Missing fields become defaults (0/""/empty Map).
-    ; Persists to the INI at the end.
-    ; ============================================================
+    ; pbData accepts (all optional, missing keys default to 0/""/empty):
+    ;   runPbMs (int >= 0), runPbRunId (string),
+    ;   runPbByAct (Map<int,int>), zonePbs (Map<str,int>)
     LoadFromExternal(pbData)
     {
         if !IsObject(pbData)
@@ -278,36 +220,23 @@ class PersonalBestService
         try this._PersistToRepo()
     }
 
-    ; ============================================================
-    ; SetAsRunPb(runMs, runId, actCheckpoints := "") - pins a run
-    ; as PB (v17.15.1)
+    ; Pins a specific run as PB. The use case is a user who
+    ; accidentally let a glitched/test/buggy run become PB, or who
+    ; prefers a slightly slower but legitimate run as their canonical
+    ; mark.
     ;
-    ; Use case: the user accidentally had a fast run (bug, glitch,
-    ; bad test) that became PB automatically. Or the opposite: there
-    ; is a preferred (legitimate) run that is not the lowest time but
-    ; better represents their personal mark.
+    ; Scope:
+    ;   runPbMs + runPbRunId  — always updated.
+    ;   runPbByAct            — REPLACED by the run's checkpoints, but
+    ;                           only if the run has at least one valid
+    ;                           entry. Old runs without persisted
+    ;                           checkpoints don't wipe per-act PBs
+    ;                           coming from more recent runs.
+    ;   zonePbs               — NOT touched. Per-zone PBs are aggregated
+    ;                           across all runs by design; the Reset
+    ;                           tray command is the way to clear them.
     ;
-    ; SCOPE (v17.15.1 fix):
-    ;   - runPbMs + runPbRunId: ALWAYS updated (legacy but kept).
-    ;   - runPbByAct: REPLACED by the run's actCheckpoints, IF provided
-    ;     and with at least 1 valid entry. Otherwise left intact (old
-    ;     runs without persisted checkpoints do not destroy existing
-    ;     per-act PBs from more recent runs).
-    ;   - zonePbs: NOT touched. Per-zone PBs are naturally "best time
-    ;     per zone across ALL runs" — aggregated metric, independent
-    ;     of the "official" run. To reset zones, use Reset().
-    ;
-    ; Why replace runPbByAct and not zonePbs?
-    ;   The Compact overlay shows per-act PB ("Lv X | Area Y | XP | PB...")
-    ;   as a reference visible to the player. That number must reflect
-    ;   the "official" run chosen by the user. Per-zone PBs, by contrast,
-    ;   are queried occasionally (highlights of an individual zone), so
-    ;   it makes more sense for them to be "the best time in that zone,
-    ;   from any run".
-    ;
-    ; Returns true if something changed, false if nothing changed
-    ; (e.g. was already that runId+ms+checkpoints).
-    ; ============================================================
+    ; Returns true if anything actually changed.
     SetAsRunPb(runMs, runId, actCheckpoints := "")
     {
         if !IsNumber(runMs) || runMs <= 0
@@ -353,34 +282,22 @@ class PersonalBestService
         return changed
     }
 
-    ; ============================================================
-    ; RebuildFromHistory(runs) - rebuilds PBs from history (v17.15.1)
+    ; Rebuilds PBs from a list of buildResult entries (one per
+    ; surviving run after a delete). Used by the run-deletion paths
+    ; in RunHistoryDialog and the "Undo last save" tray action; both
+    ; share these semantics so a deleted run no longer contributes
+    ; to any PB category.
     ;
-    ; Used when a run is deleted from history: we need to discard
-    ; contributions from the deleted run without losing PBs of runs
-    ; that survived.
+    ; Each `runs` entry has the buildResult shape produced by
+    ; RunHistoryRepository.Load: Map{ runId, totalMs, totals, details,
+    ; deathCount, actCheckpoints (may be an empty Map for runs saved
+    ; before that section existed), ... }.
     ;
-    ; Each element of `runs` must be a buildResult (same format as
-    ; RunHistoryRepository.Load returns):
-    ;   Map{ runId, totalMs, totals, details, deathCount,
-    ;        actCheckpoints (Map<actNum, ms>, may be empty Map in
-    ;        old runs without that section), ... }
-    ;
-    ; Algorithm:
-    ;   1. Zero all PBs in memory.
-    ;   2. For each run, replicate the UpdateFromRun logic:
-    ;      - totalMs -> runPbMs (legacy)
-    ;      - actCheckpoints -> runPbByAct (v17.13)
-    ;      - details with category=mapa|cidade -> zonePbs
-    ;   3. Persist to the INI at the end (a single atomic write).
-    ;
-    ; Old runs without actCheckpoints contribute only to runPbMs +
-    ; zonePbs. runPbByAct may end up empty if no run has persisted
-    ; checkpoints.
-    ;
-    ; Returns true if any PB changed (memory or INI), false if
-    ; everything stayed identical.
-    ; ============================================================
+    ; Algorithm: zero all PBs, replay each run through the same
+    ; logic as UpdateFromRun, then a single atomic persist at the
+    ; end. Old runs without actCheckpoints contribute only to runPbMs
+    ; and zonePbs; runPbByAct may end up empty if no surviving run
+    ; has checkpoints. Returns true when anything changed.
     RebuildFromHistory(runs)
     {
         ; Snapshot of the previous state to detect change
@@ -409,7 +326,7 @@ class PersonalBestService
             runMs := runItem.Has("totalMs") ? runItem["totalMs"] : 0
             currentRunId := runItem.Has("runId") ? String(runItem["runId"]) : ""
 
-            ; --- Global run PB ---
+            ; Global run PB.
             if (IsNumber(runMs) && runMs > 0)
             {
                 if (this._runPbMs = 0 || runMs < this._runPbMs)
@@ -419,7 +336,7 @@ class PersonalBestService
                 }
             }
 
-            ; --- Per-act run PB ---
+            ; Per-act run PB.
             if runItem.Has("actCheckpoints") && IsObject(runItem["actCheckpoints"])
             {
                 for actNum, actMs in runItem["actCheckpoints"]
@@ -436,7 +353,7 @@ class PersonalBestService
                 }
             }
 
-            ; --- Zone PBs (extracted from details where category=mapa|cidade) ---
+            ; Zone PBs come from per-run details (category=mapa|cidade).
             if runItem.Has("details") && IsObject(runItem["details"])
             {
                 for _, d in runItem["details"]
@@ -473,15 +390,14 @@ class PersonalBestService
             || (newZoneStr != prevZoneStr)
     }
 
-    ; Serializes Map<int|string, int> into a canonical comparison string.
-    ; Does not depend on iteration order (sort by key).
+    ; Serializes Map<int|string, int> into a canonical comparison
+    ; string. Sorts by key so iteration order doesn't matter.
     ;
-    ; FIX v0.1.0: previously stored only the key as string and then
-    ; re-did `m[k]` at the end, but in AHK v2 `m[1]` (int) and `m["1"]`
-    ; (string) are distinct keys in Maps. For runPbByAct (int keys),
-    ; the lookup with a string-coerced key triggered UnsetItemError.
-    ; Now we store the value alongside the string key during the first
-    ; iteration.
+    ; AHK v2 gotcha: in a Map, `m[1]` (Integer key) and `m["1"]`
+    ; (String key) are DIFFERENT keys. _runPbByAct uses integer keys;
+    ; coercing them to strings on lookup raises UnsetItemError. Here
+    ; we store the value next to the string key on the first pass
+    ; instead of looking it back up.
     static _MapToDebugStr(m)
     {
         if !IsObject(m)
@@ -510,9 +426,7 @@ class PersonalBestService
         return out
     }
 
-    ; ============================================================
-    ; Internals
-    ; ============================================================
+    ; ---- Internals ----
 
     _LoadFromRepo()
     {
@@ -543,9 +457,8 @@ class PersonalBestService
         }
         catch as ex
         {
-            ; v17.15 (Bug #8): failure to load PBs used to be silent,
-            ; masking a corrupt INI or I/O problems. The service has
-            ; no injected logger so it uses OutputDebug.
+            ; A silent load failure used to mask corrupt INIs and
+            ; I/O problems. The service has no injected logger.
             OutputDebug("PersonalBestService._LoadFromRepo failed: " ex.Message)
         }
     }

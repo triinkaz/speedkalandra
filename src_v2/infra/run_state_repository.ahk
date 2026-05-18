@@ -1,47 +1,40 @@
-; ============================================================
-; RunStateRepository - RunState <-> INI + TXT file (Wave 6)
-; ============================================================
+; RunStateRepository — persists RunState across sessions for
+; crash recovery and resume. The state is split across two files
+; on purpose.
 ;
-; Persists run state for crash recovery and resume between sessions.
+; speedkalandra.ini:
+;   [RunState]
+;     RunId=20260512_142345
+;     StartedAt=2026-05-12 14:23:45
+;     Status=running
+;     RunBaseMs=187432
+;     LoadingTotalMs=24500
 ;
-; ON-DISK LAYOUT:
-;   speedkalandra.ini:
-;     [RunState]
-;       RunId=20260512_142345
-;       StartedAt=2026-05-12 14:23:45
-;       Status=running
-;       RunBaseMs=187432
-;       LoadingTotalMs=24500
+; speedkalandra_zones.txt:
+;   The Riverbank=125000
+;   Clearfell=234000
+;   The Grelwood=456000
 ;
-;   speedkalandra_zones.txt (separate file):
-;     The Riverbank=125000
-;     Clearfell=234000
-;     The Grelwood=456000
+; Why two files: IniWrite on Windows reparses the entire file on
+; every call. With ~20 zones, writing them out was N+1 IniWrites and
+; ran 5–10 seconds, blocking the main thread every 5 s tick — the
+; pause detection actually froze. Moving the zone totals to a plain
+; text file written through AtomicWriter (one FileWrite + atomic
+; FileMove on NTFS) drops the operation to ~20–50 ms regardless of
+; the map size. RunState itself stays as INI because it has only a
+; handful of small fields, so IniWrite there is ~50 ms total and
+; fine.
 ;
-; WHY 2 FILES:
-;   IniWrite on Windows needs to parse the entire file on each call.
-;   For N=20 zones, that was N+1 IniWrites = 5-10s of main-thread
-;   blocking every 5s. It froze pause-detection.
-;
-;   Switching zone totals to a plain text file with AtomicWriter
-;   (a single FileWrite + atomic FileMove), the operation drops to
-;   ~20-50ms. Solves the lag completely.
-;
-;   RunState stays as INI because it has only 5 small fields — IniWrite
-;   there is acceptable (~50ms each).
-;
-; OPERATIONS:
-;   Load()              -> RunState (Empty if none)
-;   Save(state)         -> writes 4 canonical fields to [RunState]
-;   SaveRunBaseMs(ms)   -> writes only RunBaseMs (1 IniWrite, fast)
-;   Clear()             -> removes [RunState]
-;
-;   LoadLoadingTotal()  -> Int
+; Operations:
+;   Load()              →  RunState (Empty if none on disk)
+;   Save(state)         →  writes the 4 canonical fields to [RunState]
+;   SaveRunBaseMs(ms)   →  writes only RunBaseMs (one IniWrite, fast)
+;   Clear()             →  removes [RunState]
+;   LoadLoadingTotal()  →  Int
 ;   SaveLoadingTotal(ms)
-;
-;   LoadZoneTotals()    -> Map<zoneName, ms> (reads from .txt)
-;   SaveZoneTotals(map) -> overwrites .txt atomically
-;   ClearZoneTotals()   -> deletes .txt
+;   LoadZoneTotals()    →  Map<zoneName, ms> (reads the .txt)
+;   SaveZoneTotals(map) →  atomically overwrites the .txt
+;   ClearZoneTotals()   →  deletes the .txt
 
 
 class RunStateRepository
@@ -67,8 +60,9 @@ class RunStateRepository
     Load()
     {
         ini := this._ini
-        ; v0.1.0: renamed from `runId` to `currentRunId` (case-insensitive
-        ; collision with the domain class `RunId` was triggering #Warn).
+        ; Local `runId` collides case-insensitively with the `RunId`
+        ; domain class (#Warn LocalSameAsGlobal). Use `currentRunId`,
+        ; consistent with every other repo and dialog in the project.
         currentRunId := ini.Read(RunStateRepository.SECTION, "RunId", "")
         startedAt    := ini.Read(RunStateRepository.SECTION, "StartedAt", "")
         status       := ini.Read(RunStateRepository.SECTION, "Status", "idle")
@@ -96,9 +90,9 @@ class RunStateRepository
         ini.Write(state.runBaseMs, RunStateRepository.SECTION, "RunBaseMs")
     }
 
-    ; ============================================================
-    ; SaveRunBaseMs - persists ONLY runBaseMs (1 IniWrite)
-    ; ============================================================
+    ; Persists ONLY runBaseMs (single IniWrite). Used by the
+    ; recorder's periodic snapshot so we don't rewrite all four
+    ; fields every tick.
     SaveRunBaseMs(runBaseMs)
     {
         ms := IsNumber(runBaseMs) ? Integer(runBaseMs) : 0
@@ -126,16 +120,10 @@ class RunStateRepository
         this._ini.Write(ms, RunStateRepository.SECTION, "LoadingTotalMs")
     }
 
-    ; ============================================================
-    ; LoadZoneTotals - reads plain TXT file (key=value per line)
-    ;
-    ; Format:
-    ;   The Riverbank=125000
-    ;   Clearfell=234000
-    ;
-    ; Returns an empty Map() if the file does not exist or is empty.
-    ; Malformed lines are ignored (defensive).
-    ; ============================================================
+    ; Reads the plain-text zone totals file.
+    ; Format: one "<zone name>=<ms>" per line.
+    ; Returns an empty Map() if the file is missing or empty.
+    ; Malformed lines are silently skipped.
     LoadZoneTotals()
     {
         out := Map()
@@ -173,16 +161,12 @@ class RunStateRepository
         return out
     }
 
-    ; ============================================================
-    ; SaveZoneTotals - writes TXT atomically
+    ; Writes the zone totals file atomically (one FileWrite + a
+    ; FileMove via AtomicWriter). Typical ~20–50 ms regardless of
+    ; the map size, vs ~80 ms per zone via IniWrite.
     ;
-    ; Single FileWrite via AtomicWriter (.tmp + FileMove on NTFS).
-    ; Typical ~20-50ms regardless of Map size. Much faster than
-    ; IniWrite which was ~80ms PER ZONE.
-    ;
-    ; If totalsMap is empty, writes an empty file (preserves existence
-    ; for consistency, but LoadZoneTotals returns an empty Map).
-    ; ============================================================
+    ; An empty totalsMap writes an empty file (kept for existence
+    ; semantics; LoadZoneTotals still returns an empty Map).
     SaveZoneTotals(totalsMap)
     {
         if !(totalsMap is Map)
@@ -214,8 +198,8 @@ class RunStateRepository
         }
         catch as ex
         {
-            ; v17.15 (Bug #8): records failure instead of silently swallowing.
-            ; Without an injected logger, uses OutputDebug.
+            ; Records failures instead of swallowing them silently.
+            ; No logger is injected here, so fall back to OutputDebug.
             OutputDebug("RunStateRepository.ClearZoneTotals failed: " ex.Message)
         }
     }

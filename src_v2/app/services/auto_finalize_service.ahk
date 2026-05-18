@@ -1,27 +1,12 @@
-; ============================================================
-; AutoFinalizeService - automatic finalization via log regex (Wave 6)
-; ============================================================
+; AutoFinalizeService — listens to Evt.LogLineRead and matches each
+; line against cfg.autoFinalizeRegex; on the first match per run it
+; publishes Cmd.FinalizeRunRequested (which RunService consumes).
 ;
-; Subscribes to Evt.LogLineRead and tests each line against
-; cfg.autoFinalizeRegex. Match -> publishes Cmd.FinalizeRunRequested
-; (which RunService consumes).
-;
-; PHILOSOPHY:
-;   - Simple service, no state beyond "already fired in this run?"
-;   - Dedup by runId: fires at most once per run, avoids repeated
-;     matches in duplicated logs.
-;   - Empty regex -> service is a no-op (but stays subscribed).
-;   - Resetting the regex at runtime (settings change): next match
-;     will work immediately.
-;
-; EVENTS:
-;   Subscribe:  Evt.LogLineRead
-;   Subscribe:  Evt.RunStarted (resets the _hasFiredForCurrentRun flag)
-;   Subscribe:  Evt.RunReset / Cancelled / Completed (resets flag)
-;   Publishes:  Cmd.FinalizeRunRequested
-;
-; CONSTRUCTION:
-;   svc := AutoFinalizeService(bus, cfg)
+; Stateless aside from a single "already fired in this run?" flag,
+; reset on every Run start/reset/cancel/complete so a duplicated log
+; line cannot re-fire the command. Empty regex makes the service a
+; no-op (it stays subscribed). Changing the regex at runtime takes
+; effect on the next line.
 
 class AutoFinalizeService
 {
@@ -101,7 +86,8 @@ class AutoFinalizeService
         if this._hasFiredForCurrentRun
             return
 
-        ; Test regex; tolerant of invalid regex
+        ; Test the regex; tolerate an invalid pattern (Settings
+        ; dialog lets the user type it freely).
         matched := false
         try
         {
@@ -110,7 +96,7 @@ class AutoFinalizeService
         }
         catch
         {
-            ; invalid regex -- silence (user's next edit will fix it)
+            ; Invalid regex — swallow, user's next edit fixes it.
             matched := false
         }
 
