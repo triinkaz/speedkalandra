@@ -205,6 +205,17 @@ All services are constructed by the composition root and receive their dependenc
 
 `SpeedKalandraApp` is the single place where objects are created and wired. Reading `app.ahk` top-to-bottom is enough to understand the entire object graph.
 
+Four collaborators live alongside `app.ahk` in `src_v2/app/` and exist precisely to keep the composition root focused on wiring rather than on the flows they implement:
+
+| Class | File | Purpose |
+|---|---|---|
+| **BootPrompts** | `boot_prompts.ahk` | Disclaimer / Client.txt setup / hydrated-run modals. Driven from `Start()`. Headless mode short-circuits each method. |
+| **RunSnapshotSaver** | `run_snapshot_saver.ahk` | `RunCompleted` / `RunCancelled` handler + tray-undo flow. Subscribes via late-bound callback in `__New`. |
+| **RunStatePersister** | `run_state_persister.ahk` | 5 s persistence tick (skip-cache via hash) + final flush from `Stop()` + `PersistSettings` callback for widgets, dialogs, and boot prompts. |
+| **LiveReconfigurationHandlers** | `live_reconfiguration_handlers.ahk` | Death-penalty timer update, hotkey rebind, PB reset (destructive). Subscribed in `_WireEventHandlers` as one-line delegates. |
+
+A small number of handlers stay inline in `app.ahk` because they need direct access to fields owned by the composition root (`_OnLogFilePathChanged` mutates `_logMonitorTimer`) or because they coordinate state shared between several services (`_OnZoneEnteredForLevel` for the Riverbank-resets-level rule, `_OnRunEndedClearZones` for the cross-service cache reset).
+
 The constructor:
 
 1. Loads `AppSettings` from disk via `SettingsRepository`.
@@ -212,12 +223,12 @@ The constructor:
 3. Constructs domain catalogs and repositories.
 4. **Registers the run-finalization handlers for `RunCompleted` / `RunCancelled` *first*** — before instantiating `ZoneTrackingService` and `RunStatsRecorder`, which zero their state on those same events. Because the bus dispatches FIFO, this guarantees the save handler runs with intact state. The subscriptions are late-bound (`(data) => this._snapshotSaver.Save(...)`) because `RunSnapshotSaver` itself depends on services that don't exist yet at subscription time; it is constructed near the end of `__New`, once they do.
 5. Constructs all services in dependency order. Each receives its deps explicitly.
-6. Hydrates services from persisted state: `RunService.Hydrate`, `ZoneTrackingService.Hydrate` + `SetRunActive`, `LoadingTotalsService.Hydrate`, `XpService.Hydrate`, `OverlayModeService.Hydrate`.
+6. Hydrates services from persisted state: `RunService.Hydrate`, `ZoneTrackingService.Hydrate` + `SetRunActive`, `LoadingTotalsService.Hydrate`, `XpService.Hydrate`, `OverlayModeService.Hydrate`. The hydrated loading total and zone totals are captured in locals and then handed to `RunStatePersister.PrimeLoadingTotalCache` / `PrimeZoneTotalsCache` once the persister is constructed, so the first `Tick()` doesn't redundantly rewrite the just-loaded state.
 7. Constructs widgets and dialogs.
 
 `Start()`:
 
-1. Drives the three **boot-time modals** in sequence via `BootPrompts` (extracted from the composition root to keep `__New` focused on wiring):
+1. Drives the three **boot-time modals** in sequence via `BootPrompts`:
    - **Disclaimer** on first boot or until acknowledged.
    - **Client.txt setup** if `cfg.logFile` is empty or points to a file that doesn't exist. Default suggested path is the Steam install location; Cancel calls `ExitApp()` — the app is not allowed to run without a valid log path.
    - **Hydrated run prompt** (Resume / Finalize / Discard) when boot finds an active run from a previous session. Timer is paused during the prompt to not bleed seconds while the user thinks.
@@ -226,12 +237,12 @@ The constructor:
 4. Starts `FocusAutoPauseService`, `HotkeyService`, `OverlayInteractionService`, optionally `LoadingDetectionService`.
 5. Shows widgets and applies the current overlay mode.
 6. Starts `AppTickEmitter`.
-7. Registers the 5-second persistence tick (`_PersistRunData`).
+7. Registers the 5-second persistence tick (`() => this._persister.Tick()`).
 8. Surfaces boot warnings/errors as a `TrayTip` if any.
 
 In `_headless = true` mode (used by every integration test), `BootPrompts` short-circuits on the first line of each method, so the test suite never touches GUI. The same flag is checked by widgets and other dialog classes for the same reason.
 
-`Stop()` reverses the order: stops timers, stops services, hides widgets, persists state, flushes the log.
+`Stop()` reverses the order: stops timers, stops services, hides widgets, calls `RunStatePersister.PersistSettings` + `Flush` to commit final state, flushes the log.
 
 ---
 
@@ -456,7 +467,7 @@ AutoHotkey64.exe tests_v2\run_tests.ahk regression_bug
 | `infra/io/` | AtomicWriter, TextEncoding, IniFile, CsvFile, JsonFile, RunExportFormat |
 | `infra/` repos | ZonesCatalog, PersonalBest, RunState, RunHistory, Settings |
 | `app/services/` | Every service (pure, stateful, OS-hook) covered in its own suite |
-| `app/` composition | BootPrompts, RunSnapshotSaver |
+| `app/` composition | BootPrompts, RunSnapshotSaver, RunStatePersister, LiveReconfigurationHandlers |
 | `ui/` | Theme, HotkeyFormatter, WidgetBase, LayoutWidgetBase |
 | `integration/` | SpeedKalandraApp full wire-up + regression suite (death-penalty handler, EventTraceLogger opt-in, UndoLastSave PB rebuild, hydration ordering) |
 
