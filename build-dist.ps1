@@ -1,47 +1,47 @@
 <#
 .SYNOPSIS
-    Prepara distribuicao limpa do SpeedKalandra sem dados pessoais.
+    Prepares a clean SpeedKalandra distribution without personal data.
 
 .DESCRIPTION
-    Copia o projeto pra um diretorio destino excluindo:
-      - speedkalandra.ini         (config pessoal)
-      - data/personal_bests.ini   (PBs do usuario)
-      - data/speedkalandra.log    (log de execucao)
-      - data/runs/                (historico de runs - formato novo)
-      - data/run_state.ini        (state de run em andamento, se houver)
-      - runs/                     (historico legado CSV na raiz)
-      - debug/                    (Client.txt e dumps de diagnostico)
-      - BKP/, _LIXEIRA/           (backups e arquivos removidos)
-      - .git/, .vscode/, etc      (metadata de dev)
-      - *.bak, *.tmp, *.swp, *~   (arquivos temporarios)
-      - este proprio script + build-dist.bat
-    
-    Opcionalmente compila pra .exe via Ahk2Exe e gera um .zip.
+    Copies the project to a destination directory while excluding:
+      - speedkalandra.ini         (personal config)
+      - data/personal_bests.ini   (user PBs)
+      - data/speedkalandra.log    (runtime log)
+      - data/runs/                (run history - new format)
+      - data/run_state.ini        (in-progress run state, if any)
+      - runs/                     (legacy CSV history at the root)
+      - debug/                    (Client.txt and diagnostic dumps)
+      - BKP/, _LIXEIRA/           (backups and removed files)
+      - .git/, .vscode/, etc      (dev metadata)
+      - *.bak, *.tmp, *.swp, *~   (temp files)
+      - this script + build-dist.bat themselves
+
+    Optionally compiles to .exe via Ahk2Exe and produces a .zip.
 
 .PARAMETER DestDir
-    Diretorio destino. Default: ..\SpeedKalandra-dist (irmao do projeto).
+    Destination directory. Default: ..\SpeedKalandra-dist (sibling of the project).
 
 .PARAMETER Compile
-    Switch. Se passado, compila speedkalandra.ahk pra .exe via Ahk2Exe.
-    Procura o compiler em paths padrao da install do AutoHotkey.
+    Switch. If set, compiles speedkalandra.ahk to .exe via Ahk2Exe.
+    Searches for the compiler in the standard AutoHotkey install paths.
 
 .PARAMETER Zip
-    Switch. Se passado, cria <DestDir>.zip no final.
+    Switch. If set, creates <DestDir>.zip at the end.
 
 .PARAMETER Force
-    Switch. Sobrescreve DestDir sem perguntar.
+    Switch. Overwrites DestDir without prompting.
 
 .EXAMPLE
     .\build-dist.ps1
-    Copia tudo limpo pra ..\SpeedKalandra-dist e pergunta antes de sobrescrever.
+    Clean copy to ..\SpeedKalandra-dist, prompts before overwriting.
 
 .EXAMPLE
     .\build-dist.ps1 -Compile -Zip -Force
-    Build completo: copia, compila .exe, zipa, sem perguntar.
+    Full build: copy + compile .exe + zip, no prompt.
 
 .EXAMPLE
     .\build-dist.ps1 -DestDir "C:\temp\sk-release" -Zip
-    Especifica destino custom e gera zip.
+    Custom destination, also produces a zip.
 #>
 
 [CmdletBinding()]
@@ -70,18 +70,18 @@ if (-not $DestDir) {
 }
 $DestDir = $DestDir.TrimEnd('\','/')
 
-# Sanity check: source deve ter speedkalandra.ahk
+# Sanity check: source must contain speedkalandra.ahk
 $entryPoint = Join-Path $SourceDir "speedkalandra.ahk"
 if (-not (Test-Path $entryPoint)) {
-    Write-Error "Nao achei speedkalandra.ahk em '$SourceDir'.`nRode este script de DENTRO da pasta do projeto SpeedKalandra."
+    Write-Error "speedkalandra.ahk not found in '$SourceDir'.`nRun this script from INSIDE the SpeedKalandra project folder."
     exit 1
 }
 
-# Bloqueio defensivo: dest nao pode ser igual nem ancestor do source
+# Defensive guard: dest cannot equal or be an ancestor of the source
 $sourceFull = (Resolve-Path $SourceDir).Path.TrimEnd('\','/')
 $destResolvedAttempt = $DestDir
 if (-not (Test-Path $DestDir)) {
-    # Resolve absoluto manualmente se nao existe
+    # Resolve to absolute manually if it doesn't exist yet
     if (-not [System.IO.Path]::IsPathRooted($DestDir)) {
         $destResolvedAttempt = Join-Path (Get-Location).Path $DestDir
     }
@@ -92,15 +92,15 @@ else {
 $destFull = $destResolvedAttempt.TrimEnd('\','/')
 
 if ($destFull -ieq $sourceFull) {
-    Write-Error "DestDir nao pode ser igual ao SourceDir."
+    Write-Error "DestDir cannot equal SourceDir."
     exit 1
 }
 if ($sourceFull.StartsWith($destFull + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)) {
-    Write-Error "DestDir nao pode ser ancestor do SourceDir (apagaria o projeto)."
+    Write-Error "DestDir cannot be an ancestor of SourceDir (would erase the project)."
     exit 1
 }
 if ($destFull.StartsWith($sourceFull + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)) {
-    Write-Error "DestDir nao pode ser descendente do SourceDir (geraria copia recursiva). Use um diretorio fora do projeto, ex: '..\SpeedKalandra-dist'."
+    Write-Error "DestDir cannot be a descendant of SourceDir (would create a recursive copy). Use a directory outside the project, e.g. '..\SpeedKalandra-dist'."
     exit 1
 }
 
@@ -111,43 +111,43 @@ Write-Host "Dest   : $DestDir" -ForegroundColor Gray
 Write-Host ""
 
 # ============================================================
-# Limpa dest se existir
+# Clean dest if it exists
 # ============================================================
 
 if (Test-Path $DestDir) {
     if (-not $Force) {
-        $resp = Read-Host "Dest '$DestDir' ja existe. Sobrescrever? [s/N]"
+        $resp = Read-Host "Dest '$DestDir' already exists. Overwrite? [y/N]"
         if ($resp -notmatch '^[sSyY]') {
-            Write-Host "Abortado pelo usuario." -ForegroundColor Yellow
+            Write-Host "Aborted by user." -ForegroundColor Yellow
             exit 0
         }
     }
-    Write-Host "Removendo dest existente..." -ForegroundColor Yellow
+    Write-Host "Removing existing dest..." -ForegroundColor Yellow
     Remove-Item -Recurse -Force -LiteralPath $DestDir
 }
 
 New-Item -ItemType Directory -Path $DestDir -Force | Out-Null
 
 # ============================================================
-# Regras de exclusao
+# Exclusion rules
 # ============================================================
 
-# Diretorios excluidos recursivamente. Match contra caminho RELATIVO
-# (ex: "_LIXEIRA", "data\runs"). Comparacao case-insensitive.
+# Directories excluded recursively. Matched against RELATIVE path
+# (e.g. "_LIXEIRA", "data\runs"). Comparison is case-insensitive.
 $ExcludeDirs = @(
     "_LIXEIRA",
     "BKP",
     "debug",
-    "runs",                 # historico legado CSV na raiz
-    "data\runs",            # historico novo do RunHistoryRepository
+    "runs",                 # legacy CSV history at the root
+    "data\runs",            # new history written by RunHistoryRepository
     ".git",
     ".vscode",
     ".idea",
     "node_modules",
-    "SpeedKalandra-dist"    # caso o user rode aqui dentro
+    "SpeedKalandra-dist"    # in case the user runs this from inside it
 )
 
-# Arquivos especificos (caminhos relativos ao source)
+# Specific files (paths relative to source)
 $ExcludeFiles = @(
     "speedkalandra.ini",
     "data\personal_bests.ini",
@@ -155,26 +155,26 @@ $ExcludeFiles = @(
     "data\speedkalandra.log",
     "data\run_state.ini",
     "speedkalandra_zones.txt",
-    "build-dist.ps1",       # este proprio script
-    "build-dist.bat",       # wrapper
+    "build-dist.ps1",       # this script itself
+    "build-dist.bat",       # the wrapper
     ".gitignore",
     ".gitattributes",
-    # v17.15.2: docs dev-only (~263KB economizados no dist).
-    # README-DIST.txt gerado mais abaixo cobre o user final.
+    # Dev-only docs kept out of the dist (~263 KB saved).
+    # README-DIST.txt is generated below for end users.
     "ARCHITECTURE.md",
     "AUDITORIA-PRODUCAO.md",
     "README.md",
     "src_v2\README.md"
 )
 
-# Patterns de filename (qualquer lugar). Match contra Name do file.
+# Filename patterns (anywhere). Matched against the file's Name.
 $ExcludePatterns = @(
     "*.bak",
     "*.tmp",
     "*.swp",
     "*~",
-    "*.log",                # cobre debug/*.log e qualquer outro
-    "Client*.txt"           # logs do PoE2 que o user possa ter copiado
+    "*.log",                # covers debug/*.log and any other
+    "Client*.txt"           # PoE2 logs the user may have copied in
 )
 
 # ============================================================
@@ -185,7 +185,7 @@ function Test-IsExcludedDir {
     param([string]$relPath)
     foreach ($exDir in $ExcludeDirs) {
         $exDirNorm = $exDir.Replace('/', '\')
-        # Match exato OU prefixo + separador
+        # Exact match OR prefix + separator
         if ($relPath -ieq $exDirNorm) { return $true }
         if ($relPath.StartsWith($exDirNorm + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
             return $true
@@ -196,25 +196,25 @@ function Test-IsExcludedDir {
 
 function Test-IsExcludedFile {
     param([string]$relPath, [string]$fileName)
-    
-    # Match exato no path
+
+    # Exact path match
     foreach ($exFile in $ExcludeFiles) {
         if ($relPath -ieq $exFile.Replace('/', '\')) { return $true }
     }
-    
-    # Match em pattern de filename
+
+    # Filename pattern match
     foreach ($pattern in $ExcludePatterns) {
         if ($fileName -like $pattern) { return $true }
     }
-    
+
     return $false
 }
 
 # ============================================================
-# Copia arquivos
+# Copy files
 # ============================================================
 
-Write-Host "Copiando arquivos (filtrando dados pessoais)..." -ForegroundColor Green
+Write-Host "Copying files (filtering personal data)..." -ForegroundColor Green
 
 $copied = 0
 $skipped = 0
@@ -223,8 +223,8 @@ $skippedSamples = @()
 Get-ChildItem -Path $SourceDir -Recurse -File | ForEach-Object {
     $file = $_
     $relPath = $file.FullName.Substring($SourceDir.Length).TrimStart('\','/')
-    
-    # Verifica se esta dentro de um dir excluido
+
+    # Check whether the file sits inside an excluded directory
     $relDir = Split-Path -Parent $relPath
     if ($relDir -and (Test-IsExcludedDir -relPath $relDir)) {
         $script:skipped++
@@ -233,8 +233,8 @@ Get-ChildItem -Path $SourceDir -Recurse -File | ForEach-Object {
         }
         return
     }
-    
-    # Verifica arquivo especifico ou pattern
+
+    # Check specific-file or pattern exclusions
     if (Test-IsExcludedFile -relPath $relPath -fileName $file.Name) {
         $script:skipped++
         if ($script:skippedSamples.Count -lt 5) {
@@ -242,8 +242,8 @@ Get-ChildItem -Path $SourceDir -Recurse -File | ForEach-Object {
         }
         return
     }
-    
-    # Copia preservando estrutura
+
+    # Copy while preserving the directory structure
     $destFile = Join-Path $DestDir $relPath
     $destSubDir = Split-Path -Parent $destFile
     if ($destSubDir -and -not (Test-Path $destSubDir)) {
@@ -253,10 +253,10 @@ Get-ChildItem -Path $SourceDir -Recurse -File | ForEach-Object {
     $script:copied++
 }
 
-Write-Host "  Copiados : $copied arquivos" -ForegroundColor Gray
-Write-Host "  Filtrados: $skipped arquivos" -ForegroundColor Gray
+Write-Host "  Copied  : $copied files" -ForegroundColor Gray
+Write-Host "  Filtered: $skipped files" -ForegroundColor Gray
 if ($skippedSamples.Count -gt 0) {
-    Write-Host "  Exemplos filtrados:" -ForegroundColor DarkGray
+    Write-Host "  Filtered examples:" -ForegroundColor DarkGray
     foreach ($s in $skippedSamples) {
         Write-Host "    - $s" -ForegroundColor DarkGray
     }
@@ -264,23 +264,24 @@ if ($skippedSamples.Count -gt 0) {
 Write-Host ""
 
 # ============================================================
-# Garante estrutura minima de data/
+# Ensure the minimal data/ structure
 # ============================================================
 
 $dataDir = Join-Path $DestDir "data"
 if (-not (Test-Path $dataDir)) {
     New-Item -ItemType Directory -Path $dataDir -Force | Out-Null
 }
-# data/runs/ - garante existencia (RunHistoryRepository cria se faltar mas seguro garantir)
+# data/runs/ — make sure it exists (RunHistoryRepository creates it
+# if missing, but better to guarantee it here).
 $runsDir = Join-Path $dataDir "runs"
 if (-not (Test-Path $runsDir)) {
     New-Item -ItemType Directory -Path $runsDir -Force | Out-Null
-    # Cria .keep pra preservar dir no zip
+    # .keep preserves the dir inside the zip
     New-Item -ItemType File -Path (Join-Path $runsDir ".keep") -Force | Out-Null
 }
 
 # ============================================================
-# README de distribuicao
+# Distribution README
 # ============================================================
 
 $distReadme = Join-Path $DestDir "README-DIST.txt"
@@ -326,17 +327,17 @@ PERSISTED DATA (created on first run):
 Enjoy!
 "@
 $readmeContent | Out-File -FilePath $distReadme -Encoding UTF8
-Write-Host "README-DIST.txt criado." -ForegroundColor Gray
+Write-Host "README-DIST.txt created." -ForegroundColor Gray
 
 # ============================================================
-# Compilacao opcional via Ahk2Exe
+# Optional compilation via Ahk2Exe
 # ============================================================
 
 if ($Compile) {
     Write-Host ""
-    Write-Host "Compilando .ahk -> .exe via Ahk2Exe..." -ForegroundColor Green
-    
-    # --- Localiza o Ahk2Exe.exe ---
+    Write-Host "Compiling .ahk -> .exe via Ahk2Exe..." -ForegroundColor Green
+
+    # --- Locate Ahk2Exe.exe ---
     $ahk2exePaths = @(
         "$env:ProgramFiles\AutoHotkey\Compiler\Ahk2Exe.exe",
         "$env:ProgramFiles\AutoHotkey\v2\Compiler\Ahk2Exe.exe",
@@ -345,7 +346,7 @@ if ($Compile) {
         "$env:LOCALAPPDATA\Programs\AutoHotkey\Compiler\Ahk2Exe.exe",
         "$env:LOCALAPPDATA\Programs\AutoHotkey\v2\Compiler\Ahk2Exe.exe"
     )
-    
+
     $ahk2exe = $null
     foreach ($p in $ahk2exePaths) {
         if (Test-Path $p) {
@@ -353,14 +354,14 @@ if ($Compile) {
             break
         }
     }
-    
-    # --- Localiza o base file (AutoHotkey64.exe do AHK v2) ---
-    # Ahk2Exe precisa de um "base file" pra empacotar o .exe. Pra AHK v2
-    # eh o AutoHotkey64.exe (64-bit) ou AutoHotkey32.exe (32-bit) da
-    # install do AutoHotkey. Sem isso o Ahk2Exe abre GUI pedindo pra
-    # configurar default. Passamos via /base pra ser explicito.
+
+    # --- Locate the base file (AutoHotkey64.exe from AHK v2) ---
+    # Ahk2Exe needs a "base file" to embed the .exe. For AHK v2 that
+    # is AutoHotkey64.exe (64-bit) or AutoHotkey32.exe (32-bit) from
+    # the AutoHotkey install. Without it Ahk2Exe pops a GUI asking
+    # for the default base; we pass /base explicitly to avoid that.
     $baseFilePaths = @(
-        # AHK v2 64-bit (preferido)
+        # AHK v2 64-bit (preferred)
         "$env:ProgramFiles\AutoHotkey\v2\AutoHotkey64.exe",
         "$env:ProgramFiles\AutoHotkey\AutoHotkey64.exe",
         "${env:ProgramFiles(x86)}\AutoHotkey\v2\AutoHotkey64.exe",
@@ -373,7 +374,7 @@ if ($Compile) {
         "${env:ProgramFiles(x86)}\AutoHotkey\v2\AutoHotkey32.exe",
         "${env:ProgramFiles(x86)}\AutoHotkey\AutoHotkey32.exe"
     )
-    
+
     $baseFile = $null
     foreach ($p in $baseFilePaths) {
         if (Test-Path $p) {
@@ -381,59 +382,59 @@ if ($Compile) {
             break
         }
     }
-    
+
     if (-not $ahk2exe) {
-        Write-Warning "Ahk2Exe.exe nao encontrado nos paths padrao da install do AutoHotkey."
-        Write-Warning "Compile manualmente: clique direito em speedkalandra.ahk -> Compile Script"
+        Write-Warning "Ahk2Exe.exe not found in the standard AutoHotkey install paths."
+        Write-Warning "Compile manually: right-click speedkalandra.ahk -> Compile Script"
     }
     elseif (-not $baseFile) {
-        Write-Warning "AutoHotkey64.exe (base file) nao encontrado nos paths padrao."
-        Write-Warning "Verifique se o AutoHotkey v2 esta instalado em paths padrao."
-        Write-Warning "Alternativamente, abra o Ahk2Exe GUI e configure a base default."
+        Write-Warning "AutoHotkey64.exe (base file) not found in the standard paths."
+        Write-Warning "Verify that AutoHotkey v2 is installed in standard locations."
+        Write-Warning "Alternatively, open the Ahk2Exe GUI and configure the default base."
     }
     else {
         $ahkInput  = Join-Path $DestDir "speedkalandra.ahk"
         $exeOutput = Join-Path $DestDir "SpeedKalandra.exe"
-        
+
         Write-Host "  Compiler : $ahk2exe" -ForegroundColor Gray
         Write-Host "  Base file: $baseFile" -ForegroundColor Gray
         Write-Host "  Input    : $ahkInput" -ForegroundColor Gray
         Write-Host "  Output   : $exeOutput" -ForegroundColor Gray
-        
+
         # Ahk2Exe args: /in <input> /out <output> /base <ahk_exe>
         & $ahk2exe /in $ahkInput /out $exeOutput /base $baseFile
         if ($LASTEXITCODE -ne 0) {
-            Write-Warning "Ahk2Exe retornou exit code $LASTEXITCODE. Verifique se compilou OK."
+            Write-Warning "Ahk2Exe returned exit code $LASTEXITCODE. Check whether it compiled correctly."
         }
         elseif (Test-Path $exeOutput) {
             $exeSize = [Math]::Round((Get-Item $exeOutput).Length / 1MB, 2)
-            Write-Host "Compilado OK: $exeOutput ($exeSize MB)" -ForegroundColor Green
+            Write-Host "Compiled OK: $exeOutput ($exeSize MB)" -ForegroundColor Green
         }
         else {
-            Write-Warning "Compilacao terminou sem exit code mas .exe nao foi criado."
+            Write-Warning "Compilation finished with no exit code but the .exe was not produced."
         }
     }
 }
 
 # ============================================================
-# Zip opcional
+# Optional zip
 # ============================================================
 
 if ($Zip) {
     Write-Host ""
-    Write-Host "Criando zip..." -ForegroundColor Green
-    
+    Write-Host "Creating zip..." -ForegroundColor Green
+
     $zipPath = "$DestDir.zip"
     if (Test-Path $zipPath) {
         Remove-Item -LiteralPath $zipPath -Force
     }
-    
-    # Compress-Archive aceita wildcard pra incluir conteudo do dir (nao o dir mesmo)
+
+    # Compress-Archive accepts a wildcard to include the dir's content (not the dir itself)
     Compress-Archive -Path "$DestDir\*" -DestinationPath $zipPath -CompressionLevel Optimal
-    
+
     if (Test-Path $zipPath) {
         $zipSize = [Math]::Round((Get-Item $zipPath).Length / 1MB, 2)
-        Write-Host "Zip criado: $zipPath ($zipSize MB)" -ForegroundColor Green
+        Write-Host "Zip created: $zipPath ($zipSize MB)" -ForegroundColor Green
     }
 }
 
@@ -442,10 +443,10 @@ if ($Zip) {
 # ============================================================
 
 Write-Host ""
-Write-Host "=== Build concluido ===" -ForegroundColor Cyan
+Write-Host "=== Build finished ===" -ForegroundColor Cyan
 Write-Host "Dest: $DestDir" -ForegroundColor White
 
 $totalFiles = (Get-ChildItem -Path $DestDir -Recurse -File).Count
 $totalSize  = [Math]::Round(((Get-ChildItem -Path $DestDir -Recurse -File | Measure-Object Length -Sum).Sum / 1MB), 2)
-Write-Host "Arquivos: $totalFiles | Tamanho: $totalSize MB" -ForegroundColor Gray
+Write-Host "Files: $totalFiles | Size: $totalSize MB" -ForegroundColor Gray
 Write-Host ""

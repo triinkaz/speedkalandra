@@ -1,22 +1,22 @@
 @echo off
 REM ============================================================
-REM build-dist.bat - wrapper para build-dist.ps1
+REM build-dist.bat - wrapper for build-dist.ps1
 REM ============================================================
-REM Permite rodar o script PowerShell via duplo-click contornando
-REM execution policy (com -ExecutionPolicy Bypass).
+REM Runs the PowerShell script via double-click, bypassing the
+REM execution policy (-ExecutionPolicy Bypass).
 REM
-REM Uso:
-REM   build-dist.bat                  copia limpa
-REM   build-dist.bat -Compile         tambem compila .exe
-REM   build-dist.bat -Compile -Zip    tambem zipa
-REM   build-dist.bat -Force           sobrescreve dest sem perguntar
+REM Usage:
+REM   build-dist.bat                  clean copy
+REM   build-dist.bat -Compile         also compiles to .exe
+REM   build-dist.bat -Compile -Zip    also zips
+REM   build-dist.bat -Force           overwrites dest without prompt
 
 setlocal
 
 set "PS_SCRIPT=%~dp0build-dist.ps1"
 
 if not exist "%PS_SCRIPT%" (
-    echo ERRO: build-dist.ps1 nao encontrado em %~dp0
+    echo ERROR: build-dist.ps1 not found in %~dp0
     pause
     exit /b 1
 )
