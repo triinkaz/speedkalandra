@@ -448,8 +448,22 @@ class SpeedKalandraApp
         try this.microWidget.Hide()
         try this.steveWidget.Hide()
 
-        try this._PersistSettings()
-        try this._PersistRunDataFull()
+        try
+        {
+            this._PersistSettings()
+        }
+        catch as ex
+        {
+            try this.log.Warn("Stop: persist settings failed: " . ex.Message, "App")
+        }
+        try
+        {
+            this._PersistRunDataFull()
+        }
+        catch as ex
+        {
+            try this.log.Warn("Stop: full run-data flush failed: " . ex.Message, "App")
+        }
         try this.log.Flush()
     }
 
@@ -541,7 +555,15 @@ class SpeedKalandraApp
         penaltyMs := this._cfg.deathPenaltyMs
         if (!IsNumber(penaltyMs) || penaltyMs <= 0)
             return
-        try this.timer.AddPenaltyMs(penaltyMs)
+        try
+        {
+            this.timer.AddPenaltyMs(penaltyMs)
+        }
+        catch as ex
+        {
+            if IsObject(this.log)
+                try this.log.Warn("Failed to apply death penalty to timer (" . penaltyMs . " ms): " . ex.Message, "App")
+        }
         if IsObject(this.log)
             try this.log.Info("Death penalty applied to timer: +" . penaltyMs . " ms", "App")
     }
@@ -563,9 +585,16 @@ class SpeedKalandraApp
         else
             newHotkeys := Map()
 
-        try this.hotkeyService.Stop()
-        try this.hotkeyService.Hydrate(newHotkeys)
-        try this.hotkeyService.Start()
+        try
+        {
+            this.hotkeyService.Stop()
+            this.hotkeyService.Hydrate(newHotkeys)
+            this.hotkeyService.Start()
+        }
+        catch as ex
+        {
+            try this.log.Warn("Hotkey rebind failed (" . newHotkeys.Count . " action(s)): " . ex.Message, "App")
+        }
 
         if IsObject(this.log)
         {
@@ -602,11 +631,27 @@ class SpeedKalandraApp
             try this.logMonitor.Stop()
 
         if IsObject(this.logMonitor)
-            try this.logMonitor.Configure(newPath)
+        {
+            try
+            {
+                this.logMonitor.Configure(newPath)
+            }
+            catch as ex
+            {
+                try this.log.Warn("LogMonitor.Configure failed for '" . newPath . "': " . ex.Message, "App")
+            }
+        }
 
         if (newPath != "" && FileExist(newPath))
         {
-            try this.logMonitor.Start(true)
+            try
+            {
+                this.logMonitor.Start(true)
+            }
+            catch as ex
+            {
+                try this.log.Warn("LogMonitor.Start failed for '" . newPath . "': " . ex.Message, "App")
+            }
             ; Re-apply the character name so the DeathDetected filter
             ; survives the swap.
             try this.logMonitor.SetCharacterName(this._cfg.characterName)
@@ -701,7 +746,14 @@ class SpeedKalandraApp
             this._cfg.characterName := name
             ; Propagate to the DeathDetected filter so deaths attributed
             ; to this character are recognized.
-            try this.logMonitor.SetCharacterName(name)
+            try
+            {
+                this.logMonitor.SetCharacterName(name)
+            }
+            catch as ex
+            {
+                try this.log.Warn("LogMonitor.SetCharacterName failed: " . ex.Message, "App")
+            }
         }
         if (charClass != "")
             this._cfg.characterClass := charClass
@@ -757,7 +809,14 @@ class SpeedKalandraApp
 
     _OnRunEndedClearZones(data)
     {
-        try this.runState.ClearZoneTotals()
+        try
+        {
+            this.runState.ClearZoneTotals()
+        }
+        catch as ex
+        {
+            try this.log.Warn("ClearZoneTotals failed: " . ex.Message, "App")
+        }
         this._lastSavedLoadingTotal := -1
         this._lastSavedZoneTotalsHash := ""
         ; Release the Riverbank reset flag for the next run.
@@ -865,7 +924,14 @@ class SpeedKalandraApp
 
         ; OK: persist the chosen path
         this._cfg.logFile := choice.path
-        try this._PersistSettings()
+        try
+        {
+            this._PersistSettings()
+        }
+        catch as ex
+        {
+            try this.log.Warn("Failed to persist log file path from setup: " . ex.Message, "App")
+        }
         ; Also reconfigure LogMonitor with the chosen path. Without
         ; this, the LogMonitor.Configure("") from __New stays in
         ; effect, and the subsequent logMonitor.Start() in app.Start()
@@ -873,7 +939,16 @@ class SpeedKalandraApp
         ; user would have to reload the app for the new path to take
         ; effect, defeating the live-setup flow.
         if IsObject(this.logMonitor)
-            try this.logMonitor.Configure(choice.path)
+        {
+            try
+            {
+                this.logMonitor.Configure(choice.path)
+            }
+            catch as ex
+            {
+                try this.log.Warn("LogMonitor.Configure failed after setup: " . ex.Message, "App")
+            }
+        }
         if IsObject(this.log)
             try this.log.Info("Client.txt path configured: " . choice.path, "App")
     }
@@ -996,7 +1071,14 @@ If it helps your runs, great. If it doesn't fit your needs, that's fine too - th
         if (choice.dontShow)
         {
             this._cfg.disclaimerAcknowledged := true
-            try this._PersistSettings()
+            try
+            {
+                this._PersistSettings()
+            }
+            catch as ex
+            {
+                try this.log.Warn("Failed to persist disclaimer ack: " . ex.Message, "App")
+            }
             if IsObject(this.log)
                 try this.log.Info("Disclaimer acknowledged by user", "App")
         }
@@ -1064,7 +1146,14 @@ If it helps your runs, great. If it doesn't fit your needs, that's fine too - th
         ; Apply the choice
         if (choice.value = "discard")
         {
-            try this.runService.ResetRun()
+            try
+            {
+                this.runService.ResetRun()
+            }
+            catch as ex
+            {
+                try this.log.Warn("Discard hydrated run failed: " . ex.Message, "App")
+            }
             try this.log.Info("Hydrated run discarded by user (" . durStr . ", started at " . startedAt . ")", "App")
             try TrayTip("SpeedKalandra", "Previous run discarded.", "Mute")
         }
@@ -1072,7 +1161,14 @@ If it helps your runs, great. If it doesn't fit your needs, that's fine too - th
         {
             ; FinalizeRun publishes RunCompleted -> _SaveRunSnapshot("completed")
             ; applies threshold and saves or discards
-            try this.runService.FinalizeRun()
+            try
+            {
+                this.runService.FinalizeRun()
+            }
+            catch as ex
+            {
+                try this.log.Warn("Finalize hydrated run failed: " . ex.Message, "App")
+            }
             try this.log.Info("Hydrated run finalized by user (" . durStr . ", started at " . startedAt . ")", "App")
         }
         else
@@ -1142,7 +1238,14 @@ If it helps your runs, great. If it doesn't fit your needs, that's fine too - th
             actCheckpoints := Map()
             if IsObject(this.actCheckpoints)
             {
-                try this.actCheckpoints.CaptureCurrentAsCheckpoint(runMs)
+                try
+                {
+                    this.actCheckpoints.CaptureCurrentAsCheckpoint(runMs)
+                }
+                catch as ex
+                {
+                    try this.log.Warn("Failed to capture final act checkpoint: " . ex.Message, "App")
+                }
                 try actCheckpoints := this.actCheckpoints.GetCheckpoints()
             }
             buildResult["actCheckpoints"] := actCheckpoints
@@ -1161,7 +1264,14 @@ If it helps your runs, great. If it doesn't fit your needs, that's fine too - th
             pbChanged := false
             if (reason = "completed" && IsObject(this.personalBest))
             {
-                try pbChanged := this.personalBest.UpdateFromRun(runMs, rid, zoneTotals, actCheckpoints)
+                try
+                {
+                    pbChanged := this.personalBest.UpdateFromRun(runMs, rid, zoneTotals, actCheckpoints)
+                }
+                catch as ex
+                {
+                    try this.log.Warn("PB update failed on completed run " . rid . ": " . ex.Message, "App")
+                }
                 if (pbChanged && IsObject(this.log))
                 {
                     nActs := 0
@@ -1244,15 +1354,25 @@ If it helps your runs, great. If it doesn't fit your needs, that's fine too - th
             if IsObject(this.runHistory)
                 deleted := this.runHistory.Delete(currentRunId)
         }
-        catch
+        catch as ex
+        {
             deleted := false
+            try this.log.Warn("UndoLastSave: Delete threw for " . currentRunId . ": " . ex.Message, "App")
+        }
 
         ; Rebuild PBs from the surviving runs so the deleted run no
         ; longer contributes. Mirrors RunHistoryDialog._OnDeleteSelected.
         pbChanged := false
         if deleted
         {
-            try pbChanged := this._RebuildPbsFromHistory()
+            try
+            {
+                pbChanged := this._RebuildPbsFromHistory()
+            }
+            catch as ex
+            {
+                try this.log.Warn("UndoLastSave: PB rebuild failed: " . ex.Message, "App")
+            }
         }
 
         ; Clear internal state
@@ -1304,6 +1424,10 @@ If it helps your runs, great. If it doesn't fit your needs, that's fine too - th
                 if IsObject(br)
                     runs.Push(br)
             }
+        }
+        catch as ex
+        {
+            try this.log.Warn("Failed to enumerate runs during PB rebuild: " . ex.Message, "App")
         }
         return this.personalBest.RebuildFromHistory(runs)
     }
@@ -1374,7 +1498,14 @@ If it helps your runs, great. If it doesn't fit your needs, that's fine too - th
 
     _PersistRunData()
     {
-        try this.runService.PersistTick()
+        try
+        {
+            this.runService.PersistTick()
+        }
+        catch as ex
+        {
+            try this.log.Warn("PersistTick failed (tick): " . ex.Message, "App")
+        }
 
         ; Explicit catch on both branches: this runs every 5 s, and
         ; silent failure here (disk full, corrupt INI) would mean
@@ -1419,7 +1550,14 @@ If it helps your runs, great. If it doesn't fit your needs, that's fine too - th
 
     _PersistRunDataFull()
     {
-        try this.runService.PersistTick()
+        try
+        {
+            this.runService.PersistTick()
+        }
+        catch as ex
+        {
+            try this.log.Warn("PersistTick failed (full flush): " . ex.Message, "App")
+        }
 
         ; Called from Stop() / OnExit — last chance to flush before
         ; closing. Silent failure here would lose data without a peep.
@@ -1486,7 +1624,14 @@ If it helps your runs, great. If it doesn't fit your needs, that's fine too - th
 
     _PersistSettings()
     {
-        try this._settingsRepo.Save(this._cfg)
+        try
+        {
+            this._settingsRepo.Save(this._cfg)
+        }
+        catch as ex
+        {
+            try this.log.Warn("Failed to persist settings: " . ex.Message, "App")
+        }
     }
 
     _DeduceCurrentAct()

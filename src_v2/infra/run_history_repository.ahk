@@ -369,7 +369,17 @@ class RunHistoryRepository
     {
         if (this._dir != "" && !DirExist(this._dir))
         {
-            try DirCreate(this._dir)
+            try
+            {
+                DirCreate(this._dir)
+            }
+            catch as ex
+            {
+                ; Without the directory, nothing in this repo can be
+                ; persisted. Surface the failure via OutputDebug — no
+                ; logger is injected at this layer.
+                OutputDebug("RunHistoryRepository._EnsureDir failed for '" this._dir "': " ex.Message)
+            }
         }
     }
 

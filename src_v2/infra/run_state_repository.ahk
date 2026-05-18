@@ -186,7 +186,17 @@ class RunStateRepository
         }
 
         ; Single atomic write
-        try AtomicWriter.WriteAll(this._zoneTotalsPath, content, "UTF-8")
+        try
+        {
+            AtomicWriter.WriteAll(this._zoneTotalsPath, content, "UTF-8")
+        }
+        catch as ex
+        {
+            ; Surface failures instead of swallowing them. No logger
+            ; is injected here, so fall back to OutputDebug — same
+            ; convention used in ClearZoneTotals.
+            OutputDebug("RunStateRepository.SaveZoneTotals failed: " ex.Message)
+        }
     }
 
     ClearZoneTotals()
