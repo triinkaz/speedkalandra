@@ -32,12 +32,17 @@
 class PersonalBestRepository
 {
     _path := ""
+    _warn := ""   ; WarningSink (Null by default; LogServiceWarningSink in production)
 
-    __New(path)
+    __New(path, warningSink := "")
     {
         if (Trim(String(path)) = "")
             throw ValueError("PersonalBestRepository: 'path' is required")
         this._path := path
+        ; Default to a no-op sink so the repo can still be used in
+        ; isolated tests or early-boot paths without an explicit
+        ; observability wiring. Production wires LogServiceWarningSink.
+        this._warn := IsObject(warningSink) ? warningSink : NullWarningSink()
     }
 
     GetPath() => this._path
@@ -134,9 +139,11 @@ class PersonalBestRepository
     ; LE BOM works (the native format produced by IniWrite). The
     ; project's TextEncoding migrator enforces the same convention.
     ;
-    ; Failures are logged via OutputDebug and the method returns
-    ; false; the caller (PersonalBestService) currently silences
-    ; them but at least has the signal.
+    ; Failures are forwarded to the injected WarningSink (LogService-
+    ; backed in production), so a disk-full / locked-file / corrupt-
+    ; encoding event becomes a visible `[PB]` WARN in the user log
+    ; instead of vanishing. The method still returns false on failure
+    ; so the caller can decide how to react.
     Save(data)
     {
         if !IsObject(data)
@@ -150,7 +157,7 @@ class PersonalBestRepository
         }
         catch as ex
         {
-            OutputDebug("PersonalBestRepository.Save failed: " ex.Message)
+            this._warn.Warn("Save failed for " . this._path, ex)
             return false
         }
     }

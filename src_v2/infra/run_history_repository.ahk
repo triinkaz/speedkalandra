@@ -52,15 +52,20 @@
 
 class RunHistoryRepository
 {
-    _dir := ""
+    _dir  := ""
+    _warn := ""   ; WarningSink (Null by default; LogServiceWarningSink in production)
 
     static DETAIL_SEP := "|"
 
-    __New(dir)
+    __New(dir, warningSink := "")
     {
         if (Trim(String(dir)) = "")
             throw ValueError("RunHistoryRepository: 'dir' is required")
         this._dir := dir
+        ; No-op sink by default; production wires LogServiceWarningSink
+        ; tagged with "RunHistory". The Ensure-dir call below uses the
+        ; sink already, so the constructor wires it BEFORE _EnsureDir.
+        this._warn := IsObject(warningSink) ? warningSink : NullWarningSink()
         this._EnsureDir()
     }
 
@@ -348,9 +353,10 @@ class RunHistoryRepository
         }
         catch as ex
         {
-            ; Surface the failure for diagnostics. No logger is
-            ; injected, so OutputDebug.
-            OutputDebug("RunHistoryRepository.Delete failed (" runId "): " ex.Message)
+            ; Surface the failure via the injected WarningSink so
+            ; locked / permission-denied deletes are visible to the
+            ; user instead of silent.
+            this._warn.Warn("Delete failed for runId " . String(runId), ex)
             return false
         }
     }
@@ -376,9 +382,10 @@ class RunHistoryRepository
             catch as ex
             {
                 ; Without the directory, nothing in this repo can be
-                ; persisted. Surface the failure via OutputDebug — no
-                ; logger is injected at this layer.
-                OutputDebug("RunHistoryRepository._EnsureDir failed for '" this._dir "': " ex.Message)
+                ; persisted — every subsequent Save will fail. The
+                ; warn surfaces this once at construction so the user
+                ; doesn't see N silent save failures later.
+                this._warn.Warn("Failed to create run history directory " . this._dir, ex)
             }
         }
     }

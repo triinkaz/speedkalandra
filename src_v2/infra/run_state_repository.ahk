@@ -43,8 +43,9 @@ class RunStateRepository
 
     _ini             := ""
     _zoneTotalsPath  := ""
+    _warn            := ""   ; WarningSink (Null by default; LogServiceWarningSink in production)
 
-    __New(iniFileObj)
+    __New(iniFileObj, warningSink := "")
     {
         if !(iniFileObj is IniFile)
             throw TypeError("RunStateRepository: 'iniFileObj' must be IniFile")
@@ -55,6 +56,11 @@ class RunStateRepository
         iniPath := iniFileObj.GetPath()
         SplitPath(iniPath, , &dir, , &nameNoExt)
         this._zoneTotalsPath := (dir != "" ? dir "\" : "") nameNoExt "_zones.txt"
+
+        ; No-op sink by default; production wires LogServiceWarningSink
+        ; tagged with "RunState" so failures of the zone-totals file
+        ; show up as visible WARNs in the user log.
+        this._warn := IsObject(warningSink) ? warningSink : NullWarningSink()
     }
 
     Load()
@@ -122,8 +128,12 @@ class RunStateRepository
 
     ; Reads the plain-text zone totals file.
     ; Format: one "<zone name>=<ms>" per line.
-    ; Returns an empty Map() if the file is missing or empty.
-    ; Malformed lines are silently skipped.
+    ;
+    ; Failure taxonomy (deliberately graded, see ARCHITECTURE.md § 14):
+    ;   - File missing      → silent return empty (expected new state)
+    ;   - FileRead throws   → Warn + return empty (data loss if silent)
+    ;   - Line malformed    → skip silently (resilient to manual edits)
+    ;   - All lines invalid → Warn (file likely corrupt)
     LoadZoneTotals()
     {
         out := Map()
@@ -133,20 +143,31 @@ class RunStateRepository
 
         content := ""
         try
+        {
             content := FileRead(path, "UTF-8")
-        catch
+        }
+        catch as ex
+        {
+            ; File exists but cannot be read (lock, permission, bad
+            ; encoding). Without this warn the user loses run-in-
+            ; progress zone totals silently.
+            this._warn.Warn("Failed to read zone totals file " . path, ex)
             return out
+        }
 
         if (content = "")
             return out
 
         ; Normalize CRLF and split into lines
         content := StrReplace(content, "`r`n", "`n")
-        for _, line in StrSplit(content, "`n")
+        lines := StrSplit(content, "`n")
+        nonEmptyLines := 0
+        for _, line in lines
         {
             line := Trim(line)
             if (line = "")
                 continue
+            nonEmptyLines += 1
             eqPos := InStr(line, "=")
             if (eqPos < 2)
                 continue
@@ -158,6 +179,13 @@ class RunStateRepository
             if (ms > 0)
                 out[zoneName] := ms
         }
+
+        ; All non-empty lines failed to parse — the file is present
+        ; and non-empty but produced zero entries. That's a corrupt
+        ; file, not a manual-edit skip.
+        if (nonEmptyLines > 0 && out.Count = 0)
+            this._warn.Warn("Zone totals file appears corrupt; no valid lines parsed (" . path . ")")
+
         return out
     }
 
@@ -192,10 +220,10 @@ class RunStateRepository
         }
         catch as ex
         {
-            ; Surface failures instead of swallowing them. No logger
-            ; is injected here, so fall back to OutputDebug — same
-            ; convention used in ClearZoneTotals.
-            OutputDebug("RunStateRepository.SaveZoneTotals failed: " ex.Message)
+            ; Data loss path: in-progress run zone time fails to
+            ; persist. Forwarded to the injected WarningSink so it
+            ; shows up in speedkalandra.log under the "RunState" tag.
+            this._warn.Warn("SaveZoneTotals failed for " . this._zoneTotalsPath, ex)
         }
     }
 
@@ -208,9 +236,10 @@ class RunStateRepository
         }
         catch as ex
         {
-            ; Records failures instead of swallowing them silently.
-            ; No logger is injected here, so fall back to OutputDebug.
-            OutputDebug("RunStateRepository.ClearZoneTotals failed: " ex.Message)
+            ; Stale file lingering on disk — not strictly data loss
+            ; (the next save overwrites it) but still surfaced so an
+            ; underlying disk problem is visible.
+            this._warn.Warn("ClearZoneTotals failed for " . this._zoneTotalsPath, ex)
         }
     }
 
