@@ -70,6 +70,9 @@ class RunHistoryRepositoryTests extends TestCase
         "escape_unescape_roundtrip",
         "safe_category_label_fallback_for_known_categories",
         "safe_category_label_passes_through_unknown",
+
+        ; --- Constructor sink validation (fail-fast via Resolve) ---
+        "constructor_throws_when_warning_sink_lacks_warn_method",
     ]
 
     ; ============================================================
@@ -513,6 +516,15 @@ class RunHistoryRepositoryTests extends TestCase
     {
         ; Unknown category -> returns the string itself
         Assert.Equal("custom_cat", RunHistoryRepository._SafeCategoryLabel("custom_cat"))
+    }
+
+    constructor_throws_when_warning_sink_lacks_warn_method()
+    {
+        ; Map() is an object, looks plausible in a wiring bug, but
+        ; doesn't satisfy the WarningSink duck-typed contract. The
+        ; constructor (via WarningSink.Resolve) must reject it.
+        tmpDir := Fixtures.TempDir()
+        Assert.Throws(TypeError, () => RunHistoryRepository(tmpDir, Map("not", "a sink")))
     }
 }
 

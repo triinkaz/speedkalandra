@@ -294,6 +294,87 @@ class InMemoryWarningSinkTests extends TestCase
 
 
 ; ------------------------------------------------------------
+; WarningSink.Resolve — fail-fast helper used by constructors that
+; accept an optional `warningSink` parameter. Falsy / non-object
+; input returns a NullWarningSink; an object that doesn't implement
+; Warn throws TypeError at wiring time.
+; ------------------------------------------------------------
+class WarningSinkResolveTests extends TestCase
+{
+    static Tests := [
+        "resolve_empty_string_returns_null_sink",
+        "resolve_zero_returns_null_sink",
+        "resolve_object_without_warn_throws_type_error",
+        "resolve_object_with_warn_returns_it_as_is",
+        "resolve_in_memory_sink_returns_it_as_is",
+        "resolve_log_service_sink_returns_it_as_is"
+    ]
+
+    Setup()
+    {
+    }
+    Teardown()
+    {
+        Fixtures.CleanupAll()
+    }
+
+    resolve_empty_string_returns_null_sink()
+    {
+        resolved := WarningSink.Resolve("")
+        Assert.True(resolved is NullWarningSink)
+    }
+
+    resolve_zero_returns_null_sink()
+    {
+        ; Common AHK "falsy non-object": 0. The helper treats anything
+        ; that isn't an object as a request for the default.
+        resolved := WarningSink.Resolve(0)
+        Assert.True(resolved is NullWarningSink)
+    }
+
+    resolve_object_without_warn_throws_type_error()
+    {
+        ; The point of the helper: a Map() is an object, looks plausible
+        ; in a wiring bug, but doesn't satisfy the contract. Must throw
+        ; loudly at wiring time instead of waiting for the first Warn.
+        Assert.Throws(TypeError, () => WarningSink.Resolve(Map("not", "a sink")))
+    }
+
+    resolve_object_with_warn_returns_it_as_is()
+    {
+        ; Anonymous object with a Warn method (duck-typed). The helper
+        ; doesn't require inheritance — just the method.
+        custom := _AnonSinkWithWarn()
+        resolved := WarningSink.Resolve(custom)
+        Assert.True(resolved == custom)
+    }
+
+    resolve_in_memory_sink_returns_it_as_is()
+    {
+        sink := InMemoryWarningSink()
+        Assert.True(WarningSink.Resolve(sink) == sink)
+    }
+
+    resolve_log_service_sink_returns_it_as_is()
+    {
+        sink := LogServiceWarningSink(InMemoryLogger(), "X")
+        Assert.True(WarningSink.Resolve(sink) == sink)
+    }
+}
+
+
+; Tiny ad-hoc class for the "returns it as-is" test. Lives next to
+; the suite that uses it so it doesn't pollute production code.
+class _AnonSinkWithWarn
+{
+    Warn(message, ex := "")
+    {
+        ; no-op for the test
+    }
+}
+
+
+; ------------------------------------------------------------
 ; Test helper — a logger whose `Warn` always throws. Used to assert
 ; that LogServiceWarningSink swallows downstream errors instead of
 ; propagating them to the caller.
@@ -322,3 +403,4 @@ class _ThrowingLoggerForSinkTests
 TestRegistry.Register(NullWarningSinkTests)
 TestRegistry.Register(LogServiceWarningSinkTests)
 TestRegistry.Register(InMemoryWarningSinkTests)
+TestRegistry.Register(WarningSinkResolveTests)

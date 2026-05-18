@@ -16,10 +16,17 @@
 ; uses a file that's non-empty but where no line matches the
 ; "name=positive_integer" shape.
 ;
-; The save-failure and clear-failure paths for the zone totals
-; file also route through the injected WarningSink \u2014 covered at
-; the end of this suite by triggering AtomicWriter against an
-; unreachable path.
+; The save-failure path through the injected WarningSink IS
+; covered (`save_warns_when_atomic_writer_fails`) by pointing the
+; zone-totals path at a non-existent directory so AtomicWriter's
+; FileWrite throws. The clear-failure path is NOT covered \u2014
+; forcing FileDelete to throw needs Win32 sharing-violation
+; plumbing that isn't worth the test complexity for a path that
+; is already covered manually in production by the surrounding
+; SaveZoneTotals failure handling.
+;
+; Constructor sink validation (Map() rejected by WarningSink.Resolve)
+; is asserted at the end of the suite.
 
 
 class RunStateRepositoryWarningSinkTests extends TestCase
@@ -59,7 +66,13 @@ class RunStateRepositoryWarningSinkTests extends TestCase
         ; --- SaveZoneTotals / ClearZoneTotals ---
         "save_does_not_warn_on_happy_path",
         "clear_does_not_warn_when_file_missing",
-        "clear_does_not_warn_on_happy_path"
+        "clear_does_not_warn_on_happy_path",
+
+        ; --- SaveZoneTotals failure (AtomicWriter throws) ---
+        "save_warns_when_atomic_writer_fails",
+
+        ; --- Constructor sink validation ---
+        "constructor_throws_when_warning_sink_lacks_warn_method"
     ]
 
     ; ============================================================
@@ -162,6 +175,36 @@ class RunStateRepositoryWarningSinkTests extends TestCase
         this.repo.SaveZoneTotals(Map("Mud Burrow", 215000))
         this.repo.ClearZoneTotals()
         Assert.Equal(0, this.sink.Count())
+    }
+
+    save_warns_when_atomic_writer_fails()
+    {
+        ; Force AtomicWriter to fail by pointing the zone totals
+        ; path at a location whose "parent directory" is actually a
+        ; file that already exists. AtomicWriter creates missing
+        ; parent dirs (covered by its own happy-path tests), but
+        ; cannot create a dir on top of an existing file — DirCreate
+        ; throws OSError. The repo's catch routes the exception
+        ; through the WarningSink.
+        parentAsFile := Fixtures.TempPath("txt")
+        FileAppend("not a directory", parentAsFile, "UTF-8")
+        bogus := parentAsFile . "\zones.txt"
+        this.repo._zoneTotalsPath := bogus
+
+        this.repo.SaveZoneTotals(Map("Mud Burrow", 215000))
+
+        Assert.Equal(1, this.sink.Count())
+        Assert.True(this.sink.HasMessage("SaveZoneTotals failed"))
+    }
+
+    constructor_throws_when_warning_sink_lacks_warn_method()
+    {
+        ; Map() is an object, looks plausible in a wiring bug, but
+        ; doesn't satisfy the WarningSink duck-typed contract. The
+        ; constructor (via WarningSink.Resolve) must reject it.
+        path := Fixtures.TempPath("ini")
+        ini := IniFile(path)
+        Assert.Throws(TypeError, () => RunStateRepository(ini, Map("not", "a sink")))
     }
 }
 

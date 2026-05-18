@@ -39,7 +39,10 @@ class PersonalBestServiceWarningSinkTests extends TestCase
         "no_change_update_emits_no_warning",
 
         ; --- Load path ---
-        "load_from_repo_warns_when_repo_load_throws"
+        "load_from_repo_warns_when_repo_load_throws",
+
+        ; --- Constructor sink validation ---
+        "constructor_throws_when_warning_sink_lacks_warn_method"
     ]
 
     Setup()
@@ -194,6 +197,17 @@ class PersonalBestServiceWarningSinkTests extends TestCase
 
         Assert.Equal(1, sink.Count())
         Assert.True(sink.HasMessage("Failed to load PBs"))
+    }
+
+    constructor_throws_when_warning_sink_lacks_warn_method()
+    {
+        ; Wiring bug: someone passes a Map() instead of an actual
+        ; sink. The constructor must reject it loudly at boot rather
+        ; than wait for the first persist failure to crash inside
+        ; _TryPersistOrWarn. Routed through WarningSink.Resolve.
+        path := Fixtures.TempPath("ini")
+        repo := PersonalBestRepository(path)
+        Assert.Throws(TypeError, () => PersonalBestService(repo, Map("not", "a sink")))
     }
 }
 

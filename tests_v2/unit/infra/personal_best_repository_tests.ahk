@@ -55,6 +55,9 @@ class PersonalBestRepositoryTests extends TestCase
 
         ; --- Roundtrip ---
         "roundtrip_load_save_preserves_pbs",
+
+        ; --- Constructor sink validation (fail-fast via Resolve) ---
+        "constructor_throws_when_warning_sink_lacks_warn_method",
     ]
 
     ; ============================================================
@@ -376,6 +379,14 @@ class PersonalBestRepositoryTests extends TestCase
         Assert.Equal(2, loaded["zonePbs"].Count)
         Assert.Equal(215000, loaded["zonePbs"]["Mud Burrow"])
         Assert.Equal(180000, loaded["zonePbs"]["Clearfell"])
+    }
+
+    constructor_throws_when_warning_sink_lacks_warn_method()
+    {
+        ; Map() is an object, looks plausible in a wiring bug, but
+        ; doesn't satisfy the WarningSink duck-typed contract. The
+        ; constructor (via WarningSink.Resolve) must reject it.
+        Assert.Throws(TypeError, () => PersonalBestRepository("some-path.ini", Map("not", "a sink")))
     }
 }
 

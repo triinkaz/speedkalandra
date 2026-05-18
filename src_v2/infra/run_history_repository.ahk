@@ -57,7 +57,7 @@ class RunHistoryRepository
 
     static DETAIL_SEP := "|"
 
-    __New(dir, warningSink := "")
+    __New(dir, sinkOrEmpty := "")
     {
         if (Trim(String(dir)) = "")
             throw ValueError("RunHistoryRepository: 'dir' is required")
@@ -65,7 +65,11 @@ class RunHistoryRepository
         ; No-op sink by default; production wires LogServiceWarningSink
         ; tagged with "RunHistory". The Ensure-dir call below uses the
         ; sink already, so the constructor wires it BEFORE _EnsureDir.
-        this._warn := IsObject(warningSink) ? warningSink : NullWarningSink()
+        ; Resolve throws on an object that doesn't implement Warn.
+        ; Parameter is `sinkOrEmpty` (not `warningSink`) to avoid the
+        ; case-insensitive shadow of the WarningSink class — see
+        ; ARCHITECTURE.md § 15.
+        this._warn := WarningSink.Resolve(sinkOrEmpty)
         this._EnsureDir()
     }
 

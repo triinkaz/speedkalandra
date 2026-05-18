@@ -34,7 +34,7 @@ class PersonalBestRepository
     _path := ""
     _warn := ""   ; WarningSink (Null by default; LogServiceWarningSink in production)
 
-    __New(path, warningSink := "")
+    __New(path, sinkOrEmpty := "")
     {
         if (Trim(String(path)) = "")
             throw ValueError("PersonalBestRepository: 'path' is required")
@@ -42,7 +42,14 @@ class PersonalBestRepository
         ; Default to a no-op sink so the repo can still be used in
         ; isolated tests or early-boot paths without an explicit
         ; observability wiring. Production wires LogServiceWarningSink.
-        this._warn := IsObject(warningSink) ? warningSink : NullWarningSink()
+        ; Resolve throws if the input is an object that doesn't
+        ; implement Warn — fails fast at wiring time.
+        ;
+        ; The parameter is named `sinkOrEmpty` (not `warningSink`)
+        ; because AHK v2 has case-insensitive variable lookup: a
+        ; local `warningSink` would shadow the global `WarningSink`
+        ; class on the next line. Documented in ARCHITECTURE.md § 15.
+        this._warn := WarningSink.Resolve(sinkOrEmpty)
     }
 
     GetPath() => this._path

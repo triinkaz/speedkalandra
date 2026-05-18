@@ -26,6 +26,43 @@
 ; No `extends` chain — keeps construction order in the composition
 ; root unconstrained and mirrors the NullLogger / InMemoryLogger
 ; pattern in this same folder.
+;
+; The `WarningSink.Resolve(...)` static helper is the canonical way
+; for a constructor to accept an optional sink parameter: it returns
+; a `NullWarningSink` for empty / non-object input, and throws on an
+; object that doesn't implement the contract. Fails fast at wiring
+; time instead of crashing on the first Warn call somewhere deeper.
+
+
+; ------------------------------------------------------------
+; WarningSink — static utilities only. Acts as the namespace for
+; the `Resolve` helper. The three concrete sinks below do NOT
+; extend this class (the duck-typed contract is enforced by
+; HasMethod checks inside Resolve, not by inheritance).
+; ------------------------------------------------------------
+class WarningSink
+{
+    ; Resolve an optional `warningSink` constructor parameter into
+    ; a usable sink, or fail with a clear error.
+    ;
+    ;   sinkOrEmpty = ""          → NullWarningSink()
+    ;   sinkOrEmpty = non-object  → NullWarningSink()  (defensive)
+    ;   sinkOrEmpty = object with no `Warn` method → TypeError
+    ;   sinkOrEmpty = object with `Warn` method    → returned as-is
+    ;
+    ; The throw on "object without Warn" is the point of this helper:
+    ; without it, a wiring bug (e.g. passing a Map() by mistake) would
+    ; only surface the first time a save/load failure actually
+    ; happened in production. Now it surfaces at app boot.
+    static Resolve(sinkOrEmpty)
+    {
+        if !IsObject(sinkOrEmpty)
+            return NullWarningSink()
+        if !sinkOrEmpty.HasMethod("Warn")
+            throw TypeError("WarningSink.Resolve: object must implement Warn(message, ex := '')")
+        return sinkOrEmpty
+    }
+}
 
 
 ; ------------------------------------------------------------

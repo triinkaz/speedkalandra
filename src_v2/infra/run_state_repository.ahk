@@ -45,7 +45,7 @@ class RunStateRepository
     _zoneTotalsPath  := ""
     _warn            := ""   ; WarningSink (Null by default; LogServiceWarningSink in production)
 
-    __New(iniFileObj, warningSink := "")
+    __New(iniFileObj, sinkOrEmpty := "")
     {
         if !(iniFileObj is IniFile)
             throw TypeError("RunStateRepository: 'iniFileObj' must be IniFile")
@@ -59,8 +59,12 @@ class RunStateRepository
 
         ; No-op sink by default; production wires LogServiceWarningSink
         ; tagged with "RunState" so failures of the zone-totals file
-        ; show up as visible WARNs in the user log.
-        this._warn := IsObject(warningSink) ? warningSink : NullWarningSink()
+        ; show up as visible WARNs in the user log. Resolve throws on
+        ; an object that doesn't implement Warn (fail-fast at wiring).
+        ; Parameter is `sinkOrEmpty` (not `warningSink`) to avoid the
+        ; case-insensitive shadow of the WarningSink class — see
+        ; ARCHITECTURE.md § 15.
+        this._warn := WarningSink.Resolve(sinkOrEmpty)
     }
 
     Load()

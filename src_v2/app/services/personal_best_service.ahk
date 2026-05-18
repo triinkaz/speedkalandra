@@ -29,7 +29,7 @@ class PersonalBestService
     _runPbByAct := ""    ; Map<actNum, ms>
     _zonePbs    := ""    ; Map<zoneName, ms>
 
-    __New(repo, warningSink := "")
+    __New(repo, sinkOrEmpty := "")
     {
         if !(repo is PersonalBestRepository)
             throw TypeError("PersonalBestService: 'repo' must be PersonalBestRepository")
@@ -40,8 +40,12 @@ class PersonalBestService
         ; service with just `(repo)` keep passing. Production wires
         ; LogServiceWarningSink so persist failures show up in the
         ; user log under the "PB" tag instead of being silently
-        ; swallowed by the finalize flow.
-        this._warn       := IsObject(warningSink) ? warningSink : NullWarningSink()
+        ; swallowed by the finalize flow. Resolve throws on an object
+        ; that doesn't implement Warn (fail-fast at wiring).
+        ; Parameter is `sinkOrEmpty` (not `warningSink`) to avoid the
+        ; case-insensitive shadow of the WarningSink class — see
+        ; ARCHITECTURE.md § 15.
+        this._warn       := WarningSink.Resolve(sinkOrEmpty)
         this._LoadFromRepo()
     }
 
