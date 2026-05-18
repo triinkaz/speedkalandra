@@ -53,6 +53,10 @@ class LoadingTotalsServiceTests extends TestCase
         "resets_on_run_cancelled",
         "resets_on_run_completed",
 
+        ; --- Hydration ordering (regression for the hydrated:true sweep) ---
+        "run_started_with_hydrated_flag_preserves_total_ms",
+        "run_started_without_hydrated_flag_wipes_total_ms",
+
         ; --- Defensive against malformed data ---
         "ignores_loading_measured_without_duration_ms_key",
         "ignores_loading_measured_with_non_number_duration",
@@ -156,6 +160,29 @@ class LoadingTotalsServiceTests extends TestCase
     {
         this.bus.Publish(Events.LoadingMeasured, Map("durationMs", 3000))
         this.bus.Publish(Events.RunCompleted, Map("runId", "20260512_142345"))
+        Assert.Equal(0, this.svc.GetTotalMs())
+    }
+
+    ; ============================================================
+    ; Hydration ordering
+    ; ============================================================
+    ; The composition root hydrates _totalMs from disk BEFORE
+    ; RunService.Hydrate() publishes Evt.RunStarted{hydrated:true}.
+    ; If the handler reset the total on that event, the just-restored
+    ; loading time would be wiped. The hydrated flag suppresses the
+    ; reset. Same pattern as ZoneTrackingService._OnRunStarted.
+
+    run_started_with_hydrated_flag_preserves_total_ms()
+    {
+        this.svc.Hydrate(12345)
+        this.bus.Publish(Events.RunStarted, Map("runId", "20260512_142345", "hydrated", true))
+        Assert.Equal(12345, this.svc.GetTotalMs())
+    }
+
+    run_started_without_hydrated_flag_wipes_total_ms()
+    {
+        this.svc.Hydrate(12345)
+        this.bus.Publish(Events.RunStarted, Map("runId", "20260512_142345"))
         Assert.Equal(0, this.svc.GetTotalMs())
     }
 

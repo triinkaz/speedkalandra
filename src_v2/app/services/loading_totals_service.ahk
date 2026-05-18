@@ -53,7 +53,7 @@ class LoadingTotalsService
         this._totalMs := 0
 
         this._handlerLoadingMeasured := (data) => this._OnLoadingMeasured(data)
-        this._handlerRunStarted      := (data) => this.Reset()
+        this._handlerRunStarted      := (data) => this._OnRunStarted(data)
         this._handlerRunReset        := (data) => this.Reset()
         this._handlerRunCancelled    := (data) => this.Reset()
         this._handlerRunCompleted    := (data) => this.Reset()
@@ -126,6 +126,20 @@ class LoadingTotalsService
     ; ============================================================
     ; Event handlers
     ; ============================================================
+
+    ; RunStarted handler. The hydrated:true variant comes from
+    ; RunService.Hydrate at the end of the composition root's __New;
+    ; by the time it fires, _totalMs has already been restored from
+    ; disk via Hydrate(loadingMs). Wiping it here would lose every
+    ; ms of loading tracked before the previous shutdown. Same
+    ; convention used by ZoneTrackingService._OnRunStarted.
+    _OnRunStarted(data)
+    {
+        isHydrate := IsObject(data) && data.Has("hydrated") && data["hydrated"]
+        if isHydrate
+            return
+        this.Reset()
+    }
 
     ; Accumulates durationMs into the total. Defensive against
     ; malformed data.
