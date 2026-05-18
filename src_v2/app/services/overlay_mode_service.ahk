@@ -1,8 +1,8 @@
 ; ============================================================
-; OverlayModeService - simplified state machine (Wave 4)
+; OverlayModeService - state machine for which layout is active
 ; ============================================================
 ;
-; POST-DEMOLITION VERSION: NORMAL and CUSTOM removed. Only two modes:
+; Two modes:
 ;
 ;   COMPACT - reduced layout with essential info. Default.
 ;   MICRO   - minimal bar, two sub-modes:
@@ -23,12 +23,12 @@
 ;   Cmd.ToggleSteveLockRequested -> ToggleSteveLock()
 ;   Cmd.SetOverlayModeRequested  -> SetMode(mode)
 ;
-;   v17.15 (Bug #31): subscribes to Cmd.PanelKeyPressed/Released
-;   removed — PanelKeyService was disconnected in v17.2 and there is
-;   no publisher anymore. The OnPanelKeyDown/Up + ClearHeldKeys
-;   methods remain in the code (still callable externally if needed)
-;   but the automatic bus-based flow is officially dead. _heldKeys
-;   stays permanently empty.
+;   The bus-based panel-key flow (Cmd.PanelKeyPressed/Released) is
+;   currently disconnected — PanelKeyService has no publisher. The
+;   OnPanelKeyDown/Up + ClearHeldKeys methods remain in the code
+;   (still callable externally if needed) but the automatic
+;   bus-based flow is officially dead. _heldKeys stays permanently
+;   empty.
 ;
 ; PUBLISHES:
 ;   Evt.OverlayModeChanged { mode, prevMode, locked, heldKeys }
@@ -41,7 +41,7 @@ class OverlayModes
 {
     static COMPACT := "compact"
     static MICRO   := "micro"
-    static STEVE   := "steve"   ; v17.14 — SteveTheHappyWhale
+    static STEVE   := "steve"   ; SteveTheHappyWhale layout
 }
 
 
@@ -52,11 +52,11 @@ class OverlayModeService
 
     _mode         := ""
     _microLocked  := false
-    _steveLocked  := false    ; v17.14
+    _steveLocked  := false
     _heldKeys     := ""    ; Map<keyName, true>
 
     _handlerToggleMicroLock   := ""
-    _handlerToggleSteveLock   := ""   ; v17.14
+    _handlerToggleSteveLock   := ""
     _handlerSetOverlayMode    := ""
 
     __New(bus, cfg)
@@ -78,8 +78,6 @@ class OverlayModeService
         bus.Subscribe(Commands.ToggleMicroLockRequested, this._handlerToggleMicroLock)
         bus.Subscribe(Commands.ToggleSteveLockRequested, this._handlerToggleSteveLock)
         bus.Subscribe(Commands.SetOverlayModeRequested,  this._handlerSetOverlayMode)
-        ; v17.15 (Bug #31): subscribes to Cmd.PanelKeyPressed/Released
-        ; removed — PanelKeyService disconnected in v17.2.
     }
 
     Dispose()
@@ -104,9 +102,9 @@ class OverlayModeService
     ; ============================================================
     ; Hydrate - loads initial state from AppSettings
     ;
-    ; v17.14: steveLocked takes precedence over microLocked if both
-    ; are true in the INI (manual edit accident). ToggleX guarantees
-    ; only one is active at a time, but Hydrate is defensive.
+    ; steveLocked takes precedence over microLocked if both are true
+    ; in the INI (manual edit accident). ToggleX guarantees only one
+    ; is active at a time, but Hydrate is defensive.
     ; ============================================================
     Hydrate()
     {
@@ -157,7 +155,7 @@ class OverlayModeService
         }
         else
         {
-            ; v17.14: enable micro — disable steve if it was on
+            ; Enable micro: disable steve if it was on (modes are mutually exclusive).
             this._steveLocked := false
             this._microLocked := true
             this._mode        := OverlayModes.MICRO
@@ -168,9 +166,9 @@ class OverlayModeService
     }
 
     ; ============================================================
-    ; ToggleSteveLock - alternates COMPACT <-> STEVE LOCKED (v17.14)
+    ; ToggleSteveLock - alternates COMPACT <-> STEVE LOCKED
     ;
-    ; Modes micro and steve are MUTUALLY EXCLUSIVE — enabling steve
+    ; Modes micro and steve are MUTUALLY EXCLUSIVE: enabling steve
     ; automatically disables micro. Same for ToggleMicroLock.
     ; ============================================================
     ToggleSteveLock()

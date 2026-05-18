@@ -108,7 +108,7 @@ class LoadingDetectionService
         ; Handlers kept as fields so Stop()/Dispose() can Unsubscribe.
         ; Inline fat-arrow expressions return a fresh ref every call,
         ; so subscribing one and unsubscribing another would silently
-        ; leak. See ARCHITECTURE.md §17.32 / §18.5.
+        ; leak.
         this._handlerAreaLevelChanged := (data) => this._OnAreaLevelChanged(data)
         this._handlerZoneChanged      := (data) => this._OnZoneChanged(data)
 

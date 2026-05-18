@@ -6,7 +6,7 @@
 ;   - characterName, characterClass, characterLevel
 ;   - currentAreaLevel, currentAreaCode
 ;
-; and expose derived calculations (delegating to Phase 2's XpRules):
+; and expose derived calculations (delegating to XpRules):
 ;   - GetXpPenaltyInfo()
 ;   - GetSafeRange()
 ;
@@ -15,9 +15,9 @@
 ; update state. Getters return state. Calculations delegate to
 ; XpRules (purely functional).
 ;
-; Does NOT publish events. Does not subscribe to events. The App
-; composition root (Phase 5) will wire `Evt.CharacterLevelUp` (from
-; the log monitor) to `xpService.SetCharacter(...)`, and
+; Does NOT publish events. Does not subscribe to events. The
+; composition root wires `Evt.CharacterLevelUp` (from the log
+; monitor) to `xpService.SetCharacter(...)`, and
 ; `Evt.AreaLevelChanged` to `xpService.SetCurrentArea(...)`.
 ;
 ; SEMANTICS:

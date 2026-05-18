@@ -7,8 +7,8 @@
 ; publishes Cmd.NewRunRequested. Tolerant to invalid regex.
 ;
 ; Optional constructor: third arg `runService` allows querying
-; initial state (Bug #4 v17.15: post-reload with run in progress,
-; without this AutoStart fired NewRun on re-reading log lines).
+; initial state — without this, after a reload with a run already
+; in progress, AutoStart would fire NewRun on re-reading the log lines.
 
 
 class AutoStartServiceTests extends TestCase

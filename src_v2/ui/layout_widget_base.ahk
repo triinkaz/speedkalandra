@@ -1,10 +1,9 @@
 ; ============================================================
-; LayoutWidgetBase — base class for LayoutWidgets (Phase A1)
+; LayoutWidgetBase — base class for layout widgets
 ; ============================================================
 ;
-; The LayoutWidgets (CompactLayoutWidget, MicroLayoutWidget) visually
-; reproduce the legacy modes with FIXED containerized layouts
-; (instead of 8 draggable loose widgets).
+; The LayoutWidgets (CompactLayoutWidget, MicroLayoutWidget,
+; SteveLayoutWidget) render with FIXED containerized layouts.
 ;
 ; CHARACTERISTICS:
 ;   - Fixed BASE size (override _GetFixedSize in the subclass).

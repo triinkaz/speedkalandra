@@ -5,7 +5,7 @@
 ; State machine with 3 modes: COMPACT (default), MICRO, STEVE.
 ; Locked modes (microLocked/steveLocked) are mutually exclusive.
 ; AUTO MICRO mode is a temporary entry via panel keys
-; (i/v/c/g/p/u/m), but v17.15 (Bug #31) disconnected the publisher
+; (i/v/c/g/p/u/m), but the publisher is currently disconnected
 ; — _heldKeys is always empty in real use. The OnPanelKeyDown/Up +
 ; ClearHeldKeys methods are still externally callable (covered by
 ; the tests).

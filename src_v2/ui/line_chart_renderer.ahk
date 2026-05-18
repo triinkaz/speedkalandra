@@ -1,5 +1,5 @@
 ; ============================================================
-; LineChartRenderer - draws a line chart via GDI (Wave 7, v17.9)
+; LineChartRenderer - draws a line chart via GDI
 ; ============================================================
 ;
 ; SCOPE:

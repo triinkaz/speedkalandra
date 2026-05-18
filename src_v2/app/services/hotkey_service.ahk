@@ -1,8 +1,6 @@
 ; ============================================================
-; HotkeyService - registers global hotkeys (Wave 6)
+; HotkeyService - registers global hotkeys
 ; ============================================================
-;
-; POST-DEMOLITION VERSION: simplified to 8 actions.
 ;
 ; SUPPORTED ACTIONS:
 ;   StartPause       -> Cmd.TimerToggleRequested
@@ -38,7 +36,7 @@ class HotkeyService
         "PlotRunStats",    Commands.OpenRunStatsPlotRequested
     )
 
-    ; Actions that OPEN DIALOGS (change the active window focus). v17.14.
+    ; Actions that OPEN DIALOGS (change the active window focus).
     ;
     ; Hotkeys with modifiers (^!s, ^!p) that change focus are the
     ; classic AHK "stuck modifier" bug scenario: the user presses
@@ -160,9 +158,9 @@ class HotkeyService
         return (*) => this._FireHotkey(commandName, actionName, isFocusChanging)
     }
 
-    ; Internal hotkey firing (v17.14).
-    ; Does modifier cleanup ONLY for hotkeys that change focus
-    ; (Settings, PlotRunStats). Details in FocusChangingActions above.
+    ; Internal hotkey firing. Does modifier cleanup ONLY for hotkeys
+    ; that change focus (Settings, PlotRunStats). Details in
+    ; FocusChangingActions above.
     _FireHotkey(commandName, actionName, isFocusChanging)
     {
         if isFocusChanging

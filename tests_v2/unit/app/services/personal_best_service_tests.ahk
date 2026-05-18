@@ -2,15 +2,13 @@
 ; PersonalBestServiceTests
 ; ============================================================
 ;
-; PersonalBestService is the most complex service of Wave 5a.
-; Keeps 4 PBs in memory (global run, run-per-act, zone PBs),
-; loads from disk in the constructor and persists whenever it
-; changes.
+; PersonalBestService keeps 4 PBs in memory (global run,
+; run-per-act, zone PBs), loads from disk in the constructor and
+; persists whenever it changes.
 ;
 ; Since the constructor does `if !(repo is PersonalBestRepository)`,
-; we use real repos with a tempfile (UTF-16 BOM because of the
-; issue documented in Wave 4: IniRead key-lookup doesn't work on
-; UTF-8 BOM).
+; we use real repos with a tempfile (UTF-16 BOM because AHK v2's
+; IniRead key-lookup does not work on UTF-8 BOM).
 ;
 ; Coverage:
 ;   - Constructor + automatic _LoadFromRepo

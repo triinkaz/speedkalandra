@@ -12,7 +12,7 @@
 ;       * Mouse wheel over a registered Gui fires the onResize
 ;         callback (widget changes scale, scales everything inside).
 ;
-; APPROACH (Item 2):
+; APPROACH:
 ;   Uses WS_EX_LAYERED + WS_EX_TRANSPARENT set on widget creation
 ;   (WidgetBase.Show / LayoutWidgetBase.Show). This approach works
 ;   CROSS-PROCESS — Windows routes mouse messages directly to the

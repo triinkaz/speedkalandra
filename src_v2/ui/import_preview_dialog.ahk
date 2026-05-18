@@ -1,5 +1,5 @@
 ; ============================================================
-; ImportPreviewDialog - import preview/confirmation dialog (v0.1.0)
+; ImportPreviewDialog - import preview/confirmation dialog
 ; ============================================================
 ;
 ; Opened by the Cmd.ImportRunsRequested handler in app.ahk after

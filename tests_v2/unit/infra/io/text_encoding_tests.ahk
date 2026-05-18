@@ -1,18 +1,14 @@
 ; ============================================================
-; TextEncoding tests (R11.1)
+; TextEncoding tests
 ; ============================================================
 ;
 ; DetectBom(path) -> "UTF-16-LE" | "UTF-16-BE" | "UTF-8-BOM" | "NONE"
 ;
-; HISTORY:
-;   R11.1 (Bug #2 fix): ConvertUtf16ToUtf8 and MigrateIniToUtf8 were
-;   REMOVED because they broke AHK v2's IniRead key-lookup (only
-;   works on UTF-16 LE BOM). Tests of the removed methods were
-;   deleted from this file.
-;
-;   The 4 `regression_bug2_*` regression tests that demonstrated the
-;   incompatibility were replaced with 2 positive tests confirming
-;   the API removal.
+; NOTE: ConvertUtf16ToUtf8 and MigrateIniToUtf8 were removed because
+; they broke AHK v2's IniRead key-lookup (which only works on
+; UTF-16 LE BOM). The 4 regression tests that demonstrated the
+; incompatibility were replaced with 2 positive tests confirming
+; the API removal.
 
 class TextEncodingTests extends TestCase
 {

@@ -1,5 +1,5 @@
 ; ============================================================
-; RunExportFormat - run export/import schema (v0.1.0)
+; RunExportFormat - run export/import schema
 ; ============================================================
 ;
 ; Pure class with no I/O. Converts between:

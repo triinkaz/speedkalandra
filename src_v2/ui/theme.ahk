@@ -13,10 +13,9 @@
 ;   wg.SetFont("s10 c" Theme.Color("text") " bold", Theme.FONT_UI)
 ;
 ; Why static?
-;   No state. Same color set across the entire application. Any
-;   eventual theme change (light/dark) would be done by swapping the
-;   class entirely or by adding Theme.SetPalette("dark") — out of
-;   scope for Phase 6.1.
+;   No state. Same color set across the entire application. An
+;   eventual theme change (light/dark) would mean swapping the class
+;   entirely or adding `Theme.SetPalette("dark")` — not in scope.
 ;
 ; Why error on unknown Color?
 ;   Strict by design. Color-name typos blow up early, at widget

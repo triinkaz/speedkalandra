@@ -2,9 +2,9 @@
 ; FocusAutoPauseServiceTests
 ; ============================================================
 ;
-; Hybrid service (v0.1.1): subscribes to Evt.WindowFocusChanged
-; (fast path via PoE2's Client.txt) AND Evt.Tick (backup polling
-; at 300ms via WinActive). Both paths fire the same handler
+; Hybrid service: subscribes to Evt.WindowFocusChanged (fast path
+; via PoE2's Client.txt) AND Evt.Tick (backup polling at 300ms via
+; WinActive). Both paths fire the same handler
 ; _OnWindowFocusChanged which is idempotent.
 ;
 ; TEST STRATEGY: stub subclass overrides `_IsGameActive` with an

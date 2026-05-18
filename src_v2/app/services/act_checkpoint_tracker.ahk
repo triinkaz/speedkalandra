@@ -6,9 +6,8 @@
 ; A "transition" is the first ZoneEntered whose actIndex differs
 ; from _currentAct. The act being LEFT gets a checkpoint with the
 ; current runMs; the final act of the run is registered via
-; CaptureCurrentAsCheckpoint (called by the composition root in
-; _SaveRunSnapshot when reason="completed") because no further
-; transition happens.
+; CaptureCurrentAsCheckpoint (called from RunSnapshotSaver.Save when
+; reason="completed") because no further transition happens.
 ;
 ; Subscribes:
 ;   ZoneEntered → transition detection

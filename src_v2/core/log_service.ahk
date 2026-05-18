@@ -20,7 +20,7 @@
 ; (captures lines into an array for asserts).
 ;
 ; ------------------------------------------------------------
-; BUFFERING (refactor R7):
+; BUFFERING:
 ;
 ; LogService accepts `bufferSize` in the constructor:
 ;   - 1 (default): immediate flush on each line. Compatible with tests
@@ -48,12 +48,11 @@ class LogService
     static LEVEL_WARN  := 2
     static LEVEL_ERROR := 3
 
-    ; v17.15 (Bug #32): maximum size before rotating the log.
-    ; When the log reaches this size, it is renamed to .log.old
-    ; (overwriting any previous .old) and a new file is started. Keeps
-    ; a short history (one rotation = up to 10MB total) and prevents
-    ; the file from growing indefinitely.
-    static MAX_LOG_SIZE := 5 * 1024 * 1024   ; 5MB
+    ; Maximum size before rotating the log. When the log reaches this
+    ; size, it is renamed to .log.old (overwriting any previous .old)
+    ; and a new file is started. Keeps a short history (one rotation =
+    ; up to 10 MB total) and prevents the file from growing indefinitely.
+    static MAX_LOG_SIZE := 5 * 1024 * 1024   ; 5 MB
 
     _logFile    := ""
     _minLevel   := 1   ; INFO

@@ -1,12 +1,12 @@
 ; ============================================================
-; JsonFile — JSON file writing (Phase B2.1)
+; JsonFile — JSON file writing
 ; ============================================================
 ;
 ; Mirrors CsvFile/IniFile: instance-based with path in the constructor.
 ;
 ; PHILOSOPHY:
-;   - Write first, reading is left for a future phase when we need to
-;     re-import exported runs.
+;   - Write first; reading was added later for re-importing exported
+;     runs.
 ;   - Pretty-print by default (indent=2 spaces) — UX prioritizes
 ;     manual inspection in a text editor.
 ;   - Always UTF-8 encoding (consistent with CsvFile).

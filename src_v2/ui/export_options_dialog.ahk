@@ -1,5 +1,5 @@
 ; ============================================================
-; ExportOptionsDialog - export options dialog (v0.1.0)
+; ExportOptionsDialog - export options dialog
 ; ============================================================
 ;
 ; Opened when the user clicks "Export selected" or "Export all" in

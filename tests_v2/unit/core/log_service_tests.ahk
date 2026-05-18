@@ -12,7 +12,7 @@
 ;   - WARN/ERROR: immediate flush, always after draining the pending
 ;                 buffer (preserves chronological order)
 ;   - WARN/ERROR counters: count INDEPENDENT of minLevel
-;   - Rotation (Bug #32): if existing log > 5MB at construction,
+;   - Rotation: if existing log > 5MB at construction,
 ;     rename to .log.old (overwrites previous .old)
 ;
 ; Convention: `srvLog` instead of `log` to avoid colliding with a global.

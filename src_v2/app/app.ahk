@@ -134,7 +134,7 @@ class SpeedKalandraApp
         this.runHistory := RunHistoryRepository(runHistoryDir)
 
         ; Personal bests are loaded by the repository inside
-        ; PersonalBestService.__New, then updated in _SaveRunSnapshot
+        ; PersonalBestService.__New, then updated by RunSnapshotSaver
         ; when reason="completed".
         this.personalBest := PersonalBestService(PersonalBestRepository(pbPath))
         if this.personalBest.HasRunPb()
@@ -380,7 +380,7 @@ class SpeedKalandraApp
             (data) => this._OnRunEndedClearZones(data))
 
         ; Note: the RunCompleted/RunCancelled subscriptions that drive
-        ; _SaveRunSnapshot live in __New (above the services that
+        ; RunSnapshotSaver live in __New (above the services that
         ; clear state on those events). Do not re-subscribe here.
 
         if (this._cfg.logFile != "" && FileExist(this._cfg.logFile))

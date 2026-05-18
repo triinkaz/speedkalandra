@@ -2,7 +2,7 @@
 ; SpeedKalandraAppIntegrationTests
 ; ============================================================
 ;
-; Wave 8: integration test of the composition root (SpeedKalandraApp).
+; Integration test of the composition root (SpeedKalandraApp).
 ;
 ; Strategy:
 ;   - headless=true: skips disclaimer, prompts, TrayTip

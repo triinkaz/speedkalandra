@@ -1,8 +1,7 @@
 ; ============================================================
-; HudPixelScanner — detects the PoE2 HUD via pixel sampling (Phase 9.2)
+; HudPixelScanner — detects the PoE2 HUD via pixel sampling
 ; ============================================================
 ;
-; Port of legacy GetVisualHudStats / IsHud*Pixel (loading_visual.ahk).
 ; Takes PoE2 window coordinates and samples pixels in 3 regions:
 ;
 ;   - Mana   (bottom-right corner):  rx 0.825-0.985, ry 0.760-0.985

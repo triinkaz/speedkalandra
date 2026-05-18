@@ -2,7 +2,7 @@
 ; HotkeyFormatter - converts hotkeys between AHK syntax and human readable
 ; ============================================================
 ;
-; MOTIVATION (v0.1.0):
+; MOTIVATION:
 ;   AHK uses symbols for modifiers in Hotkey():
 ;     ^ = Ctrl
 ;     ! = Alt

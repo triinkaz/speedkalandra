@@ -1,5 +1,5 @@
 ; ============================================================
-; SteveLayoutWidget - layout with HIGHLIGHTED timer (v17.14)
+; SteveLayoutWidget - layout with highlighted timer
 ; ============================================================
 ;
 ; "SteveTheHappyWhale" mode — named by the user who suggested it via
@@ -54,7 +54,7 @@ class SteveLayoutWidget extends LayoutWidgetBase
     static LINE1_Y       := 6
     static LINE1_H       := 32
     static MARGIN_X      := 10
-    static TIMER_W       := 210   ; v17.15.3: 170->210 prevents cropping in runs >= 1h
+    static TIMER_W       := 210   ; wide enough to fit MM:SS.mmm for runs >= 1h without cropping
     static ACT_ZONE_GAP  := 8     ; margin between act-zone and timer
     static BAR_TIMER_GAP := 12    ; horizontal space between bar end and timer
 
@@ -80,7 +80,7 @@ class SteveLayoutWidget extends LayoutWidgetBase
     static COLOR_LOADING := "FACC15"
     static COLOR_CIDADE  := "A78BFA"
 
-    ; Decorative whale (mode mascot) — v17.14b.
+    ; Decorative whale (mode mascot).
     ; Optional image in the left corner of the widget. If missing,
     ; layout returns to normal without it.
     static WHALE_IMG_PATH := A_ScriptDir "\assets\whale_steve.png"

@@ -1,14 +1,15 @@
 ; ============================================================
-; WindowState - minimal window state (Wave 6)
+; WindowState - minimal window state
 ; ============================================================
 ;
-; POST-DEMOLITION VERSION: the overlay now has 2 widgets with FIXED
-; sizes (compactLayout 720x80, microLayout 200x32) and positions
-; persisted in OverlayLayout. The tracker's "main" window no longer
-; exists — there are 2 independent widgets.
+; The overlay has 3 widgets with fixed sizes (compactLayout 380x96,
+; microLayout 200x32, steveLayout 380x64) and positions persisted in
+; OverlayLayout. There is no single "main" tracker window — each
+; widget is independent.
 ;
-; The only remaining state is microLocked, which indicates whether
-; the user manually locked MICRO mode (vs auto-MICRO via panel keys).
+; The only state here is microLocked / steveLocked, indicating whether
+; the user manually locked the corresponding mode (vs auto-MICRO via
+; panel keys).
 ;
 ; INI MAPPING:
 ;   [Window]
@@ -17,7 +18,7 @@
 class WindowState
 {
     microLocked := false
-    steveLocked := false    ; v17.14 — lock for SteveTheHappyWhale mode
+    steveLocked := false    ; lock for the SteveTheHappyWhale layout
 
     static Defaults() => WindowState()
 

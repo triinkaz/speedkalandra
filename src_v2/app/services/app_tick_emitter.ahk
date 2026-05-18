@@ -13,9 +13,9 @@
 ;   in sync, without multiplying timers.
 ;
 ; Why no payload?
-;   Architecture decision (Phase 6 Option A): widgets query services
-;   directly via constructor refs. The Tick is only the "refresh now"
-;   signal. Keeps the emitter simple and decoupled from which
+;   Architecture decision: widgets query services directly via
+;   constructor refs. The Tick is only the "refresh now" signal,
+;   which keeps the emitter simple and decoupled from which
 ;   services exist.
 ;
 ; Lifecycle:

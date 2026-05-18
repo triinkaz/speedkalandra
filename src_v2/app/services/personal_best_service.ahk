@@ -1,8 +1,8 @@
 ; PersonalBestService — PBs in memory, updated when the
 ; composition root finalizes a run. Loads from disk on construction;
-; UpdateFromRun() is called from inside _SaveRunSnapshot with the
-; aggregated data, so the service stays pull-based and never has to
-; race subscribers that clear state on RunCompleted.
+; UpdateFromRun() is called from inside RunSnapshotSaver.Save with
+; the aggregated data, so the service stays pull-based and never has
+; to race subscribers that clear state on RunCompleted.
 ;
 ; Three PB categories:
 ;   Run PB (legacy)   — lowest runDurationMs across completed runs.

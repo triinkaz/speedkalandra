@@ -1,10 +1,11 @@
 ; ============================================================
-; MicroLayoutWidget - minimal bar (Wave 4)
+; MicroLayoutWidget - minimal bar
 ; ============================================================
 ;
 ; Ultra-reduced version of the overlay. Appears when OverlayModeService
-; enters MICRO (activated via Ctrl+F9 — manual lock). v17.2 removed
-; the AUTO trigger via panel keys; now MICRO is only activated manually.
+; enters MICRO (activated via Ctrl+F9 — manual lock). The earlier AUTO
+; trigger via panel keys was removed; MICRO is now only activated
+; manually.
 ;
 ; BASE LAYOUT (200x32 at scale=1.0):
 ;
@@ -17,7 +18,7 @@
 ;   - xp_indicator (right): fixed "XP" text whose COLOR communicates
 ;                            status (green/amber/red/gray)
 ;
-; XP INDICATOR (v17.3):
+; XP INDICATOR:
 ;   xp_indicator is a Text control with FIXED "XP" text whose color
 ;   changes according to the status computed by XpRules. Text is
 ;   always "XP" — does not show textual status (OK/LIMIT/PENALTY/?)
@@ -33,7 +34,7 @@
 ;   is updated via ctrl.SetFont when the XP status changes (cache
 ;   avoids repaint every tick).
 ;
-; BOSS TIMER (REMOVED in v17.13):
+; BOSS TIMER (removed):
 ;   Boss timer feature was removed from the app (class voice lines
 ;   did not go to PoE2's Client.txt, detection was unfeasible for
 ;   most bosses). Micro lost the special "Boss MM:SS" / "✓ MM:SS".

@@ -1,5 +1,5 @@
 ; ============================================================
-; LoadingTotalsService — accumulates total run loading time (Phase B4.4)
+; LoadingTotalsService — accumulates total run loading time
 ; ============================================================
 ;
 ; Simple, reactive service: subscribes to Evt.LoadingMeasured to

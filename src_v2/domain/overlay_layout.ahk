@@ -1,11 +1,10 @@
 ; ============================================================
-; OverlayLayout - overlay widget positions (Wave 6)
+; OverlayLayout - overlay widget positions
 ; ============================================================
 ;
-; POST-DEMOLITION VERSION: 1 position per widget. The 3-map complexity
-; (NORMAL/COMPACT/MICRO) was removed. Each widget has 1 OverlayPosition
-; and that's it. OverlayModeService decides which widget is visible at
-; any given moment, but the widget's position is always the same.
+; One position per widget. OverlayModeService decides which widget is
+; visible at any given moment, but each widget's position is
+; persisted independently.
 ;
 ; INI MAPPING:
 ;   [Overlay]

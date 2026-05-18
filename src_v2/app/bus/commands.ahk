@@ -1,5 +1,5 @@
 ; ============================================================
-; Commands - command names published by the UI on the EventBus (Wave 6)
+; Commands - command names published by the UI on the EventBus
 ; ============================================================
 ;
 ; Convention: pass through the bus as a string, BUT always via a constant:

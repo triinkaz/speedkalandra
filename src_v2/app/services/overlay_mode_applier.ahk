@@ -1,9 +1,6 @@
 ; ============================================================
-; OverlayModeApplier - applies visibility by mode (Wave 4)
+; OverlayModeApplier - applies widget visibility per mode
 ; ============================================================
-;
-; POST-DEMOLITION VERSION: simplified to 2 modes (COMPACT/MICRO).
-; Loose widgets / CUSTOM mode / position swap removed.
 ;
 ; Subscribes to Evt.OverlayModeChanged and, for each known widget,
 ; applies SetModeVisible(shouldShow). Does NOT touch the user's
@@ -13,8 +10,8 @@
 ;   COMPACT -> only "compactLayout" visible
 ;   MICRO   -> only "microLayout" visible
 ;
-; Any other widget id goes to hidden. Defense in depth in case the
-; composition root accidentally registers a legacy widget.
+; Any other widget id goes to hidden — defense in depth in case the
+; composition root accidentally registers an unexpected widget.
 ;
 ; CONSTRUCTION:
 ;   applier := OverlayModeApplier(bus, widgets)
