@@ -31,23 +31,49 @@ jobs:
         # Hard cap so a hung AHK test (real production bug or a regression
         # that only manifests on non-interactive CI sessions) does not
         # silently eat 6 hours of CI minutes. The local suite finishes in
-        # well under a minute; 10 minutes is a generous ceiling.
+        # well under a minute; 8 minutes is a generous ceiling.
         # On timeout the step fails and the Upload test log step below
         # still runs (if: always()), so the tests_output.log up to the
         # last-completed test is preserved as an artifact.
-        timeout-minutes: 10
+        timeout-minutes: 8
         shell: pwsh
         env:
           SPEEDKALANDRA_TEST_NO_GUI: "1"
         run: |
           $ahk = "C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe"
-          $proc = Start-Process -FilePath $ahk `
-                                -ArgumentList "tests_v2\run_tests.ahk" `
-                                -Wait -PassThru -NoNewWindow
-          Write-Host "Exit code: $($proc.ExitCode)"
-          if ($proc.ExitCode -ne 0) {
-              Write-Error "Test suite failed (exit $($proc.ExitCode)). See uploaded log artifact."
-              exit $proc.ExitCode
+
+          # Diagnostic header: a previous run hung for 19m with no
+          # tests_output.log produced (AHK never reached TestReporter.Init).
+          # These lines let a future log artifact tell us whether the AHK
+          # version, working directory, or env vars drifted between local
+          # (where the suite passes in seconds) and the runner.
+          Write-Host "AHK path:        $ahk"
+          Write-Host "Working dir:     $(Get-Location)"
+          Write-Host "NO_GUI env:      $env:SPEEDKALANDRA_TEST_NO_GUI"
+          Write-Host "CI env:          $env:CI"
+          $ahkVer = (Get-Item $ahk).VersionInfo.ProductVersion
+          Write-Host "AHK version:     $ahkVer"
+          Write-Host ""
+
+          # Direct call (`&`) waits on the AHK process EXITING, not on its
+          # stdio handles closing. Start-Process -Wait can hang on
+          # Windows runners when a child process exits but leaves an inherited
+          # handle open (a known GitHub Actions / .NET wait-on-process quirk);
+          # the previous run sat at 19m with no further output, consistent
+          # with that mode.
+          #
+          # /ErrorStdOut routes AHK parse errors to stderr instead of a
+          # modal dialog (a dialog would hang forever in non-interactive
+          # sessions). Runtime errors still go to MsgBox by default, but
+          # the OnError handler installed in run_tests.ahk catches those
+          # and writes to the log + stderr before ExitApp.
+          & $ahk /ErrorStdOut tests_v2\run_tests.ahk
+          $exitCode = $LASTEXITCODE
+          Write-Host ""
+          Write-Host "AHK exit code: $exitCode"
+          if ($exitCode -ne 0) {
+              Write-Error "Test suite failed (exit $exitCode). See uploaded log artifact."
+              exit $exitCode
           }
 
       # Validates build-dist.ps1: the release script that filters
@@ -82,4 +108,18 @@ jobs:
         with:
           name: tests_output.log
           path: tests_v2/tests_output.log
+          if-no-files-found: warn
+
+      # Companion artifact: the boot log captures BEFORE-bootstrap
+      # diagnostics + any unhandled error caught by SkTestOnError.
+      # Exists exactly when tests_output.log is missing or empty
+      # (the case where AHK never reached TestReporter.Init), so
+      # it's the file to read when the suite hangs without leaving
+      # a regular log behind.
+      - name: Upload boot log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tests_boot.log
+          path: tests_v2/tests_boot.log
           if-no-files-found: warn

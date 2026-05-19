@@ -38,6 +38,79 @@
 #Warn All, OutputDebug
 #NoTrayIcon
 
+; ============================================================
+; Boot-time diagnostics + unhandled-error handler
+; ============================================================
+;
+; Installed BEFORE any #Include so two failure modes that previously
+; sank a CI run without leaving any trace are now captured:
+;
+;   1. PARSE error in an included file. AHK still surfaces these via
+;      a modal dialog in non-interactive sessions (where it hangs
+;      forever). /ErrorStdOut on the AHK command line routes those
+;      to stderr, which the workflow's `&` call captures in the
+;      step output.
+;
+;   2. RUNTIME error during global-scope code (e.g. a static field
+;      initializer in an included class, or top-level setup before
+;      the bootstrap call). Without OnError, AHK would show a MsgBox
+;      and hang. With OnError, the error goes to tests_boot.log AND
+;      to stderr, then ExitApp(2) terminates loud.
+;
+; The boot log is a SEPARATE file from tests_output.log because
+; TestReporter.Init() deletes tests_output.log on entry — a unified
+; file would lose the boot trail. Both files are uploaded as CI
+; artifacts by the workflow.
+
+global SK_TEST_BOOT_LOG := A_ScriptDir "\tests_boot.log"
+try FileDelete(SK_TEST_BOOT_LOG)
+try FileAppend(
+    "=== BOOT @ " FormatTime(A_Now, "yyyy-MM-dd HH:mm:ss") " ===`n"
+    . "AhkPath:     " A_AhkPath "`n"
+    . "AhkVersion:  " A_AhkVersion "`n"
+    . "ScriptDir:   " A_ScriptDir "`n"
+    . "WorkingDir:  " A_WorkingDir "`n"
+    . "CI:          " EnvGet("CI") "`n"
+    . "NO_GUI:      " EnvGet("SPEEDKALANDRA_TEST_NO_GUI") "`n`n",
+    SK_TEST_BOOT_LOG, "UTF-8")
+
+OnError(SkTestOnError)
+
+SkTestOnError(err, mode) {
+    global SK_TEST_BOOT_LOG
+
+    ; Build the error message step by step. AHK v2 ternaries inside
+    ; concatenation chains parse, but with several nested branches the
+    ; intent gets opaque — plain ifs are easier to read and harder to
+    ; misparse if someone later edits this.
+    if IsObject(err) {
+        errType := Type(err)
+        errMsg  := err.HasOwnProp("Message") ? err.Message : "?"
+        msg     := "UNHANDLED ERROR [" mode "]: " errType ": " errMsg
+        if err.HasOwnProp("File")
+        {
+            line := err.HasOwnProp("Line") ? err.Line : "?"
+            msg .= "`n  at " err.File ":" line
+        }
+        if err.HasOwnProp("Stack") && err.Stack != ""
+            msg .= "`n  stack:`n" err.Stack
+    } else {
+        msg := "UNHANDLED ERROR [" mode "]: " String(err)
+    }
+
+    try FileAppend("`n" msg "`n", SK_TEST_BOOT_LOG, "UTF-8")
+    ; Also write to stderr ("**") so the workflow step output shows
+    ; the failure inline, not just via the uploaded artifact.
+    try FileAppend(msg "`n", "**")
+    ; Exit non-zero. Code 2 distinguishes "unhandled error in the
+    ; suite harness" from code 1 ("tests ran and some failed").
+    ExitApp(2)
+    ; Returning 1 suppresses AHK's default MsgBox — critical for
+    ; non-interactive sessions where the dialog would hang forever.
+    return 1
+}
+
+
 ; ------------------------------------------------------------
 ; Framework
 ; ------------------------------------------------------------
