@@ -683,6 +683,20 @@ class RunExportFormat
         else if !IsNumber(run["totalMs"]) || Integer(run["totalMs"]) <= 0
             errors.Push("runs[" idx "]: 'totalMs' must be a positive integer")
 
+        ; Optional numeric fields: when present, must be a non-negative
+        ; integer. Hand-edited JSON with `deathCount: -3` or
+        ; `maxActReached: -1` would otherwise pass straight through to
+        ; the saved INI and distort downstream UI / plot calculations
+        ; (a death count of -3 in a chart, an actCheckpoints array
+        ; that doesn't line up with maxActReached, etc.). Rejecting at
+        ; import time is consistent with the INI-breaking-char policy
+        ; below: catch malformed data once at the gateway, with a clear
+        ; error, before it touches disk.
+        if run.Has("deathCount") && (!IsNumber(run["deathCount"]) || Integer(run["deathCount"]) < 0)
+            errors.Push("runs[" idx "]: 'deathCount' must be a non-negative integer")
+        if run.Has("maxActReached") && (!IsNumber(run["maxActReached"]) || Integer(run["maxActReached"]) < 0)
+            errors.Push("runs[" idx "]: 'maxActReached' must be a non-negative integer")
+
         ; Optional fields: type-check if present
         if run.Has("totals") && (!IsObject(run["totals"]) || !(run["totals"] is Map))
             errors.Push("runs[" idx "]: 'totals' must be an object")
@@ -718,11 +732,16 @@ class RunExportFormat
         }
 
         ; totals: keys are zone names. Reject if any key contains a
-        ; structural char. One error is enough — user can fix the
-        ; source file and re-import.
+        ; structural char, OR if any value is not a non-negative integer.
+        ; Zone times can legitimately be 0 (e.g. a zone visited and
+        ; immediately exited), so the lower bound is 0 not 1. Negative
+        ; values would distort the plot and PB comparisons silently.
+        ; One error per category is enough — the user can fix the source
+        ; file and re-import; if both checks fail in the same iteration,
+        ; the INI-char message wins (it's the more structural problem).
         if run.Has("totals") && IsObject(run["totals"]) && (run["totals"] is Map)
         {
-            for zoneName, _ in run["totals"]
+            for zoneName, zoneValue in run["totals"]
             {
                 badChar := RunExportFormat._FindIniBreakingChar(String(zoneName))
                 if (badChar != "")
@@ -732,13 +751,22 @@ class RunExportFormat
                         . "); reject \\r \\n [ ] in textual fields")
                     break
                 }
+                if (!IsNumber(zoneValue) || Integer(zoneValue) < 0)
+                {
+                    errors.Push("runs[" idx "].totals['" . zoneName
+                        . "']: must be a non-negative integer")
+                    break
+                }
             }
         }
 
         ; details: category / label / note / timestamp are all written
         ; back to disk as part of the [details] section value lines.
         ; A newline in any of them would split the row across two
-        ; INI lines and the count would mismatch on load.
+        ; INI lines and the count would mismatch on load. The numeric
+        ; `ms` field, similarly, must be non-negative (0 is legitimate
+        ; for a detail row with no measurable duration; negative would
+        ; corrupt the per-segment totals in the plot).
         if run.Has("details") && IsObject(run["details"]) && (run["details"] is Array)
         {
             for detailIdx, detailRow in run["details"]
@@ -758,6 +786,14 @@ class RunExportFormat
                             . "); reject \\r \\n [ ] in textual fields")
                         break
                     }
+                }
+                ; ms check is independent of the INI-char checks: a
+                ; row with both problems will report both errors. The
+                ; user fixes them in one editing pass.
+                if detailRow.Has("ms") && (!IsNumber(detailRow["ms"]) || Integer(detailRow["ms"]) < 0)
+                {
+                    errors.Push("runs[" idx "].details[" detailIdx
+                        . "].ms: must be a non-negative integer")
                 }
             }
         }

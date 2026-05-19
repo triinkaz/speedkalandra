@@ -56,6 +56,16 @@ class RunExportFormatTests extends TestCase
         "validate_returns_invalid_when_run_missing_run_id",
         "validate_returns_invalid_when_run_total_ms_not_positive",
 
+        ; --- ValidateSchema: non-negative numeric fields (Fase 4) ---
+        "validate_rejects_negative_death_count",
+        "validate_rejects_non_numeric_death_count",
+        "validate_rejects_negative_max_act_reached",
+        "validate_rejects_negative_totals_value",
+        "validate_rejects_non_numeric_totals_value",
+        "validate_rejects_negative_detail_ms",
+        "validate_accepts_zero_in_optional_numeric_fields",
+        "validate_accepts_absent_optional_numeric_fields",
+
         ; --- ValidateSchema: INI-breaking characters (Fase 5) ---
         "validate_rejects_run_id_with_newline",
         "validate_rejects_profile_with_bracket",
@@ -316,6 +326,143 @@ class RunExportFormatTests extends TestCase
             "runs", [Map("runId", "20260101_000000", "totalMs", 0)]
         ))
         Assert.False(validation["valid"])
+    }
+
+    ; ============================================================
+    ; ValidateSchema: non-negative numeric fields (Fase 4)
+    ; ============================================================
+    ;
+    ; Imported JSON can carry negative or non-numeric values in fields
+    ; that were never produced by the exporter (the exporter always
+    ; emits valid integers) — hand-edited or maliciously crafted files
+    ; are the realistic source. The values feed straight into the
+    ; saved INI and from there into the plot dialog, PB comparisons,
+    ; and run-history dialog totals, so a negative `deathCount` becomes
+    ; a -3 in the death chart, a negative `totals` value distorts the
+    ; per-zone breakdown, and so on. The schema gateway rejects the
+    ; import with a clear error before any disk write, consistent with
+    ; the INI-breaking-char policy above. Zero is accepted everywhere
+    ; because zero is a legitimate value (zero deaths, a zone visited
+    ; for zero ms because the player immediately left, a detail row
+    ; with no measurable duration).
+
+    validate_rejects_negative_death_count()
+    {
+        validation := RunExportFormat.ValidateSchema(Map(
+            "schemaVersion", 1,
+            "runs", [Map("runId", "20260101_000000", "totalMs", 1000,
+                         "deathCount", -3)]
+        ))
+        Assert.False(validation["valid"])
+        Assert.True(InStr(validation["errors"][1], "deathCount") > 0,
+            "error message names the field")
+        Assert.True(InStr(validation["errors"][1], "non-negative") > 0,
+            "error message identifies the constraint")
+    }
+
+    validate_rejects_non_numeric_death_count()
+    {
+        validation := RunExportFormat.ValidateSchema(Map(
+            "schemaVersion", 1,
+            "runs", [Map("runId", "20260101_000000", "totalMs", 1000,
+                         "deathCount", "three")]
+        ))
+        Assert.False(validation["valid"])
+        Assert.True(InStr(validation["errors"][1], "deathCount") > 0)
+    }
+
+    validate_rejects_negative_max_act_reached()
+    {
+        validation := RunExportFormat.ValidateSchema(Map(
+            "schemaVersion", 1,
+            "runs", [Map("runId", "20260101_000000", "totalMs", 1000,
+                         "maxActReached", -1)]
+        ))
+        Assert.False(validation["valid"])
+        Assert.True(InStr(validation["errors"][1], "maxActReached") > 0)
+    }
+
+    validate_rejects_negative_totals_value()
+    {
+        ; A zone with negative time. The INI-char check on the key
+        ; passes ("Mud Burrow" is clean); the value check is what trips.
+        validation := RunExportFormat.ValidateSchema(Map(
+            "schemaVersion", 1,
+            "runs", [Map("runId", "20260101_000000", "totalMs", 1000,
+                         "totals", Map("Mud Burrow", -5000))]
+        ))
+        Assert.False(validation["valid"])
+        Assert.True(InStr(validation["errors"][1], "totals") > 0)
+        Assert.True(InStr(validation["errors"][1], "non-negative") > 0)
+    }
+
+    validate_rejects_non_numeric_totals_value()
+    {
+        validation := RunExportFormat.ValidateSchema(Map(
+            "schemaVersion", 1,
+            "runs", [Map("runId", "20260101_000000", "totalMs", 1000,
+                         "totals", Map("Mud Burrow", "a lot"))]
+        ))
+        Assert.False(validation["valid"])
+        Assert.True(InStr(validation["errors"][1], "totals") > 0)
+    }
+
+    validate_rejects_negative_detail_ms()
+    {
+        validation := RunExportFormat.ValidateSchema(Map(
+            "schemaVersion", 1,
+            "runs", [Map("runId", "20260101_000000", "totalMs", 1000,
+                         "details", [
+                             Map("category", "mapa", "label", "Mud Burrow",
+                                 "ms", -100, "note", "", "timestamp", "")
+                         ])]
+        ))
+        Assert.False(validation["valid"])
+        Assert.True(InStr(validation["errors"][1], "details") > 0)
+        Assert.True(InStr(validation["errors"][1], "ms") > 0)
+    }
+
+    validate_accepts_zero_in_optional_numeric_fields()
+    {
+        ; Positive control: zero must NOT be rejected. Zero deaths is
+        ; the common case for a clean run; a zone visited for 0 ms
+        ; happens when the player crosses through an instance without
+        ; the timer registering a measurable stay; a detail row with
+        ; ms=0 can show up for a zone that loaded and immediately
+        ; transitioned. The lower bound is 0, not 1.
+        validation := RunExportFormat.ValidateSchema(Map(
+            "schemaVersion", 1,
+            "runs", [Map(
+                "runId",         "20260101_000000",
+                "totalMs",       1000,
+                "deathCount",    0,
+                "maxActReached", 0,
+                "totals",        Map("Mud Burrow", 0),
+                "details",       [
+                    Map("category", "mapa", "label", "Mud Burrow",
+                        "ms", 0, "note", "", "timestamp", "")
+                ]
+            )]
+        ))
+        firstError := validation["errors"].Length > 0 ? validation["errors"][1] : "<no error>"
+        Assert.True(validation["valid"],
+            "zero in optional numeric fields must validate. Error: " . firstError)
+    }
+
+    validate_accepts_absent_optional_numeric_fields()
+    {
+        ; Positive control: deathCount / maxActReached / totals / details
+        ; are all optional. Their absence must not produce errors —
+        ; only `runId` and `totalMs` are required at the run level.
+        validation := RunExportFormat.ValidateSchema(Map(
+            "schemaVersion", 1,
+            "runs", [Map(
+                "runId",   "20260101_000000",
+                "totalMs", 1000
+            )]
+        ))
+        Assert.True(validation["valid"],
+            "missing optional fields must validate (only runId/totalMs required)")
     }
 
     ; ============================================================
