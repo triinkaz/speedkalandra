@@ -59,23 +59,6 @@ class LoadingDetectionService
     static DEFAULT_MIN_MS  := 250
     static DEFAULT_MAX_MS  := 90000
 
-    ; Known PoE2 executables. _DefaultWindowProvider locates the
-    ; game window by ahk_exe (exact match) rather than by title
-    ; substring, which would match Chrome on the wiki or Discord
-    ; channels named after the game. Keep this list in sync with
-    ; FocusAutoPauseService.GAME_EXECUTABLES — a future build that
-    ; ships a new exe must update both at once or one service
-    ; silently breaks.
-    static GAME_EXECUTABLES := [
-        "PathOfExile2Steam.exe",
-        "PathOfExile2_x64.exe",
-        "PathOfExile2.exe",
-        "PathOfExile_x64Steam.exe",
-        "PathOfExileSteam.exe",
-        "PathOfExile_x64.exe",
-        "PathOfExile.exe"
-    ]
-
     __New(bus, clock, scanner, cfg, timerSvc, zoneProvider, stepProvider, windowProvider := "", headless := false)
     {
         if !(bus is EventBus)
@@ -409,12 +392,16 @@ class LoadingDetectionService
     ; from the wrong window. Locking by HWND between WinGetMinMax
     ; and WinGetPos also prevents another window from hijacking the
     ; readout in the race window between those two calls.
+    ;
+    ; Executable list lives in GameProcesses.POE2_EXECUTABLES
+    ; (src_v2/domain/game_processes.ahk), shared with
+    ; FocusAutoPauseService.
     static _DefaultWindowProvider()
     {
         try
         {
             hwnd := 0
-            for _, exeName in LoadingDetectionService.GAME_EXECUTABLES
+            for _, exeName in GameProcesses.POE2_EXECUTABLES
             {
                 hwnd := WinExist("ahk_exe " . exeName)
                 if hwnd

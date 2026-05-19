@@ -27,11 +27,9 @@
 ; for a browser tab named "Path of Exile 2 - Wiki" or a Discord
 ; channel with the game's name, hijacking the auto-pause.
 ;
-; Known executables (focus AND process polling share the same list):
-;   PoE2 Steam:        PathOfExile_x64Steam.exe, PathOfExileSteam.exe
-;   PoE2 standalone:   PathOfExile2_x64.exe, PathOfExile2.exe
-;   PoE2 hypothetical: PathOfExile2Steam.exe  (defensive)
-;   PoE1 / shared:     PathOfExile_x64.exe, PathOfExile.exe
+; The list of PoE2 executables lives in GameProcesses.POE2_EXECUTABLES
+; (src_v2/domain/game_processes.ahk) -- shared with LoadingDetectionService
+; so adding a new build is a single-point edit.
 ;
 ; The pausedByFocus flag tracks whether WE paused the timer (vs.
 ; the user pausing manually mid-alt-tab); only our pauses are
@@ -40,21 +38,6 @@
 
 class FocusAutoPauseService
 {
-    ; Every known PoE2 executable. _IsGameActive and
-    ; _IsGameProcessAlive both iterate this list. Keep it in sync
-    ; with LoadingDetectionService.GAME_EXECUTABLES — a future build
-    ; with a new exe must update both, otherwise one service silently
-    ; breaks.
-    static GAME_EXECUTABLES := [
-        "PathOfExile2Steam.exe",
-        "PathOfExile2_x64.exe",
-        "PathOfExile2.exe",
-        "PathOfExile_x64Steam.exe",
-        "PathOfExileSteam.exe",
-        "PathOfExile_x64.exe",
-        "PathOfExile.exe"
-    ]
-
     _bus      := ""
     _timer    := ""    ; TimerService
     _settings := ""    ; AppSettings
@@ -198,7 +181,7 @@ class FocusAutoPauseService
     ; trap from default TitleMatchMode.
     _IsGameActive()
     {
-        for _, exeName in FocusAutoPauseService.GAME_EXECUTABLES
+        for _, exeName in GameProcesses.POE2_EXECUTABLES
         {
             if WinActive("ahk_exe " . exeName)
                 return true
@@ -211,7 +194,7 @@ class FocusAutoPauseService
     ; we don't need the PID, just the boolean.
     _IsGameProcessAlive()
     {
-        for _, exeName in FocusAutoPauseService.GAME_EXECUTABLES
+        for _, exeName in GameProcesses.POE2_EXECUTABLES
         {
             if ProcessExist(exeName)
                 return true

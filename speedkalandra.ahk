@@ -184,6 +184,7 @@ SpeedKalandraRunImportDebug()
 
 #Include "src_v2\domain\values\duration.ahk"
 #Include "src_v2\domain\values\ids.ahk"
+#Include "src_v2\domain\game_processes.ahk"
 
 #Include "src_v2\infra\io\text_encoding.ahk"
 #Include "src_v2\infra\io\atomic_write.ahk"

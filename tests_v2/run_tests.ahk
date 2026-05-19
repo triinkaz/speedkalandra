@@ -137,6 +137,7 @@ SkTestOnError(err, mode) {
 ; ------------------------------------------------------------
 #Include ..\src_v2\domain\values\duration.ahk
 #Include ..\src_v2\domain\values\ids.ahk
+#Include ..\src_v2\domain\game_processes.ahk
 #Include ..\src_v2\domain\window_state.ahk
 #Include ..\src_v2\domain\overlay_layout.ahk
 #Include ..\src_v2\domain\run_state.ahk
@@ -261,6 +262,7 @@ SpeedKalandraMsgBox(text, title := "", options := "") {
 ; ------------------------------------------------------------
 #Include unit\domain\duration_tests.ahk
 #Include unit\domain\ids_tests.ahk
+#Include unit\domain\game_processes_tests.ahk
 #Include unit\domain\window_state_tests.ahk
 #Include unit\domain\run_state_tests.ahk
 #Include unit\domain\xp_rules_tests.ahk
