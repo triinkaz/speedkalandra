@@ -231,7 +231,7 @@ class SpeedKalandraApp
             this._cfg.currentAreaCode
         )
 
-        this.logMonitor := LogMonitorService(this.clock, this.bus, this.log)
+        this.logMonitor := LogMonitorService(this.clock, this.bus, this.log, this.zonesCatalog)
         this.logMonitor.Configure(this._cfg.logFile)
         ; Character name is hydrated here so the DeathDetected filter
         ; is armed before the first log line is read. Without this,

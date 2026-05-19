@@ -27,6 +27,13 @@ class Events
 
     ; --- Game state (from the log monitor) ---
     static ZoneChanged       := "Evt.ZoneChanged"       ; data: {zoneName, sceneId}
+                                                          ; zoneName: canonical human name from ZonesCatalog
+                                                          ; when the raw text from Client.txt resolves; raw fallback
+                                                          ; (preserved verbatim) when the zone is unknown. sceneId:
+                                                          ; raw text as it appeared in the log (engine internal id
+                                                          ; for [SCENE] lines; "" for "You have entered" lines).
+                                                          ; Resolution lives in LogMonitorService — see Fase 1 notes
+                                                          ; in src_v2/app/services/log_monitor_service.ahk.
     static AreaLevelChanged  := "Evt.AreaLevelChanged"  ; data: {areaLevel, areaCode}
     static CharacterLevelUp  := "Evt.CharacterLevelUp"  ; data: {character, class, level}
     static DeathDetected     := "Evt.DeathDetected"     ; data: {character}

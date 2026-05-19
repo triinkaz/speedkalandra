@@ -1,4 +1,4 @@
-﻿; LogMonitorService — tail loop on PoE2's Client.txt that parses
+; LogMonitorService — tail loop on PoE2's Client.txt that parses
 ; known lines and publishes raw events on the bus. Deliberately
 ; "dumb": it doesn't decide what to do with events. The composition
 ; root wires events to commands of other services.
@@ -7,16 +7,46 @@
 ;   "X (Class) is now level N"             → Evt.CharacterLevelUp
 ;   "Generating level N area X with seed"  → Evt.AreaLevelChanged
 ;   "[SCENE] Set Source [name]"            → Evt.SceneEntered + Evt.ZoneChanged
-;   "You have entered ..."                 → Evt.ZoneChanged
+;   "You have entered ..."                 → Evt.ZoneChanged (see note below)
 ;   "X has been slain."                    → Evt.DeathDetected (player only)
 ;   "[WINDOW] Lost / Gained focus"         → Evt.WindowFocusChanged
+;
+; "You have entered" status: not observed in current PoE2 Client.txt.
+; The string almost certainly survived from an earlier game (or an
+; earlier PoE2 build) where every zone transition emitted it. The
+; parser branch and `_ExtractZoneEntered` regex are retained because
+; the cost is minimal and the engine could reintroduce the line in a
+; future patch — better defended than caught off-guard. In the
+; current build, every ZoneChanged actually fires from the [SCENE]
+; path.
 ;
 ; Every line also goes out as Evt.LogLineRead in raw form so other
 ; subscribers (e.g. AutoStartService matching against autoStartRegex)
 ; can parse on their own.
 ;
+; ZoneChanged semantics (Fase 1):
+;   The PoE2 client emits `[SCENE] Set Source [<raw>]` with <raw>
+;   sometimes being a human-readable name ("Mud Burrow") and other
+;   times the engine's internal id ("G1_3"). Either way must reach
+;   downstream subscribers as the canonical human name when known,
+;   so the zone tracker, plot builder, history INI and PB ini all
+;   key their data by the same string. Resolution lives here — the
+;   single publisher of ZoneChanged — instead of being replicated
+;   in every consumer.
+;
+;   Algorithm (`_ResolveZoneToHumanName`):
+;     1. lookup by name in ZonesCatalog (case-insensitive)
+;     2. if not found, lookup by internal id
+;     3. otherwise return the raw text (unknown zone — preserved
+;        verbatim so legitimate new zones added to the game still
+;        appear, just without catalog metadata)
+;
+;   The catalog is optional. When absent (unit tests without the
+;   CSV), the raw text passes through unchanged — same behaviour as
+;   before this change.
+;
 ; Usage:
-;   monitor := LogMonitorService(clock, bus, log)
+;   monitor := LogMonitorService(clock, bus, log, catalog)
 ;   monitor.Configure(logFilePath)
 ;   monitor.Start(seedFromTail := true)
 ;   SetTimer(() => monitor.Tick(), 250)
@@ -29,6 +59,7 @@ class LogMonitorService
     _clock        := ""
     _bus          := ""
     _log          := ""
+    _catalog      := ""   ; ZonesCatalog or "" — see _ResolveZoneToHumanName
     _logFilePath  := ""
     _lastPos      := 0
     _partialLine  := ""
@@ -39,7 +70,7 @@ class LogMonitorService
     ; Tail size swept in Start(seedFromTail=true)
     static SEED_BYTES := 65536
 
-    __New(clock, bus, logService)
+    __New(clock, bus, logService, catalog := "")
     {
         if !(IsObject(clock) && clock.HasMethod("NowMs"))
             throw TypeError("LogMonitorService: 'clock' must have NowMs() method")
@@ -47,9 +78,19 @@ class LogMonitorService
             throw TypeError("LogMonitorService: 'bus' must be EventBus")
         if !(IsObject(logService) && logService.HasMethod("Info"))
             throw TypeError("LogMonitorService: 'logService' must have Info/Warn/Error methods")
-        this._clock := clock
-        this._bus   := bus
-        this._log   := logService
+        ; Catalog is optional (tests without the CSV pass ""); when
+        ; provided it must be a real ZonesCatalog so a wiring bug
+        ; trips at construction instead of silently bypassing
+        ; resolution. Parameter is `catalog` (not `zonesCatalog`)
+        ; to dodge the case-insensitive shadow of the class name —
+        ; same convention as ZoneTrackingService, see
+        ; ARCHITECTURE.md § 15.
+        if (catalog != "" && !(catalog is ZonesCatalog))
+            throw TypeError("LogMonitorService: 'catalog' must be ZonesCatalog or empty")
+        this._clock   := clock
+        this._bus     := bus
+        this._log     := logService
+        this._catalog := catalog
     }
 
     ; Sets the path to Client.txt. May be called before or after Start
@@ -252,13 +293,22 @@ class LogMonitorService
             ; (only "[SCENE] Set Source" is reliable), so without
             ; this branch ZoneTrackingService and the status widgets
             ; would miss the change.
+            ;
+            ; The raw `scene` may be a human name OR an internal id
+            ; ("G1_2"). _ResolveZoneToHumanName turns either into the
+            ; canonical human name when the catalog knows it. The
+            ; `sceneId` field always carries the raw text — useful
+            ; for diagnostics and any subscriber that wants the
+            ; engine id.
+            humanName := this._ResolveZoneToHumanName(scene)
             this._bus.Publish(Events.ZoneChanged, Map(
-                "zoneName", scene,
+                "zoneName", humanName,
                 "sceneId",  scene
             ))
             ; DEBUG, not INFO: a full campaign hits 100+ zones and
             ; an INFO line per scene drowned the log file.
-            this._log.Debug("Scene/Zone published: " scene, "LogMonitor")
+            this._log.Debug("Scene/Zone published: " scene
+                . (humanName != scene ? " → " humanName : ""), "LogMonitor")
             return
         }
 
@@ -266,8 +316,13 @@ class LogMonitorService
         zone := this._ExtractZoneEntered(lineStr)
         if (zone != "")
         {
+            ; Resolve to canonical form too: "You have entered" lines
+            ; usually already match the catalog exactly, but the
+            ; resolution recovers the canonical case/punctuation if
+            ; the log emits a slightly different variant. Unknown
+            ; zones pass through unchanged.
             this._bus.Publish(Events.ZoneChanged, Map(
-                "zoneName", zone,
+                "zoneName", this._ResolveZoneToHumanName(zone),
                 "sceneId",  ""
             ))
             return
@@ -353,9 +408,11 @@ class LogMonitorService
             ; Republish as ZoneChanged on the seed too — same
             ; rationale as _ProcessLine. Without this,
             ; ZoneTrackingService would boot mid-run without knowing
-            ; the current zone.
+            ; the current zone. Resolution to canonical name mirrors
+            ; the live path so the hydrated widgets show the human
+            ; name on first frame.
             this._bus.Publish(Events.ZoneChanged, Map(
-                "zoneName", lastScene,
+                "zoneName", this._ResolveZoneToHumanName(lastScene),
                 "sceneId",  lastScene
             ))
         }
@@ -422,6 +479,14 @@ class LogMonitorService
     }
 
     ; Pattern: "You have entered <ZONE>."
+    ; Not observed in current PoE2 Client.txt — every real-world
+    ; ZoneChanged comes from the [SCENE] branch. The regex stays
+    ; because the cost is one RegExMatch per unmatched line and the
+    ; engine could start emitting the format again. If/when a future
+    ; cleanup confirms the line is permanently gone, remove the
+    ; branch in _ProcessLine, the `_SeedFromText` analogue isn't
+    ; needed (seed only inspects [SCENE]), and the `extracts_zone_entered_*`
+    ; / `zone_entered_*` tests in log_monitor_service_tests.
     _ExtractZoneEntered(lineStr)
     {
         if RegExMatch(lineStr, "i)You have entered\s+(.+?)[\.]?$", &m)
@@ -449,5 +514,50 @@ class LogMonitorService
         if RegExMatch(lineStr, "i)\[WINDOW\]\s+Gained focus")
             return "gained"
         return ""
+    }
+
+    ; ---- Zone name resolution (Fase 1) ----
+
+    ; Turns a raw zone string from the log (either a human name like
+    ; "Mud Burrow" or an internal id like "G1_3") into the canonical
+    ; human name when the catalog knows it. Without resolution the
+    ; two would travel downstream as distinct strings and end up as
+    ; two separate keys in `_totals`, the run history INI and the PB
+    ; ini — the same physical zone counted as two.
+    ;
+    ; Order of attempts:
+    ;   1. FindByName (case-insensitive in ZonesCatalog) catches the
+    ;      common case — PoE2 most often emits the human name,
+    ;      sometimes with slight case/whitespace drift. Returns the
+    ;      catalog's stored display name, which restores canonical
+    ;      casing/punctuation.
+    ;   2. FindById catches lines that emit the engine id ("G1_3",
+    ;      "G1_town", etc.). Returns the human name from the matched
+    ;      entry.
+    ;   3. Pass through the raw text. Unknown zones (a fresh game
+    ;      patch adds an area, a randomized instance with an opaque
+    ;      name) still surface to the user, just without the act/
+    ;      isTown metadata downstream services derive from the
+    ;      catalog.
+    ;
+    ; No catalog → every input passes through unchanged, preserving
+    ; the pre-Fase-1 behaviour for tests/headless setups that don't
+    ; wire one in.
+    _ResolveZoneToHumanName(rawZone)
+    {
+        if (rawZone = "")
+            return rawZone
+        if (this._catalog = "")
+            return rawZone
+
+        entry := this._catalog.FindByName(rawZone)
+        if IsObject(entry)
+            return entry.name
+
+        entry := this._catalog.FindById(rawZone)
+        if IsObject(entry)
+            return entry.name
+
+        return rawZone
     }
 }

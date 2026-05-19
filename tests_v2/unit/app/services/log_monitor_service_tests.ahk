@@ -54,6 +54,8 @@ class LogMonitorServiceTests extends TestCase
         "constructor_throws_when_clock_missing_now_ms",
         "constructor_throws_when_bus_not_event_bus",
         "constructor_throws_when_log_missing_info_method",
+        "constructor_accepts_optional_catalog",
+        "constructor_throws_when_catalog_not_zones_catalog",
 
         ; --- Configure / SetCharacterName ---
         "set_character_name_stores_name",
@@ -87,6 +89,14 @@ class LogMonitorServiceTests extends TestCase
         "scene_with_act_marker_is_filtered_case_insensitive",
         "scene_with_empty_name_is_filtered",
         "scene_zone_changed_includes_scene_id",
+
+        ; --- Zone resolution via catalog (Fase 1) ---
+        "scene_resolves_internal_id_to_human_name_when_catalog_present",
+        "scene_resolves_human_name_to_canonical_when_catalog_present",
+        "scene_falls_back_to_raw_when_unknown_zone_and_catalog_present",
+        "zone_entered_resolves_via_catalog",
+        "no_catalog_preserves_raw_for_scene",
+        "no_catalog_preserves_raw_for_zone_entered",
 
         ; --- ZoneChanged via 'You have entered' ---
         "extracts_zone_entered_simple_case",
@@ -159,6 +169,32 @@ class LogMonitorServiceTests extends TestCase
         b := this.bus
         emptyObj := { foo: () => 0 }
         Assert.Throws(TypeError, () => LogMonitorService(clk, b, emptyObj))
+    }
+
+    constructor_accepts_optional_catalog()
+    {
+        ; The catalog is optional — omitting it preserves the
+        ; pre-Fase-1 behaviour (raw zone strings pass through).
+        ; Passing one wires it in for _ResolveZoneToHumanName.
+        clk := this.stubClock
+        b := this.bus
+        memLog := this.memLog
+        catalog := this._MakeTestCatalog()
+        ; Just construct — if it didn't throw, the type-check
+        ; accepted the catalog.
+        svc := LogMonitorService(clk, b, memLog, catalog)
+        Assert.True(IsObject(svc), "constructor with catalog returns object")
+    }
+
+    constructor_throws_when_catalog_not_zones_catalog()
+    {
+        ; A wiring bug that passes a Map (or any plausible-looking
+        ; object) must trip fail-fast, not silently bypass
+        ; resolution and leave _catalog holding garbage.
+        clk := this.stubClock
+        b := this.bus
+        memLog := this.memLog
+        Assert.Throws(TypeError, () => LogMonitorService(clk, b, memLog, Map("not", "a catalog")))
     }
 
     ; ============================================================
@@ -350,12 +386,129 @@ class LogMonitorServiceTests extends TestCase
 
     scene_zone_changed_includes_scene_id()
     {
-        ; Unlike ZoneChanged via "You have entered" (sceneId=""),
-        ; ZoneChanged via [SCENE] includes the sceneId.
+        ; Without a catalog (default setup), ZoneChanged via [SCENE]
+        ; preserves the raw text in both fields — pre-Fase-1
+        ; behaviour that callers without a catalog still get.
+        ; Resolution to canonical human name when a catalog IS wired
+        ; is covered by the "Zone resolution via catalog" group.
         capturedEvents := this._CaptureEvents(Events.ZoneChanged)
         this.svc.ProcessText("[SCENE] Set Source [G1_2]`n")
         Assert.Equal("G1_2", capturedEvents[1]["sceneId"])
         Assert.Equal("G1_2", capturedEvents[1]["zoneName"])
+    }
+
+    ; ============================================================
+    ; Zone resolution via catalog (Fase 1)
+    ; ============================================================
+    ;
+    ; The PoE2 client emits `[SCENE] Set Source [<raw>]` with <raw>
+    ; being either a human name ("Mud Burrow") or the engine's
+    ; internal id ("G1_3"). Either way the rest of the app needs
+    ; to receive the canonical human name so the zone tracker,
+    ; plot builder, history and PB stores all key by the same
+    ; string. _ResolveZoneToHumanName handles that here, at the
+    ; publisher, instead of replicating the logic in every
+    ; subscriber.
+
+    _MakeTestCatalog()
+    {
+        ; Tiny CSV with three entries matching the real catalog
+        ; format: G1_2 → Clearfell, G1_7 → Cemetery of the Eternals,
+        ; G1_town → Clearfell Encampment. The exact data doesn't
+        ; matter for the test — only that FindByName and FindById
+        ; resolve as expected.
+        csv := "name;internal_id;act;is_town`n"
+            . "Clearfell;G1_2;1;0`n"
+            . "Cemetery of the Eternals;G1_7;1;0`n"
+            . "Clearfell Encampment;G1_town;1;1`n"
+        csvPath := Fixtures.TempFile(csv, "csv")
+        return ZonesCatalog(csvPath)
+    }
+
+    _MakeServiceWithCatalog()
+    {
+        catalog := this._MakeTestCatalog()
+        return LogMonitorService(this.stubClock, this.bus, this.memLog, catalog)
+    }
+
+    scene_resolves_internal_id_to_human_name_when_catalog_present()
+    {
+        ; The smoking gun: PoE2 emits an internal id and the publisher
+        ; turns it into the human name before ZoneChanged goes out.
+        ; sceneId still carries the raw id so downstream subscribers
+        ; that want it (event tracing, diagnostics) can see it.
+        svcWithCatalog := this._MakeServiceWithCatalog()
+        capturedEvents := this._CaptureEvents(Events.ZoneChanged)
+        svcWithCatalog.ProcessText("[SCENE] Set Source [G1_2]`n")
+        Assert.Equal(1, capturedEvents.Length)
+        Assert.Equal("Clearfell", capturedEvents[1]["zoneName"],
+            "internal id resolved to human name")
+        Assert.Equal("G1_2", capturedEvents[1]["sceneId"],
+            "raw id preserved in sceneId")
+    }
+
+    scene_resolves_human_name_to_canonical_when_catalog_present()
+    {
+        ; If PoE2 emits the human name in [SCENE], the resolver still
+        ; round-trips it through the catalog to recover canonical
+        ; case/spacing. "Clearfell" stays "Clearfell" here; the more
+        ; interesting case is when the log emits a slightly different
+        ; variant — future-proof guarantee that the catalog wins.
+        svcWithCatalog := this._MakeServiceWithCatalog()
+        capturedEvents := this._CaptureEvents(Events.ZoneChanged)
+        svcWithCatalog.ProcessText("[SCENE] Set Source [Clearfell]`n")
+        Assert.Equal("Clearfell", capturedEvents[1]["zoneName"])
+    }
+
+    scene_falls_back_to_raw_when_unknown_zone_and_catalog_present()
+    {
+        ; Unknown zone (a new game patch adds an area not in the CSV,
+        ; or a randomized instance with an opaque name). The resolver
+        ; passes the raw text through so the user still sees the new
+        ; zone in the overlay/history — just without act/isTown
+        ; metadata from the catalog. Better than dropping the event.
+        svcWithCatalog := this._MakeServiceWithCatalog()
+        capturedEvents := this._CaptureEvents(Events.ZoneChanged)
+        svcWithCatalog.ProcessText("[SCENE] Set Source [G99_NewZone]`n")
+        Assert.Equal(1, capturedEvents.Length)
+        Assert.Equal("G99_NewZone", capturedEvents[1]["zoneName"],
+            "unknown zone preserved as raw")
+        Assert.Equal("G99_NewZone", capturedEvents[1]["sceneId"])
+    }
+
+    zone_entered_resolves_via_catalog()
+    {
+        ; "You have entered" path also routes through the resolver
+        ; so a log emitting a slight variant of the name (case,
+        ; trailing whitespace handled by FindByName via StrLower+Trim)
+        ; gets normalised to the catalog's stored form.
+        svcWithCatalog := this._MakeServiceWithCatalog()
+        capturedEvents := this._CaptureEvents(Events.ZoneChanged)
+        svcWithCatalog.ProcessText(": You have entered clearfell.`n")
+        Assert.Equal("Clearfell", capturedEvents[1]["zoneName"],
+            "case-insensitive lookup recovers canonical name")
+        Assert.Equal("", capturedEvents[1]["sceneId"],
+            "sceneId stays empty for 'You have entered'")
+    }
+
+    no_catalog_preserves_raw_for_scene()
+    {
+        ; Backward-compat: services without a catalog (legacy tests,
+        ; headless scenarios) keep the pre-Fase-1 behaviour. This is
+        ; effectively the same scenario as `scene_zone_changed_includes_scene_id`,
+        ; tagged separately so the intent of the guarantee shows up
+        ; in the failure log if regression hits it.
+        capturedEvents := this._CaptureEvents(Events.ZoneChanged)
+        this.svc.ProcessText("[SCENE] Set Source [G1_2]`n")
+        Assert.Equal("G1_2", capturedEvents[1]["zoneName"])
+    }
+
+    no_catalog_preserves_raw_for_zone_entered()
+    {
+        capturedEvents := this._CaptureEvents(Events.ZoneChanged)
+        this.svc.ProcessText(": You have entered clearfell.`n")
+        Assert.Equal("clearfell", capturedEvents[1]["zoneName"],
+            "raw lowercase preserved when no catalog")
     }
 
     ; ============================================================

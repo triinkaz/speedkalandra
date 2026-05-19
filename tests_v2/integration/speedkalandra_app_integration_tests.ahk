@@ -125,6 +125,9 @@ class SpeedKalandraAppIntegrationTests extends TestCase
         ; --- End-to-end run flow ---
         "complete_run_flow_from_start_to_finalize_to_undo",
 
+        ; --- Zone semantics (Fase 1, GSG §14 anti-regression) ---
+        "log_monitor_with_catalog_resolves_internal_id_in_zone_tracker",
+
         ; --- Wave 9: regression tests for cataloged bugs without direct coverage ---
         ; Bug #9 (AUDIT): Riverbank resets level on every entry. Fix:
         ; exact match "The Riverbank" + _riverbankSeenInRun flag that
@@ -679,6 +682,44 @@ class SpeedKalandraAppIntegrationTests extends TestCase
     ; if a new field gets wired into the chain incorrectly, this
     ; test breaks before any of the narrower tests do, and the
     ; failure points at which subsystem disagrees.
+
+    log_monitor_with_catalog_resolves_internal_id_in_zone_tracker()
+    {
+        ; Guardrail (Fase 1; GSG §14 anti-regression item "ID interno
+        ; de zona vazando como nome humano"):
+        ;
+        ; Prove end-to-end that when LogMonitor parses a [SCENE]
+        ; line carrying an engine internal id, the zone tracker
+        ; stores time under the canonical human name from the
+        ; catalog, NOT the raw id. Without resolution, the same
+        ; physical zone could be split across two keys (e.g. one
+        ; "You have entered Mud Burrow" emits "Mud Burrow" and a
+        ; later "[SCENE] Set Source [G1_3]" emits "G1_3"), and any
+        ; tally that walked _totals would double-count or skip the
+        ; zone depending on which key the consumer looked up.
+        ;
+        ; Path under test:
+        ;   logMonitor.ProcessText → publishes ZoneChanged with
+        ;   zoneName resolved via the catalog → zoneTracker._OnZoneChanged
+        ;   stores _totals[humanName].
+        this.app.bus.Publish(Commands.NewRunRequested, Map())
+
+        ; Simulate PoE2 emitting the engine id for Mud Burrow.
+        this.app.logMonitor.ProcessText("[SCENE] Set Source [G1_3]`n")
+        this.stubClock.AdvanceMs(5000)
+
+        ; Move to a second zone so _FlushActive runs and writes the
+        ; first zone's total into _totals.
+        this.app.logMonitor.ProcessText("[SCENE] Set Source [G1_town]`n")
+
+        totals := this.app.zoneTracker.GetTotals()
+        Assert.True(totals.Has("Mud Burrow"),
+            "totals key is canonical human name from catalog")
+        Assert.False(totals.Has("G1_3"),
+            "raw internal id G1_3 must not appear as a totals key")
+        Assert.True(totals["Mud Burrow"] >= 5000,
+            "accumulated time landed under the human-name key")
+    }
 
     complete_run_flow_from_start_to_finalize_to_undo()
     {
