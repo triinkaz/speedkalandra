@@ -47,7 +47,7 @@ The following are bugs (sometimes serious bugs) but are not security issues. Ope
 - **Hotkey conflicts.** Global hotkeys colliding with other apps.
 - **Antivirus false positives** for the .exe build, unless you can demonstrate a reproducible unsafe behaviour in the binary.
 - **Anything in a fork.** See "Supported versions" above.
-- **Anti-cheat / TOS questions.** SpeedKalandra is read-only relative to the game and does not inject or send inputs (see [README.md § Disclaimer](README.md#disclaimer)). Whether GGG's anti-cheat treats overlays in general as acceptable is between you and GGG; I make no claim either way.
+- **Anti-cheat / TOS questions.** SpeedKalandra is read-only relative to the game: it does not inject into the game process, send gameplay commands, or modify game files (see [README.md § Disclaimer](README.md#disclaimer)). It does emit defensive `{Ctrl up}{Alt up}{Shift up}{LWin up}{RWin up}` key-up events at process exit (and `{Ctrl up}{Alt up}{Shift up}` immediately before opening dialogs from a hotkey) to avoid the AHK "stuck modifier" failure mode where a modifier the user was still holding for a hotkey gets interpreted by the game as permanently pressed. Those key-ups are not gameplay commands. Whether GGG's anti-cheat treats overlays in general as acceptable is between you and GGG; I make no claim either way.
 
 ## Reporting a vulnerability
 

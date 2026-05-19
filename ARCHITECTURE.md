@@ -197,7 +197,7 @@ All services are constructed by the composition root and receive their dependenc
 | **RunStatsPlotBuilder** | Pure aggregator. Takes a snapshot and produces a `Map` with totals per category (Map / Town / Loading / Deaths) and a sorted `details` array (one entry per zone visit + per loading event + a synthetic Deaths entry). Run history is saved in exactly this shape. |
 | **PersonalBestService** | Loads PBs at construction. Pull-based: the composition root calls `UpdateFromRun(runMs, runId, zoneTotals, actCheckpoints)` after a successful save of a completed run. PBs are kept in three buckets: legacy global run PB, per-act run PB (Map<actNum, ms>), and per-zone PB. `RebuildFromHistory` exists for rebuilding PBs after a run deletion. |
 | **RunExportService** | Loads runs from `RunHistoryRepository`, optionally bundles PBs and anonymizes character data, and writes JSON via `RunExportFormat.Serialize` + atomic write. Publishes `Evt.RunsExported`. |
-| **RunImportService** | Two phases: `Preview(path)` parses + validates the JSON file and returns a summary (new / identical / rename-on-conflict) without writing. `Execute(preview, pbStrategy)` then persists. Conflict resolution is by content signature (`runId + totalMs + deathCount + maxActReached + details.Length`). PB strategy is one of `keep` / `rebuild` / `replace`. Publishes `Evt.RunsImported`. |
+| **RunImportService** | Two phases: `Preview(path)` parses + validates the JSON file and returns a summary (new / identical / rename-on-conflict) without writing. `Execute(preview, pbStrategy)` then persists. Conflict resolution is by content signature (`runId + totalMs + deathCount + maxActReached + details.Length`). PB strategy is one of `keep` / `rebuild` / `replace`. Publishes `Evt.RunsImported`. Refuses imports above `RunImportService.MAX_FILE_BYTES` (10 MB) before `FileRead`. `RunExportFormat.ValidateSchema` enforces per-payload caps from the same source of truth (`MAX_RUNS_PER_FILE=5000`, `MAX_STRING_LEN=500`, `MAX_DETAILS_PER_RUN=1000`, `MAX_TOTALS_PER_RUN=200`, `MAX_ZONE_PBS=200`, `MAX_ACT_CHECKPOINTS=20`) and runs `RunId.IsValid` on `runId` and `runPbRunId`. |
 
 ---
 
@@ -243,6 +243,10 @@ The constructor:
 In `_headless = true` mode (used by every integration test), `BootPrompts` short-circuits on the first line of each method, so the test suite never touches GUI. The same flag is checked by widgets and other dialog classes for the same reason.
 
 `Stop()` reverses the order: stops timers, stops services, hides widgets, calls `RunStatePersister.PersistSettings` + `Flush` to commit final state, flushes the log.
+
+**`Stop()` is terminal.** The lifecycle is `__New` → `Start` → `Stop`, exactly once. `Start()` after `Stop()` throws (`start_after_stop_throws` in the integration suite covers this); `Stop()` itself is idempotent so duplicated teardown from `OnExit` + an explicit tray-Exit click is safe (`stop_is_idempotent`). The app does not support live restart in the same process; reload is implemented as a fresh AHK process via the tray menu's Reload item, which exits this process and re-launches the script. The OnExit handler in `speedkalandra.ahk` is what makes that reliable — it sends defensive modifier key-ups before invoking `Stop()` so a Reload that fires while the user is holding a hotkey doesn't leave a modifier logically stuck in the game.
+
+**Dispose vs Stop, by design.** `Stop()` releases every service that owns an external resource: AHK SetTimers (`tickEmitter`, `loadingDetection`, `overlayInter`, the app's own `_logMonitorTimer` and `_runPersistTimer`), AHK `Hotkey()` registrations at the OS level (`hotkeyService`), file-tail state (`logMonitor`), the bus interceptor (`eventTracer`), and the Gui handles for the three widgets (`Hide()` calls `gui.Destroy()`). Services that only subscribe to the bus and own no other resource (`LoadingTotalsService`, `ActCheckpointTracker`, `RunStatsRecorder`, `ZoneTrackingService`, `OverlayModeService`, `OverlayModeApplier`, `AutoStartService`, `AutoFinalizeService`, `RunService`) expose `Dispose()` for symmetry but are **not** invoked from `Stop()` — their only effect is `bus.Unsubscribe`, and the bus itself is dropped when the process exits or a new instance is constructed. Calling them would be cerimony with no observable effect.
 
 ---
 
@@ -299,7 +303,7 @@ Save rules:
 - `RunCompleted` always saves (if `totalMs ≥ 3 min`).
 - `RunCancelled` saves only if `totalMs ≥ 3 min` (avoids cluttering history with test aborts).
 - Save under 3 min is silently dropped, with an INFO log entry.
-- After a successful completed-run save, a tray menu item "Undo last save" appears for 60 s and re-deleting the file. (Personal bests are not reverted.)
+- After a successful completed-run save, a tray menu item "Undo last save" appears for 60 s. Clicking it deletes the run file from disk and rebuilds personal bests from the remaining history via `PersonalBestService.RebuildFromHistory`, so PBs never point to a deleted run. The tray item also auto-expires after 60 s if not clicked.
 
 ---
 

@@ -153,10 +153,15 @@ class SpeedKalandraApp
 
         this.log   := LogService(logPath, "INFO", headless ? 1 : 32)
         this.bus   := EventBus(this.log)
-        ; The event-trace interceptor is registered BEFORE any service
-        ; subscribes — guarantees the trace captures every Publish
-        ; from the moment wiring starts. It's only started later in
-        ; Start() (and only if cfg.eventTracingEnabled is set).
+        ; The event-trace interceptor object is constructed here so
+        ; a later flip-on in Start() can register it without re-wiring
+        ; anything. AddInterceptor on the bus is NOT called yet — it
+        ; runs in tracer.Start() inside SpeedKalandraApp.Start, and
+        ; only if cfg.eventTracingEnabled. Events published during
+        ; construction (notably the RunStarted{hydrated:true} that
+        ; runService.Hydrate emits near the end of __New) are NOT
+        ; captured by the tracer — the flag is opt-in and the
+        ; interceptor is not on the bus until Start.
         this.eventTracer := EventTraceLogger(this.bus, this.log)
         ; Clock is injectable so integration tests can plug in FakeClock.
         this.clock := cfgMap.Has("clock") ? cfgMap["clock"] : RealClock()

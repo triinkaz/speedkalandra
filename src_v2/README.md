@@ -26,7 +26,7 @@ src_v2/
 ├── infra/                             ; I/O — files, INI, JSON, CSV
 │   ├── io/                            ; ini_file, csv_file, json_file, atomic_write, text_encoding, run_export_format
 │   ├── settings_repository.ahk        ; AppSettings <-> speedkalandra.ini
-│   ├── run_state_repository.ahk       ; RunState <-> data/run_state.ini + zone_totals.txt
+│   ├── run_state_repository.ahk       ; RunState <-> speedkalandra.ini [RunState] + speedkalandra_zones.txt
 │   ├── run_history_repository.ahk     ; Finalized runs <-> data/runs/{runId}.ini
 │   ├── personal_best_repository.ahk   ; PBs <-> data/personal_bests.ini
 │   └── zones_catalog.ahk              ; Parser for data/zones.csv (77 PoE2 zones)
@@ -75,7 +75,7 @@ Requires AutoHotkey v2. The entry point is `speedkalandra.ahk` at the repo root,
 
 ## Tests
 
-The full automated test suite lives in [`../tests_v2/`](../tests_v2/) — over 1500 unit + integration tests covering `core/`, `domain/`, `infra/`, `app/services/`, `ui/`, and end-to-end wiring of `SpeedKalandraApp`. Run with:
+The full automated test suite lives in [`../tests_v2/`](../tests_v2/) — over 1800 unit + integration tests covering `core/`, `domain/`, `infra/`, `app/services/`, `ui/`, and end-to-end wiring of `SpeedKalandraApp`. Run with:
 
 ```
 "C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe" tests_v2\run_tests.ahk
