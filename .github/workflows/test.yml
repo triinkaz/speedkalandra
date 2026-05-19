@@ -19,13 +19,28 @@ jobs:
       - name: Install AutoHotkey v2
         shell: pwsh
         run: |
-          choco install autohotkey -y --no-progress
+          # Pin to 2.0.19 (matches the maintainer's local AHK install where
+          # the suite is green) instead of `--latest` from choco's
+          # `autohotkey` package, which currently resolves to 2.0.24. The
+          # 2.0.24 release exhibits a CI-only failure in one integration
+          # test (complete_run_flow_from_start_to_finalize_to_undo) where
+          # the AHK process exits silently mid-test — not reproducible
+          # locally on 2.0.19, and no error reaches OnError, stderr, or
+          # the log. Bumping the pin to 2.0.20+ is a follow-up: the
+          # behaviour needs isolating in a smaller reproducer before we
+          # can fix it for real. Until then, pinning keeps the CI signal
+          # honest — the same AHK the maintainer runs against locally.
+          choco install autohotkey --version=2.0.19 -y --no-progress
           $ahk = "C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe"
           if (-not (Test-Path $ahk)) {
               Write-Error "AutoHotkey v2 was installed but $ahk is missing."
               exit 1
           }
-          Write-Host "AutoHotkey v2 installed at $ahk"
+          $installed = (Get-Item $ahk).VersionInfo.ProductVersion
+          Write-Host "AutoHotkey v2 installed at $ahk (version $installed)"
+          if ($installed -ne "2.0.19.0" -and $installed -ne "2.0.19") {
+              Write-Warning "Expected AHK 2.0.19 but choco installed $installed. The CI signal may diverge from local."
+          }
 
       - name: Run test suite
         # Hard cap so a hung AHK test (real production bug or a regression

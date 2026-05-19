@@ -80,13 +80,19 @@ jobs:
       - name: Install AutoHotkey v2
         shell: pwsh
         run: |
-          choco install autohotkey -y --no-progress
+          # Pin to 2.0.19 (matches test.yml; see the comment there for
+          # the 2.0.24 CI-hang context). Release builds MUST use the
+          # same AHK the tests workflow validates against — a release
+          # built with a different AHK version would invalidate the
+          # green-tests-on-tag contract.
+          choco install autohotkey --version=2.0.19 -y --no-progress
           $ahk = "C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe"
           if (-not (Test-Path $ahk)) {
               Write-Error "AutoHotkey v2 was installed but $ahk is missing."
               exit 1
           }
-          Write-Host "AutoHotkey v2 installed at $ahk"
+          $installed = (Get-Item $ahk).VersionInfo.ProductVersion
+          Write-Host "AutoHotkey v2 installed at $ahk (version $installed)"
 
       # Same validation step the tests workflow runs on every push.
       # Repeated here so a release built straight from a tag (without

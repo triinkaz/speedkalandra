@@ -114,6 +114,23 @@ A release cannot be produced if any of the following are true:
   unless `-SkipTests` is passed; the release workflow installs AHK
   v2 via Chocolatey before invoking the script.
 
+## AHK version pin
+
+Both CI workflows install AutoHotkey **2.0.19 specifically** via
+`choco install autohotkey --version=2.0.19`. The pin exists because
+2.0.24 (chocolatey's current `--latest`) reproducibly hangs one
+integration test under non-interactive CI sessions — the same test
+passes locally on 2.0.19, so the failure is narrow and probably a
+regression in AHK itself, but it requires a smaller reproducer
+before it can be reported upstream and fixed for real. Local
+development is free to use a newer AHK; the pin only governs CI and
+the release build.
+
+When bumping the pin (`grep --version=2.0.19 .github/workflows/`),
+run the full test suite on the candidate version in a CI-like
+environment first (`$env:CI="true"; $env:SPEEDKALANDRA_TEST_NO_GUI="1"`)
+to confirm the hang is gone.
+
 ## Verifying a downloaded release
 
 Linux / macOS:
