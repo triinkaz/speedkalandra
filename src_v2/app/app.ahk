@@ -14,6 +14,16 @@
 ;   LiveReconfigurationHandlers  death-penalty timer update,
 ;                                hotkey rebind, PB reset.
 ;
+; Lifecycle is `__New → Start → Stop` and is **terminal**: once Stop
+; runs, this instance cannot be Start()ed again — the second Start
+; throws. The right way to relaunch is to construct a new
+; SpeedKalandraApp. Re-starting an old instance would re-arm
+; SetTimers and call Show() on widgets the OS already destroyed,
+; producing silent state corruption. Stop itself is idempotent
+; (calling it N times is safe), and Stop on a never-Start()ed
+; instance also marks the instance terminal — there is no scenario
+; where stopping makes Start viable.
+;
 ; Two responsibilities still live here because they need direct
 ; access to fields owned by the composition root: `_OnLogFilePathChanged`
 ; (mutates `_logMonitorTimer`) and the small `_On*` handlers for
@@ -106,6 +116,10 @@ class SpeedKalandraApp
     _reconfig := ""
 
     _started   := false
+    _stopped   := false   ; Terminal flag. Once Stop() runs (even on an
+                          ; instance that was never Start()ed), this flips
+                          ; to true and stays true; Start() then throws.
+                          ; See the header comment and Start/Stop bodies.
     _persistFn := ""
     _logMonitorTimer  := ""
     _runPersistTimer  := ""
@@ -439,6 +453,22 @@ class SpeedKalandraApp
 
     Start()
     {
+        ; Terminal-state guard. Stop() flips `_stopped` to true and
+        ; this instance is intentionally not reusable past that
+        ; point. Re-starting would re-arm `SetTimer` callbacks, call
+        ; `Show()` on widgets the OS already tore down, and replay
+        ; boot prompts against `_cfg` that may have drifted — silent
+        ; corruption at best. A throw makes the bug visible at the
+        ; callsite trying to resurrect the instance; the right answer
+        ; is to construct a fresh `SpeedKalandraApp`.
+        ;
+        ; Note: the throw path runs BEFORE any side effect, so the
+        ; integration tests can call `Stop()` then assert
+        ; `Throws(Error, () => app.Start())` without actually
+        ; entering Start's body.
+        if this._stopped
+            throw Error("SpeedKalandraApp.Start: instance was already stopped — create a new SpeedKalandraApp instead")
+
         if this._started
             return
         this._started := true
@@ -542,9 +572,19 @@ class SpeedKalandraApp
 
     Stop()
     {
+        ; Idempotent + terminal. `_stopped` is always set, even when
+        ; `Start` was never called — there's no scenario where
+        ; stopping should make `Start` viable again. The cleanup
+        ; work below runs only when an actual Start happened
+        ; (gated by `_started`); a Stop on a never-started instance
+        ; only flips the terminal flag and returns.
         if !this._started
+        {
+            this._stopped := true
             return
+        }
         this._started := false
+        this._stopped := true
 
         this.bus.Publish(Events.AppStopping, Map())
 

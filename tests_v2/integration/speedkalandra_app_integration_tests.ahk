@@ -110,9 +110,11 @@ class SpeedKalandraAppIntegrationTests extends TestCase
         "hydrated_run_propagates_run_id_to_stats_recorder",
         "hydrated_run_finalize_saves_to_history",
 
-        ; --- Stop ---
+        ; --- Stop (terminal lifecycle) ---
         "stop_does_not_throw_when_never_started",
         "stop_is_idempotent",
+        "start_after_stop_throws",
+        "start_after_stop_throws_even_when_never_started",
 
         ; --- v0.1.4: Undo last save rebuilds PBs (consistency with Delete) ---
         "undo_last_save_rebuilds_pbs_from_history",
@@ -530,21 +532,61 @@ class SpeedKalandraAppIntegrationTests extends TestCase
     }
 
     ; ============================================================
-    ; Stop
+    ; Stop (terminal lifecycle)
     ; ============================================================
+    ;
+    ; SpeedKalandraApp.Stop marks the instance terminal: `_stopped`
+    ; flips to true and Start() throws afterwards. Stop itself is
+    ; idempotent (multiple calls are safe), and stopping a
+    ; never-Start()ed instance also marks it terminal.
+    ;
+    ; The integration setup never calls Start() (Start arms real
+    ; SetTimer callbacks and creates real GUIs), so the Start()-throws
+    ; tests below exercise the terminal-guard path directly: the
+    ; throw fires BEFORE any side effect inside Start.
 
     stop_does_not_throw_when_never_started()
     {
-        ; Setup didn't call Start; Stop must be a silent no-op
+        ; Setup didn't call Start; Stop must be a safe no-op for the
+        ; cleanup work (no widgets to Hide, no timers to clear),
+        ; while still marking the instance terminal.
         this.app.Stop()
         Assert.True(true)
     }
 
     stop_is_idempotent()
     {
+        ; Calling Stop repeatedly is safe; the cleanup gate
+        ; (`if !_started`) short-circuits subsequent calls so they
+        ; don't try to Hide widgets twice or kill timers that no
+        ; longer exist.
         this.app.Stop()
         this.app.Stop()
         Assert.True(true)
+    }
+
+    start_after_stop_throws()
+    {
+        ; The whole point of the terminal lifecycle: once Stop has
+        ; run, Start refuses to ressurrect the instance. The throw
+        ; runs before any side effect in Start, so we can assert
+        ; against it directly even though Setup never built Start's
+        ; world (widgets, SetTimers, etc.).
+        this.app.Stop()
+        Assert.Throws(Error, () => this.app.Start())
+    }
+
+    start_after_stop_throws_even_when_never_started()
+    {
+        ; Stop on a never-Start()ed instance still marks it terminal.
+        ; There's no scenario where stopping makes Start viable — a
+        ; user that calls Stop is explicitly declaring "I'm done
+        ; with this instance". (The integration Setup doesn't call
+        ; Start, so reaching this test means Stop was the only
+        ; lifecycle call against the instance.)
+        Assert.False(this.app._started, "Setup did not call Start")
+        this.app.Stop()
+        Assert.Throws(Error, () => this.app.Start())
     }
 
     ; ============================================================
