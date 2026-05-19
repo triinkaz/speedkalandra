@@ -339,5 +339,14 @@ SpeedKalandraMsgBox(text, title := "", options := "") {
 ; ------------------------------------------------------------
 ; Bootstrap
 ; ------------------------------------------------------------
+; CI diagnostic: marker between TestRegistry.Register() loop (each
+; line writes "REG: ClassName" to tests_boot.log) and the bootstrap
+; that follows. If the boot log ends with this line but no
+; tests_output.log was produced, the failure is INSIDE
+; TestReporter.Init(). If the boot log stops at some REG: line
+; without this marker, the file registered AFTER that one is the
+; culprit.
+try FileAppend("-- bootstrap starting --`n", A_ScriptDir "\tests_boot.log", "UTF-8")
+
 TestReporter.Init()
 TestRunner.Run()

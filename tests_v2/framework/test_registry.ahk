@@ -26,6 +26,15 @@ class TestRegistry
         if (!(cls.Tests is Array))
             throw TypeError("TestCase '" cls.Prototype.__Class "': static Tests must be Array")
         TestRegistry.Classes.Push(cls)
+
+        ; CI diagnostic: a previous run died between the boot header
+        ; and TestReporter.Init() with no error logged. Recording each
+        ; successful registration in the boot log lets us see exactly
+        ; which test file is the last one parsed/loaded — if the next
+        ; one fails (parse or static-init crash), the missing entry
+        ; names the file. Cost is ~50 short writes per run.
+        try FileAppend("REG: " cls.Prototype.__Class "`n",
+            A_ScriptDir "\tests_boot.log", "UTF-8")
     }
 
     static Reset()
