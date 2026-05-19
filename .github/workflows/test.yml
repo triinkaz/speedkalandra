@@ -28,6 +28,14 @@ jobs:
           Write-Host "AutoHotkey v2 installed at $ahk"
 
       - name: Run test suite
+        # Hard cap so a hung AHK test (real production bug or a regression
+        # that only manifests on non-interactive CI sessions) does not
+        # silently eat 6 hours of CI minutes. The local suite finishes in
+        # well under a minute; 10 minutes is a generous ceiling.
+        # On timeout the step fails and the Upload test log step below
+        # still runs (if: always()), so the tests_output.log up to the
+        # last-completed test is preserved as an artifact.
+        timeout-minutes: 10
         shell: pwsh
         env:
           SPEEDKALANDRA_TEST_NO_GUI: "1"
@@ -40,6 +48,32 @@ jobs:
           if ($proc.ExitCode -ne 0) {
               Write-Error "Test suite failed (exit $($proc.ExitCode)). See uploaded log artifact."
               exit $proc.ExitCode
+          }
+
+      # Validates build-dist.ps1: the release script that filters
+      # personal data out of the distribution and produces the
+      # SHA256 sidecar. Runs against an isolated fixture in $env:TEMP,
+      # not the real project, so no real release artifact is built
+      # on every push. Catches:
+      #   - leakage regressions (a new sentinel pattern slips in,
+      #     breaks the filter, ships in the zip)
+      #   - SHA256 sidecar format drift (the verification command in
+      #     RELEASE.md would silently break for end users)
+      #   - -AhkPath resolution regressions (scenario B inside the
+      #     test fails fast if the explicit miss starts falling
+      #     back instead of aborting)
+      - name: Validate build-dist script
+        # Same hang-defence rationale as the test suite step above:
+        # bounded so a regression does not silently consume CI minutes.
+        # 3 minutes is generous — the local fixture run finishes in a
+        # few seconds.
+        timeout-minutes: 3
+        shell: pwsh
+        run: |
+          & tests_v2\build\test_build_dist.ps1
+          if ($LASTEXITCODE -ne 0) {
+              Write-Error "build-dist validation failed (exit $LASTEXITCODE)."
+              exit $LASTEXITCODE
           }
 
       - name: Upload test log

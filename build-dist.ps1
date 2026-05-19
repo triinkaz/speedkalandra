@@ -36,6 +36,11 @@
     packaging. Use only for local iteration or to break recursion in
     `tests_v2/build/test_build_dist.ps1`; never for actual releases.
 
+.PARAMETER AhkPath
+    Optional explicit path to AutoHotkey64.exe (AHK v2). When omitted,
+    the script tries the standard install locations and then PATH.
+    Useful for CI runners and non-standard installs.
+
 .EXAMPLE
     .\build-dist.ps1
     Clean copy to ..\SpeedKalandra-dist, prompts before overwriting.
@@ -48,6 +53,10 @@
 .EXAMPLE
     .\build-dist.ps1 -DestDir "C:\temp\sk-release" -Zip
     Custom destination, also produces a zip + SHA256 sidecar.
+
+.EXAMPLE
+    .\build-dist.ps1 -AhkPath "D:\Apps\AHK\v2\AutoHotkey64.exe" -Zip
+    Uses a non-standard AHK install (portable copy on D:).
 #>
 
 [CmdletBinding()]
@@ -60,8 +69,68 @@ param(
     # test suite is run as a release gate; failures abort the build.
     # -SkipTests bypasses the gate — use only for local iteration or
     # the test of this script itself, never for actual releases.
-    [switch]$SkipTests
+    [switch]$SkipTests,
+    # Explicit path to AutoHotkey64.exe (AHK v2). When unset,
+    # Resolve-AhkPath tries the standard install locations and then
+    # PATH. The explicit value is respected even when wrong — fails
+    # fast instead of silently falling back to a system install,
+    # which would otherwise hide CI misconfiguration.
+    [string]$AhkPath = ""
 )
+
+# ============================================================
+# Helpers
+# ============================================================
+
+# Resolves the AutoHotkey64.exe to use for the release-gate test
+# suite. Resolution order:
+#   1. -AhkPath explicit (must exist; failure here does NOT fall
+#      through — the user's explicit choice is respected even when
+#      wrong, otherwise a CI runner with a misconfigured -AhkPath
+#      would silently fall back to any AHK on PATH and bless the
+#      release with the wrong version)
+#   2. Standard AHK v2 install locations (Program Files / x86 /
+#      LOCALAPPDATA, with and without the v2 subdir for installs
+#      that didn't follow the multi-version layout)
+#   3. PATH fallback via Get-Command
+# Returns the resolved path or $null if nothing matched. The caller
+# is expected to write the failure message and decide exit policy.
+function Resolve-AhkPath {
+    param([string]$Explicit)
+
+    if ($Explicit -ne "") {
+        if (Test-Path -LiteralPath $Explicit -PathType Leaf) {
+            return $Explicit
+        }
+        # Explicit miss: do NOT fall back. Return $null and let the
+        # caller produce the failure message — that way the user
+        # sees "AhkPath '...' does not exist" instead of "AHK not
+        # found", which would be confusing when they just passed
+        # the flag.
+        return $null
+    }
+
+    $candidates = @(
+        "$env:ProgramFiles\AutoHotkey\v2\AutoHotkey64.exe",
+        "$env:ProgramFiles\AutoHotkey\AutoHotkey64.exe",
+        "${env:ProgramFiles(x86)}\AutoHotkey\v2\AutoHotkey64.exe",
+        "${env:ProgramFiles(x86)}\AutoHotkey\AutoHotkey64.exe",
+        "$env:LOCALAPPDATA\Programs\AutoHotkey\v2\AutoHotkey64.exe",
+        "$env:LOCALAPPDATA\Programs\AutoHotkey\AutoHotkey64.exe"
+    )
+    foreach ($c in $candidates) {
+        if (Test-Path -LiteralPath $c -PathType Leaf) {
+            return $c
+        }
+    }
+
+    $cmd = Get-Command "AutoHotkey64.exe" -ErrorAction SilentlyContinue
+    if ($cmd) {
+        return $cmd.Path
+    }
+
+    return $null
+}
 
 $ErrorActionPreference = "Stop"
 
@@ -135,11 +204,21 @@ Write-Host ""
 
 if (-not $SkipTests) {
     Write-Host "Running AHK test suite (release gate)..." -ForegroundColor Cyan
-    $ahkExe = "C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe"
-    if (-not (Test-Path $ahkExe)) {
-        Write-Error "AutoHotkey v2 not found at '$ahkExe'. Install AHK v2 or pass -SkipTests (not recommended for releases)."
+    $ahkExe = Resolve-AhkPath -Explicit $AhkPath
+    if (-not $ahkExe) {
+        if ($AhkPath -ne "") {
+            # Explicit miss: name the bad value so the user can fix it
+            # without re-reading the help. Same exit policy whether the
+            # path is a typo or a real-but-deleted install — both
+            # surface as "file does not exist".
+            Write-Error "AhkPath '$AhkPath' does not exist. Fix the path or omit -AhkPath to let the script discover AHK v2 automatically."
+        }
+        else {
+            Write-Error "AutoHotkey v2 not found in standard install paths or on PATH. Install AHK v2, pass -AhkPath <path-to-AutoHotkey64.exe>, or use -SkipTests (not recommended for releases)."
+        }
         exit 1
     }
+    Write-Host "  Using AHK: $ahkExe" -ForegroundColor Gray
 
     # SPEEDKALANDRA_TEST_NO_GUI=1 suppresses the final MsgBox and
     # makes the runner exit with 0/1 instead of waiting for OK.

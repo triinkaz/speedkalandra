@@ -1,0 +1,223 @@
+# ============================================================
+# Release workflow — tag-triggered
+# ============================================================
+#
+# Trigger: a tag matching v* is pushed (e.g. `git tag v0.2.0 && git push --tags`).
+# Also runnable on demand via workflow_dispatch with an existing tag.
+#
+# What it does:
+#   1. Validates build-dist.ps1 itself (leakage filter, SHA256 sidecar,
+#      -AhkPath resolution) via tests_v2/build/test_build_dist.ps1.
+#   2. Runs build-dist.ps1 -Compile -Zip -Force, which:
+#      - executes the full AHK test suite as a release gate
+#        (refuses to package on red),
+#      - copies the project tree with personal data filtered out,
+#      - compiles speedkalandra.ahk to .exe via Ahk2Exe,
+#      - produces a .zip + SHA256 sidecar.
+#   3. Renames the artifacts to embed the tag in the filename.
+#   4. Creates a DRAFT release with both files attached.
+#
+# Why draft (not auto-publish):
+#   The maintainer reviews the draft before publishing — verifies the
+#   artifact names, hashes, and notes. Auto-publishing would prevent
+#   a quick "oops, that tag was wrong" recovery without a force-push
+#   on the tag.
+#
+# Why gh CLI (not softprops/action-gh-release):
+#   gh is preinstalled on GitHub-hosted runners. Avoiding the
+#   third-party action removes one supply-chain dependency from the
+#   release pipeline.
+
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to release (e.g. v0.2.0)'
+        required: true
+
+# Required so the gh CLI can attach assets and create the release draft.
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build distribution and create release draft
+    runs-on: windows-latest
+    # Cap the whole job: build-dist runs the test suite (~minutes),
+    # then compiles + zips. 25 minutes accommodates a slow runner
+    # with full installs without letting a hang sit for the GitHub
+    # default of 6 hours.
+    timeout-minutes: 25
+
+    steps:
+      - name: Determine tag
+        id: tag
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF -like "refs/tags/*") {
+              $tag = $env:GITHUB_REF -replace '^refs/tags/', ''
+          }
+          else {
+              $tag = "${{ github.event.inputs.tag }}"
+          }
+          if (-not $tag) {
+              Write-Error "Could not determine tag from GITHUB_REF or workflow input."
+              exit 1
+          }
+          Write-Host "Tag: $tag"
+          "tag=$tag" | Out-File $env:GITHUB_OUTPUT -Append
+
+      - name: Checkout (at tag)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.tag.outputs.tag }}
+
+      - name: Install AutoHotkey v2
+        shell: pwsh
+        run: |
+          choco install autohotkey -y --no-progress
+          $ahk = "C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe"
+          if (-not (Test-Path $ahk)) {
+              Write-Error "AutoHotkey v2 was installed but $ahk is missing."
+              exit 1
+          }
+          Write-Host "AutoHotkey v2 installed at $ahk"
+
+      # Same validation step the tests workflow runs on every push.
+      # Repeated here so a release built straight from a tag (without
+      # going through the test workflow first) still has the same
+      # build-dist guardrails.
+      - name: Validate build-dist script
+        timeout-minutes: 3
+        shell: pwsh
+        run: |
+          & tests_v2\build\test_build_dist.ps1
+          if ($LASTEXITCODE -ne 0) {
+              Write-Error "build-dist validation failed (exit $LASTEXITCODE)."
+              exit $LASTEXITCODE
+          }
+
+      # build-dist.ps1 runs the AHK test suite as a release gate
+      # before packaging, so this single invocation enforces both
+      # "tests pass" and "artifact produced" as one atomic step. The
+      # gate is intentionally NOT skipped: a tag pushed against a
+      # red tree should fail loud, not produce a silent release.
+      - name: Build distribution (with test gate, compile, zip)
+        # build-dist runs the AHK suite (the gate) plus Ahk2Exe compile
+        # plus zip + SHA256 sidecar. 15 minutes is the largest single
+        # bound here; the job-level cap above is the outer safety net.
+        timeout-minutes: 15
+        shell: pwsh
+        env:
+          SPEEDKALANDRA_TEST_NO_GUI: "1"
+        run: |
+          $destDir = Join-Path $env:RUNNER_TEMP "sk-release"
+          & .\build-dist.ps1 -DestDir $destDir -Compile -Zip -Force
+          if ($LASTEXITCODE -ne 0) {
+              Write-Error "build-dist failed (exit $LASTEXITCODE)."
+              exit $LASTEXITCODE
+          }
+          "destDir=$destDir" | Out-File $env:GITHUB_OUTPUT -Append
+        id: build
+
+      # The build emits <destDir>.zip and <destDir>.zip.sha256.txt
+      # named after the destination directory ("sk-release.zip"). For
+      # release assets we want the tag visible in the filename so a
+      # downloaded file is identifiable without reading the URL.
+      # Rename + regenerate the sidecar (it embeds the filename in
+      # its body, so a simple Move-Item on the .txt would leave the
+      # body pointing at the OLD name and sha256sum -c would fail).
+      - name: Rename artifacts to include tag
+        id: artifacts
+        shell: pwsh
+        run: |
+          $tag = "${{ steps.tag.outputs.tag }}"
+          $destDir = "${{ steps.build.outputs.destDir }}"
+          $sourceZip     = "$destDir.zip"
+          $sourceSidecar = "$destDir.zip.sha256.txt"
+
+          if (-not (Test-Path $sourceZip)) {
+              Write-Error "Expected source zip '$sourceZip' not found."
+              exit 1
+          }
+
+          $assetDir = Join-Path $env:RUNNER_TEMP "release-assets"
+          New-Item -ItemType Directory -Path $assetDir -Force | Out-Null
+
+          $zipName     = "SpeedKalandra-$tag.zip"
+          $sidecarName = "$zipName.sha256.txt"
+          $zipPath     = Join-Path $assetDir $zipName
+          $sidecarPath = Join-Path $assetDir $sidecarName
+
+          Move-Item -LiteralPath $sourceZip -Destination $zipPath
+
+          # Recompute the hash against the renamed zip and write a
+          # sidecar whose body references the renamed filename. Same
+          # format as build-dist.ps1 produces: "<HEX>  <filename>\n",
+          # ASCII, coreutils-compatible.
+          $hash = Get-FileHash -LiteralPath $zipPath -Algorithm SHA256
+          "$($hash.Hash.ToLower())  $zipName" | Out-File -FilePath $sidecarPath -Encoding ASCII -NoNewline
+          Add-Content -Path $sidecarPath -Value "" -Encoding ASCII
+
+          if (Test-Path $sourceSidecar) {
+              Remove-Item -LiteralPath $sourceSidecar -Force
+          }
+
+          Write-Host "Zip:     $zipPath"
+          Write-Host "Sidecar: $sidecarPath"
+          Write-Host "SHA256:  $($hash.Hash.ToLower())"
+
+          "zip=$zipPath"         | Out-File $env:GITHUB_OUTPUT -Append
+          "sidecar=$sidecarPath" | Out-File $env:GITHUB_OUTPUT -Append
+
+      # Uses the gh CLI (preinstalled on the runner). --draft means
+      # the release is created hidden; the maintainer publishes it
+      # manually after reviewing. --notes-file feeds a small inline
+      # body containing the integrity-check command so downloaders
+      # don't have to dig for the format.
+      - name: Create release draft
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag         = "${{ steps.tag.outputs.tag }}"
+          $zipPath     = "${{ steps.artifacts.outputs.zip }}"
+          $sidecarPath = "${{ steps.artifacts.outputs.sidecar }}"
+
+          # Notes body assembled line by line. Markdown formatting is
+          # deliberately minimal to avoid PowerShell-vs-YAML quoting
+          # traps (here-strings inside YAML scalars preserve YAML
+          # indentation, which Markdown would then misinterpret as
+          # 4-space code blocks). The maintainer can edit the body
+          # in the GitHub UI before publishing the draft.
+          $lines = @(
+              "Distribution package built from tag ``$tag`` by the release workflow."
+              ""
+              "**Verify integrity**"
+              ""
+              "- Linux / macOS: ``sha256sum -c SpeedKalandra-$tag.zip.sha256.txt``"
+              "- Windows (PowerShell): ``Get-FileHash SpeedKalandra-$tag.zip -Algorithm SHA256``"
+              ""
+              "**Install**"
+              ""
+              "See ``README-DIST.txt`` inside the zip for hotkeys and first-run setup."
+          )
+          $notes = $lines -join "`n"
+
+          $notesPath = Join-Path $env:RUNNER_TEMP "release-notes.md"
+          $notes | Out-File -FilePath $notesPath -Encoding UTF8
+
+          gh release create $tag $zipPath $sidecarPath `
+              --draft `
+              --title "SpeedKalandra $tag" `
+              --notes-file $notesPath
+          if ($LASTEXITCODE -ne 0) {
+              Write-Error "gh release create failed (exit $LASTEXITCODE)."
+              exit $LASTEXITCODE
+          }
+          Write-Host "Release draft created for tag $tag. Review and publish on GitHub."

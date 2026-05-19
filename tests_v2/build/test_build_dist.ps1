@@ -16,10 +16,10 @@
     that an AHK-side test would require.
 
     Run manually:
-        pwsh tests_v2\build\test_build_dist.ps1
-
-    Or from cmd:
         powershell -ExecutionPolicy Bypass -File tests_v2\build\test_build_dist.ps1
+
+    Or with PowerShell 7+ (if installed):
+        pwsh tests_v2\build\test_build_dist.ps1
 
     Exit code 0 on success, non-zero on any leak or build failure.
 
@@ -144,7 +144,14 @@ try {
     # Run build-dist against the fixture
     # ============================================================
 
-    Write-Host "Running build-dist.ps1 -Zip -Force -SkipTests..." -ForegroundColor Cyan
+    # Violations / missing accumulate across BOTH scenarios A and B.
+    # Declared here (before scenario A) so a scenario-B finding is
+    # not silently zeroed by a redundant initialization between the
+    # scenarios and the assertion phase below.
+    $violations = @()
+    $missing = @()
+
+    Write-Host "Scenario A: build-dist.ps1 -Zip -Force -SkipTests..." -ForegroundColor Cyan
     $fixtureBuildScript = Join-Path $fixtureDir "build-dist.ps1"
 
     # Invoke in the fixture dir so $PSScriptRoot resolves to the
@@ -172,11 +179,86 @@ try {
     Write-Host ""
 
     # ============================================================
-    # Assertions
+    # Scenario B: -AhkPath pointing at a non-existent file aborts
     # ============================================================
+    #
+    # Companion check: build-dist must refuse to package when the
+    # explicit -AhkPath doesn't exist. Without this guard, a CI
+    # environment with a misconfigured path could silently fall
+    # through to whatever AutoHotkey64.exe is on PATH (or, worse,
+    # to no AHK at all if PATH is empty) and produce a release
+    # blessed by the wrong tool version.
+    #
+    # The check runs WITHOUT -SkipTests so that the Resolve-AhkPath
+    # branch in build-dist.ps1 actually executes. The bogus path is
+    # rejected by Test-Path BEFORE any AHK invocation, so this test
+    # does not need a real AHK install — the failure must come from
+    # the resolution step, not from a missing test runner.
+    #
+    # If the resolution were ever changed to fall back to the
+    # standard install paths when the explicit -AhkPath misses (the
+    # "convenience" alternative discussed in the function comment),
+    # this assertion would catch it: a CI runner with AHK installed
+    # would pass the gate and proceed to copying files, and the
+    # exit code would no longer be non-zero.
 
-    $violations = @()
-    $missing = @()
+    Write-Host "Scenario B: bogus -AhkPath aborts the build..." -ForegroundColor Cyan
+    $destDir2 = "$tempBase\dist-scenario-b"
+    $bogusAhk = "C:\definitely\not\exists\fake_ahk_$($timestamp).exe"
+    Push-Location $fixtureDir
+    try {
+        # Two viable "refused" paths from build-dist.ps1, both valid:
+        #   1. exit 1 reached: $LASTEXITCODE = 1, no exception thrown.
+        #   2. Write-Error fires under $ErrorActionPreference = "Stop"
+        #      and becomes a terminating error that propagates through
+        #      the `&` call. The exit statement after Write-Error is
+        #      never reached; $LASTEXITCODE stays at whatever the
+        #      previous external command set.
+        # Both end with no dest dir created — that's the assertion
+        # we anchor on. The inner try/catch keeps the terminating
+        # error from propagating up through this script's own
+        # outer try/finally, which would otherwise short-circuit
+        # the assertion phase below.
+        $global:LASTEXITCODE = 0
+        $bogusRefused = $false
+        try {
+            # 2>&1 | Out-Null suppresses the Write-Error rendering
+            # when build-dist exits cleanly via `exit 1`. Under the
+            # Stop-preference terminating path the redirect doesn't
+            # apply (the error becomes an exception before reaching
+            # the pipeline), so the catch below is what actually
+            # silences that case.
+            & $fixtureBuildScript -DestDir $destDir2 -AhkPath $bogusAhk -Force 2>&1 | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                $bogusRefused = $true
+            }
+        }
+        catch {
+            # Terminating error from Write-Error under Stop preference.
+            # This is one of the two legitimate refusal paths and
+            # counts as success for the assertion.
+            $bogusRefused = $true
+        }
+
+        if (-not $bogusRefused) {
+            $violations += "build-dist with -AhkPath '$bogusAhk' should have refused (non-zero exit or terminating error) but completed cleanly"
+        }
+        else {
+            Write-Host "  build-dist correctly refused" -ForegroundColor Gray
+        }
+        if (Test-Path $destDir2) {
+            $violations += "build-dist with bogus -AhkPath should NOT create dest dir '$destDir2'"
+        }
+    }
+    finally {
+        Pop-Location
+    }
+    Write-Host ""
+
+    # ============================================================
+    # Assertions (against scenario A outputs; scenario B already
+    # appended its own findings to $violations during execution)
+    # ============================================================
 
     # 1. Sentinels must NOT be in the staged dest dir
     foreach ($rel in $mustFilter.Keys) {
