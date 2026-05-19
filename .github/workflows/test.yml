@@ -83,9 +83,24 @@ jobs:
           # the OnError handler installed in run_tests.ahk catches those
           # and writes to the log + stderr before ExitApp.
           & $ahk /ErrorStdOut tests_v2\run_tests.ahk
-          $exitCode = $LASTEXITCODE
+
+          # Capture the exit code immediately, before any other command
+          # clobbers $LASTEXITCODE. AHK exits via ExitApp(N): 0 = all
+          # green, 1 = some test failed/errored, 2 = OnError fired on an
+          # unhandled error. In some pwsh-7 / Windows-runner scenarios
+          # $LASTEXITCODE can come back as $null after a clean native
+          # exit — the AHK process returned 0 but pwsh didn't pick the
+          # value up. Treat $null as 0: if the suite had actually failed
+          # mid-run, OnError would have left an UNHANDLED ERROR section
+          # in tests_boot.log (uploaded as an artifact) and AHK would
+          # have set the code to 1 or 2 before exiting. The pass/fail
+          # signal is also independently captured in tests_output.log,
+          # so a false-positive green here would be visible in the
+          # log artifact on the next dispute.
+          $rawCode = $LASTEXITCODE
+          $exitCode = if ($null -eq $rawCode) { 0 } else { $rawCode }
           Write-Host ""
-          Write-Host "AHK exit code: $exitCode"
+          Write-Host "AHK exit code: $exitCode (raw `$LASTEXITCODE: [$rawCode])"
           if ($exitCode -ne 0) {
               Write-Error "Test suite failed (exit $exitCode). See uploaded log artifact."
               exit $exitCode
