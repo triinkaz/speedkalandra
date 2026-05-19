@@ -1,14 +1,20 @@
 ; RunSnapshotSaver — finalizes a run to disk, updates personal bests,
 ; and exposes the 60-second undo window via the tray menu.
 ;
-; Subscribed by the composition root to RunCompleted (always) and
-; RunCancelled (when long enough). The subscriptions live in
-; SpeedKalandraApp.__New BEFORE the services that clear their state
-; on those same events (ZoneTrackingService, RunStatsRecorder) — the
-; bus is FIFO, so this handler must run first while the snapshot is
-; still intact. The class itself is constructed later in __New, once
-; all the services it depends on exist; the late-bound subscription
-; callback `(data) => this._snapshotSaver.Save(...)` handles the gap.
+; Wired into RunService via `SetOnBeforeFinalize` (reason="completed")
+; and `SetOnBeforeCancel`  (reason="cancelled") in the composition
+; root. These hooks run in the same call frame as FinalizeRun /
+; CancelRun, AFTER the timer/state have been updated and BEFORE the
+; lifecycle event (RunCompleted / RunCancelled) is published. That
+; means Save sees the run's final in-memory state regardless of
+; what bus subscribers are wired — in particular,
+; ZoneTrackingService still holds the run's totals and
+; RunStatsRecorder still holds the runId. Earlier versions
+; subscribed Save to the bus directly and relied on FIFO ordering
+; of the composition root's __New to run before the state-clearing
+; subscribers; the new design makes that contract explicit. The
+; class itself doesn't subscribe to anything — it is only invoked
+; through the hooks and the tray menu's `UndoLastSave`.
 ;
 ; Public surface:
 ;   Save(reason)         — "completed" or "cancelled"; threshold-gated

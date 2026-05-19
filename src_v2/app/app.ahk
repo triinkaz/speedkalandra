@@ -21,14 +21,16 @@
 ;
 ; Run history: every run is saved to data/runs/{runId}.ini, triggered
 ; by RunCompleted (always) or RunCancelled (only if >= 3 min). The
-; save handlers are subscribed in __New BEFORE RunStatsRecorder and
-; ZoneTrackingService are constructed — the bus is FIFO, and those
-; services clear their state on the same events. Subscribing later
-; in Start() would hand the save handler an empty snapshot.
-; The handler itself lives in RunSnapshotSaver; the subscription is
-; late-bound (`(data) => this._snapshotSaver.Save(...)`) because the
-; saver depends on services that don't exist yet at subscription time
-; and gets constructed near the end of __New, once they do.
+; save runs through `RunService.SetOnBefore{Finalize,Cancel}` pre-publish
+; hooks, not as a bus subscriber, so it sees the run's final in-memory
+; state regardless of where other RunCompleted/RunCancelled subscribers
+; are wired. (Pre-hook: ZoneTrackingService keeps _totals on
+; RunCompleted for the plot dialog, but clears them on RunCancelled;
+; RunStatsRecorder mirrors that. A bus-subscriber Save used to rely
+; on FIFO ordering of __New's Subscribe calls to run before the
+; cancel-path clears, which was a silent reordering risk.) The Save
+; itself lives in RunSnapshotSaver; the hooks are wired near the end
+; of __New, after the saver has been constructed.
 
 
 class SpeedKalandraApp
@@ -87,9 +89,9 @@ class SpeedKalandraApp
     ; their own beyond the references handed in at construction.
     _bootPrompts := ""
 
-    ; Run-finalization + undo flow. Subscribed to RunCompleted /
-    ; RunCancelled in __New via a late-bound callback (the saver is
-    ; constructed later, after every collaborator it needs exists).
+    ; Run-finalization + undo flow. Wired into RunService via
+    ; SetOnBefore{Finalize,Cancel} near the end of __New, after
+    ; every collaborator the saver needs has been constructed.
     _snapshotSaver := ""
 
     ; Periodic 5 s persistence of run base / loading total / zone
@@ -181,21 +183,17 @@ class SpeedKalandraApp
                 . this.personalBest.GetRunPbRunId() . ")", "App")
         }
 
-        ; Save handlers subscribed NOW, before the services that
-        ; clear their state on RunCancelled (zoneTracker and
-        ; statsRecorder, further down). The bus is FIFO; our handler
-        ; needs to run first while the snapshot is still intact.
-        ; The callbacks are late-bound: this._snapshotSaver is still
-        ; "" at this point and gets assigned later in __New, after
-        ; every service it consumes has been constructed.
-        this.bus.Subscribe(Events.RunCompleted,
-            (data) => this._snapshotSaver.Save("completed"))
-        this.bus.Subscribe(Events.RunCancelled,
-            (data) => this._snapshotSaver.Save("cancelled"))
+        ; Save handlers used to be subscribed NOW (before the services
+        ; that clear their state on RunCancelled) and the bus's FIFO
+        ; ordering carried them. Replaced with RunService.SetOnBefore*
+        ; hooks at the bottom of __New — the run snapshot is captured
+        ; in the same call frame as FinalizeRun/CancelRun, before any
+        ; subscriber sees the lifecycle event, so wiring order no
+        ; longer matters. See the class header.
 
         this.runState   := RunStateRepository(ini, runStateSink)
         this.timer      := TimerService(this.clock, this.bus)
-        this.runService := RunService(this.clock, this.bus, this.timer, this.runState)
+        this.runService := RunService(this.clock, this.bus, this.timer, this.runState, this.log)
 
         ; Tracks total run time at each act transition; feeds the
         ; per-act PB on finalize. Depends on this.timer for GetRunMs.
@@ -382,6 +380,19 @@ class SpeedKalandraApp
             headless
         )
 
+        ; Wire the run-finalization save through RunService's
+        ; pre-publish hooks instead of as a bus subscriber. This sees
+        ; the run's in-memory state before subscribers (notably
+        ; ZoneTrackingService and RunStatsRecorder on RunCancelled)
+        ; have a chance to clear it. Subscription-order races on the
+        ; bus are now impossible — nobody can step between hook and
+        ; Publish. The closures capture `this` and use `_snapshotSaver`
+        ; which exists from the previous line.
+        this.runService.SetOnBeforeFinalize(
+            () => this._snapshotSaver.Save("completed"))
+        this.runService.SetOnBeforeCancel(
+            () => this._snapshotSaver.Save("cancelled"))
+
         this._reconfig := LiveReconfigurationHandlers(
             this._cfg,
             this.log,
@@ -452,9 +463,10 @@ class SpeedKalandraApp
         this.bus.Subscribe(Events.RunCancelled,
             (data) => this._OnRunEndedClearZones(data))
 
-        ; Note: the RunCompleted/RunCancelled subscriptions that drive
-        ; RunSnapshotSaver live in __New (above the services that
-        ; clear state on those events). Do not re-subscribe here.
+        ; Note: the run snapshot save is wired through RunService's
+        ; SetOnBefore{Finalize,Cancel} hooks in __New, not as a bus
+        ; subscription. Do not subscribe Save here — see the class
+        ; header for the rationale.
 
         if (this._cfg.logFile != "" && FileExist(this._cfg.logFile))
         {

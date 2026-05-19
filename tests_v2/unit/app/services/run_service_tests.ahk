@@ -57,6 +57,7 @@ class RunServiceTests extends TestCase
         "constructor_throws_when_timer_svc_not_timer_service",
         "constructor_throws_when_state_repo_not_run_state_repository",
         "constructor_subscribes_to_all_4_commands",
+        "constructor_accepts_optional_log",
 
         ; --- Initial state ---
         "run_id_empty_initially",
@@ -85,6 +86,9 @@ class RunServiceTests extends TestCase
         "finalize_event_includes_run_id",
         "finalize_event_includes_duration_ms",
         "finalize_persists_status_to_repo",
+        "finalize_invokes_on_before_finalize_before_publishing",
+        "finalize_does_not_invoke_hook_when_not_active",
+        "finalize_publishes_run_completed_even_when_hook_throws",
 
         ; --- CancelRun ---
         "cancel_returns_false_when_not_active",
@@ -94,6 +98,9 @@ class RunServiceTests extends TestCase
         "cancel_publishes_run_cancelled_event",
         "cancel_event_includes_run_id",
         "cancel_persists_status_to_repo",
+        "cancel_invokes_on_before_cancel_before_publishing",
+        "cancel_does_not_invoke_hook_when_not_active",
+        "cancel_publishes_run_cancelled_even_when_hook_throws",
 
         ; --- ResetRun ---
         "reset_clears_run_id",
@@ -123,6 +130,12 @@ class RunServiceTests extends TestCase
         "finalize_run_requested_triggers_finalize",
         "cancel_run_requested_triggers_cancel",
         "reset_run_requested_triggers_reset",
+
+        ; --- Pre-publish hooks (SetOnBeforeFinalize / SetOnBeforeCancel) ---
+        "set_on_before_finalize_throws_when_callback_not_callable",
+        "set_on_before_cancel_throws_when_callback_not_callable",
+        "set_on_before_finalize_accepts_empty_string_to_clear",
+        "hook_throw_is_warned_through_log",
 
         ; --- Dispose ---
         "dispose_unsubscribes_all_commands",
@@ -183,6 +196,27 @@ class RunServiceTests extends TestCase
         Assert.Equal(1, this.bus.Subscribers(Commands.FinalizeRunRequested))
         Assert.Equal(1, this.bus.Subscribers(Commands.CancelRunRequested))
         Assert.Equal(1, this.bus.Subscribers(Commands.ResetRunRequested))
+    }
+
+    constructor_accepts_optional_log()
+    {
+        ; The log parameter is optional (5th, defaults to a NullLogger
+        ; built internally). Confirms the construction path with an
+        ; explicit logger doesn't break and the service is still wired
+        ; correctly. Used by the composition root to route hook-throw
+        ; warns into speedkalandra.log.
+        freshBus    := Fixtures.MakeBus()
+        freshTimer  := TimerService(this.stubClock, freshBus)
+        freshRepoP  := Fixtures.TempPath("ini")
+        freshRepo   := RunStateRepository(IniFile(freshRepoP))
+        memLog      := InMemoryLogger()
+        freshSvc    := RunService(this.stubClock, freshBus, freshTimer, freshRepo, memLog)
+
+        Assert.True(IsObject(freshSvc), "constructor with explicit log returns object")
+        Assert.Equal(1, freshBus.Subscribers(Commands.NewRunRequested),
+            "subscriptions are wired even with explicit log")
+
+        try freshSvc.Dispose()
     }
 
     ; ============================================================
@@ -359,6 +393,54 @@ class RunServiceTests extends TestCase
         Assert.Equal("completed", loaded.status)
     }
 
+    finalize_invokes_on_before_finalize_before_publishing()
+    {
+        ; The whole point of the hook: it must run BEFORE Publish(RunCompleted)
+        ; so collaborators that subscribe to RunCompleted see the same
+        ; in-memory state the hook saw. Verified by recording the call
+        ; order: "hook" must come before "publish".
+        callOrder := []
+        this.svc.SetOnBeforeFinalize(() => callOrder.Push("hook"))
+        this.bus.Subscribe(Events.RunCompleted, (data) => callOrder.Push("publish"))
+
+        this.svc.NewRun()
+        this.svc.FinalizeRun()
+
+        Assert.Equal(2, callOrder.Length, "both hook and publish ran")
+        Assert.Equal("hook",    callOrder[1], "hook ran first")
+        Assert.Equal("publish", callOrder[2], "publish ran after hook")
+    }
+
+    finalize_does_not_invoke_hook_when_not_active()
+    {
+        ; FinalizeRun on idle state returns false early; the hook
+        ; shouldn't run — there's no run to save.
+        hookRan := false
+        this.svc.SetOnBeforeFinalize(() => hookRan := true)
+
+        result := this.svc.FinalizeRun()
+
+        Assert.False(result, "finalize returns false on idle state")
+        Assert.False(hookRan, "hook does not fire when state is idle")
+    }
+
+    finalize_publishes_run_completed_even_when_hook_throws()
+    {
+        ; Defensive contract: a throw inside the hook must not block
+        ; the lifecycle event. Widgets, state-clearers, and any other
+        ; subscriber of RunCompleted still need to react when the run
+        ; is finalized — a misbehaving Save can't stop the run from
+        ; ending in the user's perception.
+        this.svc.SetOnBeforeFinalize(() => RunServiceTests._ThrowSimulated())   ; provokes a throw
+        publishCount := 0
+        this.bus.Subscribe(Events.RunCompleted, (data) => publishCount += 1)
+
+        this.svc.NewRun()
+        this.svc.FinalizeRun()
+
+        Assert.Equal(1, publishCount, "RunCompleted fired despite hook throw")
+    }
+
     ; ============================================================
     ; CancelRun
     ; ============================================================
@@ -413,6 +495,47 @@ class RunServiceTests extends TestCase
         freshRepo := RunStateRepository(IniFile(this.repoPath))
         loaded := freshRepo.Load()
         Assert.Equal("cancelled", loaded.status)
+    }
+
+    cancel_invokes_on_before_cancel_before_publishing()
+    {
+        ; Same contract as finalize — but more critical here, since
+        ; ZoneTrackingService and RunStatsRecorder DO clear their
+        ; state on RunCancelled. The hook is the only safe point to
+        ; capture totals for a saved long-cancelled run.
+        callOrder := []
+        this.svc.SetOnBeforeCancel(() => callOrder.Push("hook"))
+        this.bus.Subscribe(Events.RunCancelled, (data) => callOrder.Push("publish"))
+
+        this.svc.NewRun()
+        this.svc.CancelRun()
+
+        Assert.Equal(2, callOrder.Length)
+        Assert.Equal("hook",    callOrder[1])
+        Assert.Equal("publish", callOrder[2])
+    }
+
+    cancel_does_not_invoke_hook_when_not_active()
+    {
+        hookRan := false
+        this.svc.SetOnBeforeCancel(() => hookRan := true)
+
+        result := this.svc.CancelRun()
+
+        Assert.False(result)
+        Assert.False(hookRan, "hook does not fire on idle cancel")
+    }
+
+    cancel_publishes_run_cancelled_even_when_hook_throws()
+    {
+        this.svc.SetOnBeforeCancel(() => RunServiceTests._ThrowSimulated())
+        publishCount := 0
+        this.bus.Subscribe(Events.RunCancelled, (data) => publishCount += 1)
+
+        this.svc.NewRun()
+        this.svc.CancelRun()
+
+        Assert.Equal(1, publishCount, "RunCancelled fired despite hook throw")
     }
 
     ; ============================================================
@@ -657,6 +780,77 @@ class RunServiceTests extends TestCase
         this.svc.Dispose()
         this.svc.Dispose()
         Assert.Equal(0, this.bus.Subscribers(Commands.NewRunRequested))
+    }
+
+    ; ============================================================
+    ; Pre-publish hooks (SetOnBeforeFinalize / SetOnBeforeCancel)
+    ; ============================================================
+
+    set_on_before_finalize_throws_when_callback_not_callable()
+    {
+        ; Fail-fast at wiring time. A wiring bug that passes a Map
+        ; (or some plausible-looking object) must trip here, not at
+        ; the next FinalizeRun call when the run is mid-flight.
+        s := this.svc
+        Assert.Throws(TypeError, () => s.SetOnBeforeFinalize("not callable"))
+        Assert.Throws(TypeError, () => s.SetOnBeforeFinalize(Map("not", "a func")))
+        Assert.Throws(TypeError, () => s.SetOnBeforeFinalize(42))
+    }
+
+    set_on_before_cancel_throws_when_callback_not_callable()
+    {
+        s := this.svc
+        Assert.Throws(TypeError, () => s.SetOnBeforeCancel("not callable"))
+        Assert.Throws(TypeError, () => s.SetOnBeforeCancel(Map("not", "a func")))
+        Assert.Throws(TypeError, () => s.SetOnBeforeCancel(42))
+    }
+
+    set_on_before_finalize_accepts_empty_string_to_clear()
+    {
+        ; Empty string is the "unwired" sentinel — setters accept it
+        ; so a caller can deliberately clear a previously-installed
+        ; hook. After clearing, FinalizeRun runs but doesn't invoke
+        ; anything.
+        hookRan := false
+        this.svc.SetOnBeforeFinalize(() => hookRan := true)
+        this.svc.SetOnBeforeFinalize("")   ; clear
+
+        this.svc.NewRun()
+        this.svc.FinalizeRun()
+
+        Assert.False(hookRan, "cleared hook does not fire on FinalizeRun")
+    }
+
+    hook_throw_is_warned_through_log()
+    {
+        ; A throw from a hook is caught and surfaced as a WARN through
+        ; the injected logger. Production wires LogService here so a
+        ; misbehaving Save shows up in speedkalandra.log with the hook
+        ; name ("OnBeforeFinalize" / "OnBeforeCancel") and the
+        ; exception message.
+        freshBus    := Fixtures.MakeBus()
+        freshTimer  := TimerService(this.stubClock, freshBus)
+        freshRepoP  := Fixtures.TempPath("ini")
+        freshRepo   := RunStateRepository(IniFile(freshRepoP))
+        memLog      := InMemoryLogger()
+        freshSvc    := RunService(this.stubClock, freshBus, freshTimer, freshRepo, memLog)
+
+        freshSvc.SetOnBeforeFinalize(() => RunServiceTests._ThrowSimulated())
+        freshSvc.NewRun()
+        freshSvc.FinalizeRun()
+
+        Assert.True(memLog.HasEntry("WARN", "OnBeforeFinalize threw"),
+            "warn carries the hook name")
+
+        try freshSvc.Dispose()
+    }
+
+    ; Static helper to provide a callable throw that AHK v2 lambdas
+    ; can reference (a lambda body `() => throw X` is a parse error in
+    ; v2 because `throw` is a statement, not an expression).
+    static _ThrowSimulated()
+    {
+        throw Error("simulated hook failure")
     }
 }
 

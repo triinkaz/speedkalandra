@@ -128,6 +128,9 @@ class SpeedKalandraAppIntegrationTests extends TestCase
         ; --- Zone semantics (Fase 1, GSG §14 anti-regression) ---
         "log_monitor_with_catalog_resolves_internal_id_in_zone_tracker",
 
+        ; --- Cancel save flow (GSG §14 anti-regression: FIFO race fix) ---
+        "cancelled_long_run_saves_to_history_with_zone_totals_intact",
+
         ; --- Wave 9: regression tests for cataloged bugs without direct coverage ---
         ; Bug #9 (AUDIT): Riverbank resets level on every entry. Fix:
         ; exact match "The Riverbank" + _riverbankSeenInRun flag that
@@ -198,9 +201,14 @@ class SpeedKalandraAppIntegrationTests extends TestCase
 
     constructor_subscribes_run_history_handlers()
     {
-        ; RunCompleted and RunCancelled have _SaveRunSnapshot handlers,
-        ; in addition to handlers that widgets/services subscribe.
-        ; Verifies that at least 1 subscriber exists.
+        ; RunCompleted / RunCancelled have subscribers wired by
+        ; widgets and services (ZoneTrackingService, RunStatsRecorder,
+        ; _OnRunEndedClearZones). The run-snapshot save itself runs
+        ; through RunService.SetOnBefore{Finalize,Cancel} hooks, not
+        ; as a bus subscriber — see the SpeedKalandraApp header.
+        ; This test just confirms there are subscribers on each
+        ; event so a future refactor that drops them all surfaces
+        ; here.
         Assert.True(this.app.bus.Subscribers(Events.RunCompleted) >= 1)
         Assert.True(this.app.bus.Subscribers(Events.RunCancelled) >= 1)
     }
@@ -682,6 +690,57 @@ class SpeedKalandraAppIntegrationTests extends TestCase
     ; if a new field gets wired into the chain incorrectly, this
     ; test breaks before any of the narrower tests do, and the
     ; failure points at which subsystem disagrees.
+
+    cancelled_long_run_saves_to_history_with_zone_totals_intact()
+    {
+        ; Guardrail (Fase 2; GSG §14 anti-regression item "FIFO da
+        ; bus como sutil dependência de ordem de wiring"):
+        ;
+        ; A run that is cancelled after the 3-minute threshold must
+        ; still be persisted to history, AND the saved snapshot must
+        ; include the zone totals — even though ZoneTrackingService
+        ; clears `_totals` and RunStatsRecorder calls `Reset()` on
+        ; RunCancelled. The save runs through RunService's
+        ; SetOnBeforeCancel hook, which fires after the timer is
+        ; stopped and BEFORE the lifecycle event is published, so
+        ; subscriber state-clearing happens strictly after the save.
+        ;
+        ; The earlier design relied on FIFO ordering of subscriptions
+        ; in SpeedKalandraApp.__New (Save subscribed before
+        ; zoneTracker/statsRecorder so it ran first when the event
+        ; fanned out). That contract was implicit and easy to break
+        ; by reordering constructors; this test catches a regression
+        ; in either the hook semantics OR a hypothetical revert to
+        ; bus-subscription save.
+        this.app.bus.Publish(Commands.NewRunRequested, Map())
+
+        ; 5 minutes of zone time — well above the 3-minute save
+        ; threshold, and gives _totals a real value to verify.
+        this._EnterZoneAndAdvance("Mud Burrow", 300000)
+        producedId := this.app.runService.GetRunId()
+
+        this.app.bus.Publish(Commands.CancelRunRequested, Map())
+
+        ; Run saved to history.
+        files := this._ListRunFiles()
+        Assert.Equal(1, files.Length,
+            "long-cancelled run is persisted (>= 3 min threshold)")
+        Assert.Equal(producedId ".ini", files[1],
+            "saved file is named after the runId")
+
+        ; And the saved snapshot carries the run's totals (proves the
+        ; hook saw _totals before zoneTracker._OnRunEnded cleared them).
+        loadedRun := this.app.runHistory.Load(producedId)
+        Assert.True(IsObject(loadedRun),
+            "saved run loads back")
+        Assert.True(loadedRun["totalMs"] >= 300000,
+            "saved totalMs covers the 5 min of zone time")
+
+        ; State-clearing on the bus subscribers should have happened
+        ; AFTER the save — _totals is now empty.
+        Assert.Equal(0, this.app.zoneTracker.GetTotals().Count,
+            "zone tracker state is cleared post-RunCancelled (subscriber ran after the hook)")
+    }
 
     log_monitor_with_catalog_resolves_internal_id_in_zone_tracker()
     {

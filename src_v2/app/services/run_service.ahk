@@ -19,6 +19,23 @@
 ; main thread: PersistTimer writes a single field (runBaseMs);
 ; _Persist writes all four and runs only on lifecycle transitions.
 ;
+; Pre-publish hooks (SetOnBeforeFinalize / SetOnBeforeCancel):
+;   The composition root wires RunSnapshotSaver.Save through these
+;   hooks instead of subscribing it to the bus. Reason: a bus
+;   subscriber to RunCompleted/RunCancelled would race against
+;   ZoneTrackingService and RunStatsRecorder, which clear their
+;   in-memory state on RunCancelled (ZoneTracker also flushes on
+;   RunCompleted but keeps _totals for the plot dialog). FIFO
+;   ordering of Subscribe calls in __New used to be the implicit
+;   guarantee that Save ran first; replacing that with an explicit
+;   hook here makes the contract visible in code and removes the
+;   reordering risk. The hook runs AFTER the timer/state mutation
+;   and BEFORE Publish, so subscribers and the hook see the same
+;   final state. A throw inside the hook is caught and warned via
+;   the logger — the lifecycle event still fires so widgets and
+;   state-clearers downstream of RunCompleted/RunCancelled can
+;   react.
+;
 ; AHK v2 gotcha: parameter is `timerSvc`, not `timerService` — AHK
 ; variable lookup is case-insensitive, and `is TimerService` would
 ; collide with a `timerService` local.
@@ -31,13 +48,21 @@ class RunService
     _timer     := ""
     _stateRepo := ""
     _state     := ""    ; RunState
+    _log       := ""    ; Logger (NullLogger by default) — used to warn on hook throws.
+
+    ; Pre-publish hooks. "" means unwired. See the class header for
+    ; the rationale. Settable post-construction (the snapshot saver
+    ; they typically point at is constructed later in the composition
+    ; root).
+    _onBeforeFinalize := ""
+    _onBeforeCancel   := ""
 
     _handlerNew      := ""
     _handlerFinalize := ""
     _handlerCancel   := ""
     _handlerReset    := ""
 
-    __New(clock, bus, timerSvc, stateRepo)
+    __New(clock, bus, timerSvc, stateRepo, log := "")
     {
         if !IsObject(clock) || !clock.HasMethod("NowMs")
             throw TypeError("RunService: 'clock' must implement NowMs()")
@@ -53,6 +78,10 @@ class RunService
         this._timer     := timerSvc
         this._stateRepo := stateRepo
         this._state     := RunState.Empty()
+        ; Logger is optional (tests construct without one). Default
+        ; to NullLogger so the hook-failure warn path is a safe no-op
+        ; in those callers. Production wires the real LogService.
+        this._log       := (log = "") ? NullLogger() : log
 
         this._handlerNew      := (data) => this.NewRun()
         this._handlerFinalize := (data) => this.FinalizeRun()
@@ -63,6 +92,25 @@ class RunService
         bus.Subscribe(Commands.FinalizeRunRequested, this._handlerFinalize)
         bus.Subscribe(Commands.CancelRunRequested,   this._handlerCancel)
         bus.Subscribe(Commands.ResetRunRequested,    this._handlerReset)
+    }
+
+    ; Sets the pre-publish hook for FinalizeRun. Pass "" to clear.
+    ; Fail-fast on non-callable so a wiring bug trips here instead of
+    ; the next FinalizeRun call.
+    SetOnBeforeFinalize(callback)
+    {
+        if (callback != "" && !(callback is Func) && !HasMethod(callback, "Call"))
+            throw TypeError("RunService.SetOnBeforeFinalize: callback must be callable (Func or have Call method)")
+        this._onBeforeFinalize := callback
+    }
+
+    ; Sets the pre-publish hook for CancelRun. Same contract as the
+    ; finalize variant.
+    SetOnBeforeCancel(callback)
+    {
+        if (callback != "" && !(callback is Func) && !HasMethod(callback, "Call"))
+            throw TypeError("RunService.SetOnBeforeCancel: callback must be callable (Func or have Call method)")
+        this._onBeforeCancel := callback
     }
 
     Dispose()
@@ -172,6 +220,13 @@ class RunService
         this._state.runBaseMs := durationMs
         this._Persist()
 
+        ; Pre-publish hook — runs while collaborators (zoneTracker,
+        ; statsRecorder, etc.) still hold the run's in-memory state.
+        ; Wrapped in try so a throw doesn't block the lifecycle event
+        ; from firing; the event still needs to reach widgets and
+        ; state-clearers downstream. See class header.
+        this._InvokeBeforeHook(this._onBeforeFinalize, "OnBeforeFinalize")
+
         this._bus.Publish(Events.RunCompleted, Map(
             "runId",      currentRunId,
             "durationMs", durationMs
@@ -188,6 +243,12 @@ class RunService
         this._timer.Stop()
         this._state.status := "cancelled"
         this._Persist()
+
+        ; Pre-publish hook — same contract as FinalizeRun. Critical
+        ; here because ZoneTrackingService / RunStatsRecorder DO clear
+        ; state on RunCancelled, so the hook is the only safe point
+        ; to capture totals for a saved long-cancelled run.
+        this._InvokeBeforeHook(this._onBeforeCancel, "OnBeforeCancel")
 
         this._bus.Publish(Events.RunCancelled, Map("runId", currentRunId))
         return true
@@ -222,6 +283,27 @@ class RunService
     _Persist()
     {
         try this._stateRepo.Save(this._state)
+    }
+
+    ; Invokes a pre-publish hook with try/catch + Warn. Centralized so
+    ; FinalizeRun and CancelRun share identical semantics, including
+    ; the same context tag in the log. `hookName` shows up in the warn
+    ; message so a future bug report can tell which hook misbehaved.
+    _InvokeBeforeHook(hook, hookName)
+    {
+        if (hook = "")
+            return
+        try
+        {
+            hook()
+        }
+        catch as ex
+        {
+            try this._log.Warn(hookName . " threw: " . ex.Message
+                . " | What: " . (ex.HasOwnProp("What") ? ex.What : "?")
+                . " | Line: " . (ex.HasOwnProp("Line") ? ex.Line : "?"),
+                "RunService")
+        }
     }
 
     _GenerateRunId()
