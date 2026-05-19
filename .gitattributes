@@ -1,0 +1,51 @@
+# .gitattributes — line-ending and binary policy
+#
+# Default: auto-detect text files and let git normalize them on
+# commit (using the committer's local convention) and rewrite on
+# checkout to the repository convention. Explicit per-extension
+# rules below override this default for files where the convention
+# matters or where the content is binary.
+#
+# Applied policy: existing files in the repo are NOT mass-renormalized
+# when this file is introduced (`git add --renormalize .` is not run).
+# Only commits made after this file lands respect the rules. A future
+# cleanup PR can renormalize if desired — kept separate so the diff
+# doesn't pollute blame.
+
+* text=auto
+
+# === Windows-native scripting / tooling: CRLF ===
+# AHK itself accepts both line endings, but the project's historical
+# editing tools (Notepad++, the AHK error dialog) work better with
+# CRLF, and the build / tray flows are Windows-only.
+*.ahk text eol=crlf
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# === Docs and structured config: LF ===
+# Cross-platform default; GitHub renders both, but LF avoids spurious
+# diffs when a contributor edits on macOS/Linux.
+*.md   text eol=lf
+*.csv  text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+
+# === INI: treat as binary ===
+# AHK's IniWrite produces UTF-16 LE with a BOM and CRLF line
+# endings. If git ever tried to text-normalize one of these files
+# the BOM would be clobbered and the next IniRead would return
+# empty. None of the project's INIs are committed today (all listed
+# in .gitignore), but the rule is a guardrail for any future
+# addition (templates, fixtures, etc.).
+*.ini binary
+
+# === Images and archives: binary ===
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.zip  binary
+*.exe  binary
