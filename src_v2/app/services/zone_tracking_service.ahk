@@ -37,6 +37,18 @@ class ZoneTrackingService
     _totals     := ""    ; Map<zoneName, totalMs>
     _firstEnteredAt := ""    ; Map<zoneName, "YYYY-MM-DD HH:MM:SS"> — first-entry timestamp per zone in the current run
     _runActive  := false
+    ; Elapsed accumulated within the CURRENT zone-visit (not the
+    ; zone's lifetime total). Survives pause/resume and TimerStopped
+    ; -- those keep _activeZone alive. Resets on every transition
+    ; (_OnZoneChanged with !keepActive) and on RunStarted (!hydrate)
+    ; / RunReset / RunCancelled / RunCompleted. RunSnapshotSaver
+    ; reads this via GetCurrentVisitMs() in the OnBeforeFinalize
+    ; hook to discount the interrupted-by-hotkey visit from
+    ; PB-eligible zone totals: that visit never closed via
+    ; transition, so it isn't PB-eligible. Not persisted to
+    ; RunState by design -- crash+hotkey on the same zone is
+    ; documented in KNOWN_ISSUES as an accepted edge case.
+    _currentVisitMs := 0
 
     ; Tracks the timer's pause state so ZoneChanged respects it.
     ; PoE2 emits [SCENE] lines during alt-tab (background loads,
@@ -151,6 +163,11 @@ class ZoneTrackingService
         ; persisted; zones entered after hydrate get fresh timestamps,
         ; pre-hydrate zones simply have none in the plot.
         this._firstEnteredAt := Map()
+        ; _currentVisitMs is not persisted by design (KNOWN_ISSUES);
+        ; fresh on every boot. A run hydrated mid-visit then
+        ; finalized on the same zone produces an inflated zone PB --
+        ; documented edge case, accepted.
+        this._currentVisitMs := 0
     }
 
     ; Manually marks the run as active when RunStarted will not be
@@ -171,6 +188,22 @@ class ZoneTrackingService
         if (this._activeZone = "" || this._startMs = 0)
             return 0
         return Max(0, this._clock.NowMs() - this._startMs)
+    }
+
+    ; Time accumulated within the current zone-visit, including the
+    ; ongoing tick (analog of GetTotalsForSnapshot). The visit
+    ; spans pause/resume cycles and TimerStopped (which keep
+    ; _activeZone alive); it resets on every zone transition or
+    ; on lifecycle reset/cancel/completed. RunSnapshotSaver reads
+    ; this in the OnBeforeFinalize hook to discount the interrupted-
+    ; by-hotkey visit from PB-eligible zone totals: that visit
+    ; never closed via transition, so it isn't PB-eligible.
+    GetCurrentVisitMs()
+    {
+        base := this._currentVisitMs
+        if (this._startMs > 0)
+            base += Max(0, this._clock.NowMs() - this._startMs)
+        return base
     }
     IsActive()     => this._activeZone != "" && this._startMs > 0
     IsRunActive()  => this._runActive
@@ -316,6 +349,7 @@ class ZoneTrackingService
         this._firstEnteredAt := Map()
         this._runActive  := false
         this._timerPaused := false
+        this._currentVisitMs := 0
     }
 
     ; ---- Private handlers ----
@@ -412,6 +446,7 @@ class ZoneTrackingService
         {
             this._totals := Map()
             this._firstEnteredAt := Map()
+            this._currentVisitMs := 0
         }
         this._runActive := true
         this._timerPaused := false
@@ -438,6 +473,7 @@ class ZoneTrackingService
         this._startMs := 0
         this._runActive := false
         this._timerPaused := false
+        this._currentVisitMs := 0
     }
 
     _OnRunCompleted(data)
@@ -448,6 +484,15 @@ class ZoneTrackingService
         ; RunCompleted) query GetTotals() while the event fans out.
         ; The next RunStarted resets it via _OnRunStarted.
         this._FlushActive()
+        ; Defensive: in the production FinalizeRun sequence,
+        ; _OnTimerStopped already ran and zeroed _startMs, so the
+        ; _FlushActive above early-outs and skips the
+        ; _currentVisitMs reset baked into the !keepActive branch.
+        ; Zero it here so the accumulator is clean for the next run.
+        ; RunSnapshotSaver has already read GetCurrentVisitMs() in
+        ; the OnBeforeFinalize hook (before RunCompleted is
+        ; published), so this reset is safe.
+        this._currentVisitMs := 0
         this._runActive := false
         this._timerPaused := false
     }
@@ -466,6 +511,10 @@ class ZoneTrackingService
             zone := this._activeZone
             current := this._totals.Has(zone) ? this._totals[zone] : 0
             this._totals[zone] := current + elapsed
+            ; The visit accumulator grows in lockstep with _totals
+            ; while the visit is open; it gets discarded on close
+            ; via transition (below) so the next visit starts fresh.
+            this._currentVisitMs += elapsed
 
             this._bus.Publish(Events.ZoneTimeAccumulated, Map(
                 "zoneName",   zone,
@@ -476,6 +525,16 @@ class ZoneTrackingService
 
         this._startMs := 0
         if !keepActive
+        {
+            ; Visit is closing (transition or RunCompleted via
+            ; _OnZoneChanged / _OnRunCompleted with default args).
+            ; Discard the visit accumulator -- the PB-exclusion
+            ; query GetCurrentVisitMs() has already been read by
+            ; this point in the FinalizeRun sequence (TimerStopped
+            ; keeps active=true and preserves the accumulator until
+            ; RunSnapshotSaver consumes it via OnBeforeFinalize).
+            this._currentVisitMs := 0
             this._activeZone := ""
+        }
     }
 }

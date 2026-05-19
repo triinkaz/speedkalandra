@@ -57,3 +57,25 @@ lifecycle) has unit and integration coverage.
 `data/zones.csv` (PoE2 campaign zones, semicolon-delimited) is maintained
 by hand. Adding new zones from a future patch requires editing the file —
 there is no automatic sync against the game's data files.
+
+## Interrupted-visit accumulator not persisted across restarts
+
+When `FinalizeRun` fires, the zone that was active at the moment of the
+hotkey has its visit time discounted from the run's PB-eligible zone
+totals — the visit never closed via a zone transition, so it isn't
+comparable to a normal completed visit. The visit accumulator that drives
+this discount lives in `ZoneTrackingService._currentVisitMs` and is
+deliberately not written to `speedkalandra.ini`.
+
+This matters in one narrow edge case: app crash mid-run, restart
+(which hydrates the zone totals from disk), then finalize via hotkey
+without crossing another zone transition first. After the restart the
+accumulator resets to 0 and only counts the post-hydrate elapsed, so the
+interrupted zone gets less subtracted than it should and the resulting
+zone PB candidate is too low for that one zone in that one run. The other
+run's zones, the global run PB, and per-act PBs are unaffected.
+
+Decision: not persisted by design. Crash plus same-zone hotkey plus no
+intervening transition is a rare combination, and persisting per-visit
+elapsed adds an INI write on every flush. The user can simply finalize on
+a different zone or rerun for a clean PB.

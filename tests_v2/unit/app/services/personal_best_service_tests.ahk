@@ -125,7 +125,16 @@ class PersonalBestServiceTests extends TestCase
         "rebuild_from_history_picks_best_per_act",
         "rebuild_from_history_picks_best_zone_pbs_from_details",
         "rebuild_from_history_ignores_runs_without_total_ms",
-        "rebuild_from_history_persists_to_repo"
+        "rebuild_from_history_persists_to_repo",
+
+        ; --- RebuildFromHistory: interrupted-visit discount (zone-PB exclusion) ---
+        "rebuild_discounts_interrupted_visit_from_zone_pb",
+        "rebuild_drops_zone_pb_when_visit_equals_total",
+        "rebuild_drops_zone_pb_when_visit_exceeds_total",
+        "rebuild_ignores_interrupted_keys_when_zone_name_empty",
+        "rebuild_ignores_interrupted_keys_when_visit_ms_zero",
+        "rebuild_only_discounts_matching_zone",
+        "rebuild_legacy_run_without_interrupted_keys_behaves_like_before"
     ]
 
     ; ============================================================
@@ -715,6 +724,189 @@ class PersonalBestServiceTests extends TestCase
         Assert.Equal(1000, data["runPbMs"])
         Assert.Equal(500,  data["runPbByAct"][1])
         Assert.Equal(200,  data["zonePbs"]["Z"])
+    }
+
+    ; ============================================================
+    ; RebuildFromHistory: interrupted-visit discount (zone-PB exclusion)
+    ; ============================================================
+    ;
+    ; Mirrors the discount that RunSnapshotSaver.Save applies at
+    ; save time. The two paths must agree so Undo (delete + rebuild)
+    ; lands on the exact same PB as the original save. Each run's
+    ; details[label==interruptedZoneName].ms gets the visit time
+    ; subtracted; if the result is <= 0, the zone is skipped (single-
+    ; visit interrupted case). Legacy runs lack the keys; the
+    ; rebuild behaves exactly as it did before the discount existed.
+
+    rebuild_discounts_interrupted_visit_from_zone_pb()
+    {
+        ; Permissive scenario: zone X visited twice (60s closed +
+        ; 3s interrupted). details["Mud Burrow"].ms = 63000
+        ; (factual). After the discount, the PB candidate for
+        ; Mud Burrow is 60000.
+        runs := [
+            Map(
+                "runId",   "r1",
+                "totalMs", 300000,
+                "actCheckpoints", Map(),
+                "details", [
+                    Map("category", "mapa", "label", "Mud Burrow", "ms", 63000),
+                    Map("category", "mapa", "label", "Vastiri Outskirts", "ms", 30000)
+                ],
+                "interruptedZoneName",    "Mud Burrow",
+                "interruptedZoneVisitMs", 3000
+            )
+        ]
+        this.svc.RebuildFromHistory(runs)
+        Assert.Equal(60000, this.svc.GetZonePbMs("Mud Burrow"),
+            "Interrupted visit (3000ms) discounted from zone PB candidate")
+        Assert.Equal(30000, this.svc.GetZonePbMs("Vastiri Outskirts"),
+            "Other zones untouched")
+    }
+
+    rebuild_drops_zone_pb_when_visit_equals_total()
+    {
+        ; Single-visit interrupted zone: details.ms == visitMs.
+        ; After discount it's 0 and the zone falls out of PB-
+        ; eligible candidates entirely. With only one run in
+        ; history, the zone has no PB at all.
+        runs := [
+            Map(
+                "runId",   "r1",
+                "totalMs", 300000,
+                "actCheckpoints", Map(),
+                "details", [
+                    Map("category", "mapa", "label", "Mud Burrow", "ms", 60000),
+                    Map("category", "mapa", "label", "Vastiri Outskirts", "ms", 3000)
+                ],
+                "interruptedZoneName",    "Vastiri Outskirts",
+                "interruptedZoneVisitMs", 3000
+            )
+        ]
+        this.svc.RebuildFromHistory(runs)
+        Assert.Equal(60000, this.svc.GetZonePbMs("Mud Burrow"))
+        Assert.Equal(0,     this.svc.GetZonePbMs("Vastiri Outskirts"),
+            "Single-visit interrupted zone has no PB candidate")
+    }
+
+    rebuild_drops_zone_pb_when_visit_exceeds_total()
+    {
+        ; Defensive: if the persisted visit somehow exceeds the
+        ; persisted zone total (out-of-band state from a future
+        ; bug), the rebuild still drops the zone instead of
+        ; recording a negative candidate.
+        runs := [
+            Map(
+                "runId",   "r1",
+                "totalMs", 300000,
+                "actCheckpoints", Map(),
+                "details", [
+                    Map("category", "mapa", "label", "Mud Burrow", "ms", 2000)
+                ],
+                "interruptedZoneName",    "Mud Burrow",
+                "interruptedZoneVisitMs", 3000
+            )
+        ]
+        this.svc.RebuildFromHistory(runs)
+        Assert.Equal(0, this.svc.GetZonePbMs("Mud Burrow"),
+            "Negative remainder skipped, not recorded as PB")
+    }
+
+    rebuild_ignores_interrupted_keys_when_zone_name_empty()
+    {
+        ; Empty interruptedZoneName disables the discount even when
+        ; visitMs is non-zero (defensive: garbage data shouldn't
+        ; quietly subtract from a random zone).
+        runs := [
+            Map(
+                "runId",   "r1",
+                "totalMs", 300000,
+                "actCheckpoints", Map(),
+                "details", [
+                    Map("category", "mapa", "label", "Mud Burrow", "ms", 60000)
+                ],
+                "interruptedZoneName",    "",
+                "interruptedZoneVisitMs", 3000
+            )
+        ]
+        this.svc.RebuildFromHistory(runs)
+        Assert.Equal(60000, this.svc.GetZonePbMs("Mud Burrow"),
+            "No discount when interruptedZoneName is empty")
+    }
+
+    rebuild_ignores_interrupted_keys_when_visit_ms_zero()
+    {
+        ; Zero visit time disables the discount even when the zone
+        ; name is set (e.g. finalized immediately after a transition
+        ; with no time on the new zone yet).
+        runs := [
+            Map(
+                "runId",   "r1",
+                "totalMs", 300000,
+                "actCheckpoints", Map(),
+                "details", [
+                    Map("category", "mapa", "label", "Mud Burrow", "ms", 60000)
+                ],
+                "interruptedZoneName",    "Mud Burrow",
+                "interruptedZoneVisitMs", 0
+            )
+        ]
+        this.svc.RebuildFromHistory(runs)
+        Assert.Equal(60000, this.svc.GetZonePbMs("Mud Burrow"),
+            "No discount when interruptedZoneVisitMs is zero")
+    }
+
+    rebuild_only_discounts_matching_zone()
+    {
+        ; The discount applies only to the zone whose name matches
+        ; interruptedZoneName. Other zones in the same run are
+        ; recorded without modification.
+        runs := [
+            Map(
+                "runId",   "r1",
+                "totalMs", 300000,
+                "actCheckpoints", Map(),
+                "details", [
+                    Map("category", "mapa",   "label", "Mud Burrow",         "ms", 63000),
+                    Map("category", "mapa",   "label", "Vastiri Outskirts",  "ms", 45000),
+                    Map("category", "cidade", "label", "Clearfell Encampment", "ms", 5000)
+                ],
+                "interruptedZoneName",    "Mud Burrow",
+                "interruptedZoneVisitMs", 3000
+            )
+        ]
+        this.svc.RebuildFromHistory(runs)
+        Assert.Equal(60000, this.svc.GetZonePbMs("Mud Burrow"),
+            "Matched zone is discounted")
+        Assert.Equal(45000, this.svc.GetZonePbMs("Vastiri Outskirts"),
+            "Non-matched zone is unmodified")
+        Assert.Equal(5000,  this.svc.GetZonePbMs("Clearfell Encampment"),
+            "Town in another category is unmodified")
+    }
+
+    rebuild_legacy_run_without_interrupted_keys_behaves_like_before()
+    {
+        ; Back-compat: a run persisted before the keys existed
+        ; loads with no `interruptedZoneName` / `interruptedZoneVisitMs`
+        ; entries in its buildResult. Rebuild must process its
+        ; details exactly as it did before the discount logic
+        ; existed -- otherwise old PBs would silently shift on
+        ; the next Undo.
+        runs := [
+            Map(
+                "runId",   "legacy_r1",
+                "totalMs", 300000,
+                "actCheckpoints", Map(),
+                "details", [
+                    Map("category", "mapa", "label", "Mud Burrow", "ms", 60000),
+                    Map("category", "mapa", "label", "Vastiri Outskirts", "ms", 30000)
+                ]
+                ; no interruptedZoneName / interruptedZoneVisitMs keys
+            )
+        ]
+        this.svc.RebuildFromHistory(runs)
+        Assert.Equal(60000, this.svc.GetZonePbMs("Mud Burrow"))
+        Assert.Equal(30000, this.svc.GetZonePbMs("Vastiri Outskirts"))
     }
 }
 

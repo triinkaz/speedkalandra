@@ -54,6 +54,14 @@ class RunHistoryRepositoryTests extends TestCase
         "save_returns_false_when_zone_name_contains_bracket",
         "save_warns_when_field_has_ini_breaking_chars",
 
+        ; --- Interrupted-visit keys (zone-PB exclusion) ---
+        "save_writes_interrupted_keys_in_meta_section",
+        "save_writes_empty_interrupted_keys_when_buildresult_omits_them",
+        "roundtrip_preserves_interrupted_zone_keys",
+        "load_defaults_interrupted_keys_when_missing_from_ini",
+        "save_returns_false_when_interrupted_zone_name_contains_newline",
+        "save_warns_when_interrupted_zone_name_contains_bracket",
+
         ; --- ListRunIds ---
         "list_run_ids_returns_empty_when_dir_missing",
         "list_run_ids_extracts_run_id_without_extension",
@@ -487,6 +495,135 @@ class RunHistoryRepositoryTests extends TestCase
         repo.Save(currentRun)
         Assert.True(sink.Count() >= 1,
             "Bad-char save surfaces through the sink")
+        Assert.True(sink.HasMessage("Save failed for runId"),
+            "Warning identifies the failed operation")
+    }
+
+    ; ============================================================
+    ; Interrupted-visit keys (zone-PB exclusion)
+    ; ============================================================
+    ;
+    ; The repository persists two extra fields in [meta] so that
+    ; PersonalBestService.RebuildFromHistory (UndoLastSave / history
+    ; Delete) can apply the same PB discount that RunSnapshotSaver
+    ; applied at save time:
+    ;
+    ;   interruptedZoneName    -- zone active when the hotkey fired
+    ;   interruptedZoneVisitMs -- elapsed of that single visit (NOT
+    ;                             the zone's total for the run)
+    ;
+    ; Legacy runs (saved before these fields existed) load with the
+    ; defaults "" and 0 -- RebuildFromHistory sees no discount and
+    ; processes the details exactly as it did before. The check at
+    ; serialization time treats interruptedZoneName like any other
+    ; textual field: \r, \n, [, ] are rejected via
+    ; _AssertNoIniBreakingChars, matching the policy in section
+    ; "INI escaping: defensive throw on dangerous chars".
+
+    save_writes_interrupted_keys_in_meta_section()
+    {
+        tmpDir := Fixtures.TempDir()
+        repo := RunHistoryRepository(tmpDir)
+
+        currentRun := this._MakeBuildResult()
+        currentRun["interruptedZoneName"]    := "Vastiri Outskirts"
+        currentRun["interruptedZoneVisitMs"] := 3000
+
+        Assert.True(repo.Save(currentRun))
+
+        ini := IniFile(tmpDir "\20260512_142345.ini")
+        Assert.Equal("Vastiri Outskirts", ini.Read("meta", "interruptedZoneName"))
+        Assert.Equal("3000",              ini.Read("meta", "interruptedZoneVisitMs"))
+    }
+
+    save_writes_empty_interrupted_keys_when_buildresult_omits_them()
+    {
+        ; A buildResult constructed without the keys (e.g. legacy
+        ; callers, or RunSnapshotSaver in cancelled-without-zone
+        ; paths) still writes well-formed defaults. Load on the
+        ; same INI will produce "" and 0.
+        tmpDir := Fixtures.TempDir()
+        repo := RunHistoryRepository(tmpDir)
+
+        currentRun := this._MakeBuildResult()
+        ; _MakeBuildResult deliberately doesn't include the new keys
+
+        Assert.True(repo.Save(currentRun))
+
+        ini := IniFile(tmpDir "\20260512_142345.ini")
+        Assert.Equal("",  ini.Read("meta", "interruptedZoneName"))
+        Assert.Equal("0", ini.Read("meta", "interruptedZoneVisitMs"))
+    }
+
+    roundtrip_preserves_interrupted_zone_keys()
+    {
+        tmpDir := Fixtures.TempDir()
+        repo := RunHistoryRepository(tmpDir)
+
+        currentRun := this._MakeBuildResult()
+        currentRun["interruptedZoneName"]    := "Vastiri Outskirts"
+        currentRun["interruptedZoneVisitMs"] := 3247
+
+        Assert.True(repo.Save(currentRun))
+        loaded := repo.Load("20260512_142345")
+        Assert.Equal("Vastiri Outskirts", loaded["interruptedZoneName"])
+        Assert.Equal(3247,                loaded["interruptedZoneVisitMs"])
+    }
+
+    load_defaults_interrupted_keys_when_missing_from_ini()
+    {
+        ; Simulates a legacy INI saved before these fields existed:
+        ; save normally, then strip the keys with IniDelete. Load
+        ; must still return a well-formed buildResult with empty /
+        ; zero defaults so RebuildFromHistory sees no discount.
+        tmpDir := Fixtures.TempDir()
+        repo := RunHistoryRepository(tmpDir)
+        repo.Save(this._MakeBuildResult())
+
+        iniPath := tmpDir "\20260512_142345.ini"
+        IniDelete(iniPath, "meta", "interruptedZoneName")
+        IniDelete(iniPath, "meta", "interruptedZoneVisitMs")
+
+        loaded := repo.Load("20260512_142345")
+        Assert.Equal("", loaded["interruptedZoneName"],
+            "Missing legacy key defaults to empty string")
+        Assert.Equal(0, loaded["interruptedZoneVisitMs"],
+            "Missing legacy key defaults to 0")
+    }
+
+    save_returns_false_when_interrupted_zone_name_contains_newline()
+    {
+        ; Same defensive check as profile / zone-name fields: a `\n`
+        ; in the zone name would split a [meta] line in two and
+        ; corrupt the INI.
+        tmpDir := Fixtures.TempDir()
+        sink := InMemoryWarningSink()
+        repo := RunHistoryRepository(tmpDir, sink)
+
+        currentRun := this._MakeBuildResult()
+        currentRun["interruptedZoneName"]    := "Bad`nZone"
+        currentRun["interruptedZoneVisitMs"] := 1000
+
+        Assert.False(repo.Save(currentRun),
+            "Save returns false when interruptedZoneName has \n")
+    }
+
+    save_warns_when_interrupted_zone_name_contains_bracket()
+    {
+        ; `[` and `]` in a [meta] value would forge a section
+        ; header on the next line; rejected like every other text
+        ; field.
+        tmpDir := Fixtures.TempDir()
+        sink := InMemoryWarningSink()
+        repo := RunHistoryRepository(tmpDir, sink)
+
+        currentRun := this._MakeBuildResult()
+        currentRun["interruptedZoneName"]    := "Zone[Bracket"
+        currentRun["interruptedZoneVisitMs"] := 1000
+
+        Assert.False(repo.Save(currentRun))
+        Assert.True(sink.Count() >= 1,
+            "Bad interruptedZoneName surfaces through the sink")
         Assert.True(sink.HasMessage("Save failed for runId"),
             "Warning identifies the failed operation")
     }

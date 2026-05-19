@@ -91,6 +91,26 @@ class RunSnapshotSaver
             zoneFirstEnteredAt := IsObject(this._zoneTracker)
                                   ? this._zoneTracker.GetFirstEnteredAtMap()
                                   : Map()
+            ; The zone that was active when the hotkey fired and the
+            ; elapsed of that visit -- captured straight after
+            ; _OnTimerStopped flushed it but BEFORE RunCompleted is
+            ; published. RunSnapshotSaver runs in the
+            ; OnBeforeFinalize hook, which is exactly that window.
+            ; This visit didn't close via transition, so it isn't
+            ; PB-eligible: we discount it from pbZoneTotals below
+            ; (factual zoneTotals stay untouched for history/plot).
+            ; The pair is also persisted into buildResult so
+            ; RebuildFromHistory can apply the same discount on
+            ; Undo / Delete. `try expr` silences UnsetItemError
+            ; from lightweight test stubs that don't implement the
+            ; new methods.
+            interruptedZoneName := ""
+            interruptedZoneVisitMs := 0
+            if IsObject(this._zoneTracker)
+            {
+                try interruptedZoneName := String(this._zoneTracker.GetActiveZone())
+                try interruptedZoneVisitMs := Integer(this._zoneTracker.GetCurrentVisitMs())
+            }
             runMs := IsObject(this._timer) ? this._timer.GetRunMs() : 0
 
             ; Uniform threshold for completed and cancelled.
@@ -149,6 +169,16 @@ class RunSnapshotSaver
             }
             buildResult["actCheckpoints"] := actCheckpoints
 
+            ; Persist the interrupted-visit info alongside the
+            ; factual totals so RebuildFromHistory (UndoLastSave /
+            ; history Delete) can apply the same PB discount as
+            ; UpdateFromRun below. Legacy runs lack these keys; the
+            ; repository's Load defaults them to "" / 0 (no discount,
+            ; matches the bug's original behavior for those runs --
+            ; consistent with the data they were saved with).
+            buildResult["interruptedZoneName"]    := interruptedZoneName
+            buildResult["interruptedZoneVisitMs"] := interruptedZoneVisitMs
+
             saved := this._runHistory.Save(buildResult)
             rid := buildResult.Has("runId") ? buildResult["runId"] : ""
             if (saved && IsObject(this._log))
@@ -158,14 +188,36 @@ class RunSnapshotSaver
             }
 
             ; --- Personal bests ---
-            ; Completed runs only — cancelled doesn't count toward PB
+            ; Completed runs only -- cancelled doesn't count toward PB
             ; even if it crosses the threshold.
             pbChanged := false
             if (reason = "completed" && IsObject(this._personalBest))
             {
+                ; PB-eligible totals: factual zoneTotals minus the
+                ; time of the visit that was interrupted by the
+                ; hotkey. That visit never closed via transition, so
+                ; it isn't PB-eligible. Visits before it in the same
+                ; run are unaffected -- a zone visited twice (one
+                ; complete + one interrupted) keeps the complete
+                ; visit's contribution as a PB candidate.
+                ; RebuildFromHistory applies the same discount via
+                ; the persisted keys so Undo lands on the same PB.
+                pbZoneTotals := Map()
+                for zoneKey, zoneMs in zoneTotals
+                    pbZoneTotals[zoneKey] := zoneMs
+                if (interruptedZoneName != "" && interruptedZoneVisitMs > 0
+                    && pbZoneTotals.Has(interruptedZoneName))
+                {
+                    adjusted := pbZoneTotals[interruptedZoneName] - interruptedZoneVisitMs
+                    if (adjusted > 0)
+                        pbZoneTotals[interruptedZoneName] := adjusted
+                    else
+                        pbZoneTotals.Delete(interruptedZoneName)
+                }
+
                 try
                 {
-                    pbChanged := this._personalBest.UpdateFromRun(runMs, rid, zoneTotals, actCheckpoints)
+                    pbChanged := this._personalBest.UpdateFromRun(runMs, rid, pbZoneTotals, actCheckpoints)
                 }
                 catch as ex
                 {

@@ -166,6 +166,20 @@ class RunHistoryRepository
         sb .= "totalMs=" . Integer(totalMs)                                                                . "`r`n"
         sb .= "deathCount="    . Integer(buildResult.Has("deathCount")    ? buildResult["deathCount"]    : 0) . "`r`n"
         sb .= "maxActReached=" . Integer(buildResult.Has("maxActReached") ? buildResult["maxActReached"] : 0) . "`r`n"
+        ; Interrupted-by-hotkey visit: the zone active at FinalizeRun
+        ; and the elapsed of that single visit (not the zone's total
+        ; for the run). RebuildFromHistory discounts this from PB-
+        ; eligible zone totals so Undo / history Delete land on the
+        ; same PB as UpdateFromRun. Legacy runs (saved before this
+        ; field existed) get "" / 0 on Load -- no discount, matching
+        ; the data they were saved with.
+        interruptedZoneName := buildResult.Has("interruptedZoneName") ? String(buildResult["interruptedZoneName"]) : ""
+        RunHistoryRepository._AssertNoIniBreakingChars(interruptedZoneName, "interruptedZoneName")
+        sb .= "interruptedZoneName=" . interruptedZoneName . "`r`n"
+        interruptedZoneVisitMs := buildResult.Has("interruptedZoneVisitMs") ? buildResult["interruptedZoneVisitMs"] : 0
+        if !IsNumber(interruptedZoneVisitMs) || interruptedZoneVisitMs < 0
+            interruptedZoneVisitMs := 0
+        sb .= "interruptedZoneVisitMs=" . Integer(interruptedZoneVisitMs) . "`r`n"
         sb .= "`r`n"
 
         ; ---- [totals] ----
@@ -333,7 +347,12 @@ class RunHistoryRepository
             "firstTs",       ini.Read("meta", "firstTs", ""),
             "totalMs",       Integer(ini.Read("meta", "totalMs", "0") + 0),
             "deathCount",    Integer(ini.Read("meta", "deathCount", "0") + 0),
-            "maxActReached", Integer(ini.Read("meta", "maxActReached", "0") + 0)
+            "maxActReached", Integer(ini.Read("meta", "maxActReached", "0") + 0),
+            ; Empty / zero defaults preserve legacy-run behavior:
+            ; RebuildFromHistory sees no discount and processes the
+            ; details exactly like before the field was added.
+            "interruptedZoneName",    ini.Read("meta", "interruptedZoneName", ""),
+            "interruptedZoneVisitMs", Integer(ini.Read("meta", "interruptedZoneVisitMs", "0") + 0)
         )
 
         ; --- totals ---

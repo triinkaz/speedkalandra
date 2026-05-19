@@ -367,6 +367,25 @@ class PersonalBestService
             ; Zone PBs come from per-run details (category=mapa|cidade).
             if runItem.Has("details") && IsObject(runItem["details"])
             {
+                ; Mirror the discount RunSnapshotSaver applied at
+                ; save time: subtract the interrupted-visit time
+                ; from the matching zone's total before comparing
+                ; with the running PB. The two paths -- save and
+                ; rebuild -- must agree so Undo (delete + rebuild)
+                ; lands on the exact same PB as the original save.
+                ; Legacy runs persisted before this field existed
+                ; load with "" / 0 (see RunHistoryRepository.Load);
+                ; the `interruptedZoneVisitMs > 0` guard skips the
+                ; discount cleanly for them.
+                interruptedZoneName := runItem.Has("interruptedZoneName") ? String(runItem["interruptedZoneName"]) : ""
+                interruptedZoneVisitMs := 0
+                if runItem.Has("interruptedZoneVisitMs") && IsNumber(runItem["interruptedZoneVisitMs"])
+                {
+                    v := Integer(runItem["interruptedZoneVisitMs"])
+                    if (v > 0)
+                        interruptedZoneVisitMs := v
+                }
+
                 for _, d in runItem["details"]
                 {
                     if !IsObject(d)
@@ -381,6 +400,16 @@ class PersonalBestService
                     if !IsNumber(ms) || ms <= 0
                         continue
                     msInt := Integer(ms)
+                    if (zone = interruptedZoneName && interruptedZoneVisitMs > 0)
+                    {
+                        ; Permissive case: zone visited twice (one
+                        ; complete + interrupted) keeps the complete-
+                        ; visit time as a PB candidate. Single-visit
+                        ; (interrupted) falls below 0 and is skipped.
+                        msInt -= interruptedZoneVisitMs
+                        if (msInt <= 0)
+                            continue
+                    }
                     cur := this._zonePbs.Has(zone) ? this._zonePbs[zone] : 0
                     if (cur = 0 || msInt < cur)
                         this._zonePbs[zone] := msInt

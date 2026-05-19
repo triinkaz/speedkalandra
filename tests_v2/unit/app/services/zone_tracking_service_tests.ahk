@@ -192,7 +192,23 @@ class ZoneTrackingServiceTests extends TestCase
         ; --- ZoneTimeAccumulated publish ---
         "flush_publishes_zone_time_accumulated",
         "flush_does_not_publish_when_elapsed_zero",
-        "zone_time_accumulated_includes_zone_name_duration_total"
+        "zone_time_accumulated_includes_zone_name_duration_total",
+
+        ; --- GetCurrentVisitMs / _currentVisitMs ---
+        "current_visit_ms_zero_at_construction",
+        "current_visit_ms_returns_live_elapsed_during_active_zone",
+        "current_visit_ms_survives_timer_pause_resume",
+        "current_visit_ms_includes_post_stopped_value",
+        "current_visit_ms_resets_on_zone_change",
+        "current_visit_ms_accumulates_after_zone_change",
+        "current_visit_ms_resets_on_run_started_fresh",
+        "current_visit_ms_preserved_on_hydrated_run_started",
+        "current_visit_ms_resets_on_run_reset",
+        "current_visit_ms_resets_on_run_cancelled",
+        "current_visit_ms_resets_on_run_completed",
+        "current_visit_ms_resets_on_manual_reset",
+        "current_visit_ms_zero_after_hydrate",
+        "current_visit_ms_finalize_sequence_returns_interrupted_time"
     ]
 
     ; ============================================================
@@ -1093,6 +1109,175 @@ class ZoneTrackingServiceTests extends TestCase
         Assert.Equal("Mud Burrow", ev["zoneName"])
         Assert.Equal(3000,         ev["durationMs"])
         Assert.Equal(3000,         ev["totalMs"])
+    }
+
+    ; ============================================================
+    ; GetCurrentVisitMs / _currentVisitMs
+    ; ============================================================
+    ;
+    ; Per-visit accumulator that survives pause/resume and
+    ; TimerStopped (which keep _activeZone alive). RunSnapshotSaver
+    ; reads it in the OnBeforeFinalize hook to discount the
+    ; interrupted-by-hotkey visit from PB-eligible zone totals --
+    ; the visit never closed via transition, so it isn't PB-eligible.
+
+    current_visit_ms_zero_at_construction()
+    {
+        Assert.Equal(0, this.svc.GetCurrentVisitMs())
+    }
+
+    current_visit_ms_returns_live_elapsed_during_active_zone()
+    {
+        this.bus.Publish(Events.RunStarted, Map("runId", "x"))
+        this.bus.Publish(Events.ZoneChanged, Map("zoneName", "Mud Burrow"))
+        this.stubClock.AdvanceMs(3000)
+        Assert.Equal(3000, this.svc.GetCurrentVisitMs(),
+            "Live elapsed from the active visit is included")
+    }
+
+    current_visit_ms_survives_timer_pause_resume()
+    {
+        this.bus.Publish(Events.RunStarted, Map("runId", "x"))
+        this.bus.Publish(Events.ZoneChanged, Map("zoneName", "Mud Burrow"))
+        this.stubClock.AdvanceMs(2000)
+        this.bus.Publish(Events.TimerPaused, Map())   ; accumulator += 2000
+        this.stubClock.AdvanceMs(5000)                ; pause time doesn't count
+        this.bus.Publish(Events.TimerResumed, Map())
+        this.stubClock.AdvanceMs(1500)
+        Assert.Equal(3500, this.svc.GetCurrentVisitMs(),
+            "Pre-pause (2000) + post-resume (1500); pause time excluded")
+    }
+
+    current_visit_ms_includes_post_stopped_value()
+    {
+        ; Production sequence's primary case: hotkey -> TimerStopped
+        ; flushes the visit's elapsed into the accumulator and zeroes
+        ; _startMs (so live elapsed is 0). The accumulator equals the
+        ; interrupted visit's total at this point -- this is what
+        ; RunSnapshotSaver reads in OnBeforeFinalize.
+        this.bus.Publish(Events.RunStarted, Map("runId", "x"))
+        this.bus.Publish(Events.ZoneChanged, Map("zoneName", "Mud Burrow"))
+        this.stubClock.AdvanceMs(3500)
+        this.bus.Publish(Events.TimerStopped, Map())
+        Assert.Equal(3500, this.svc.GetCurrentVisitMs(),
+            "After TimerStopped, accumulator holds the interrupted visit's time")
+    }
+
+    current_visit_ms_resets_on_zone_change()
+    {
+        this.bus.Publish(Events.RunStarted, Map("runId", "x"))
+        this.bus.Publish(Events.ZoneChanged, Map("zoneName", "Mud Burrow"))
+        this.stubClock.AdvanceMs(3000)
+        this.bus.Publish(Events.ZoneChanged, Map("zoneName", "Vastiri Outskirts"))
+        Assert.Equal(0, this.svc.GetCurrentVisitMs(),
+            "New visit starts at zero; previous visit closed via transition")
+    }
+
+    current_visit_ms_accumulates_after_zone_change()
+    {
+        this.bus.Publish(Events.RunStarted, Map("runId", "x"))
+        this.bus.Publish(Events.ZoneChanged, Map("zoneName", "Mud Burrow"))
+        this.stubClock.AdvanceMs(3000)
+        this.bus.Publish(Events.ZoneChanged, Map("zoneName", "Vastiri Outskirts"))
+        this.stubClock.AdvanceMs(2000)
+        Assert.Equal(2000, this.svc.GetCurrentVisitMs(),
+            "Tracks only the current visit (Vastiri), not the previous Mud Burrow")
+    }
+
+    current_visit_ms_resets_on_run_started_fresh()
+    {
+        this.bus.Publish(Events.RunStarted, Map("runId", "old"))
+        this.bus.Publish(Events.ZoneChanged, Map("zoneName", "Mud Burrow"))
+        this.stubClock.AdvanceMs(2000)
+        this.bus.Publish(Events.TimerPaused, Map())            ; accumulator = 2000
+        this.bus.Publish(Events.RunStarted, Map("runId", "new"))
+        Assert.Equal(0, this.svc.GetCurrentVisitMs(),
+            "Fresh RunStarted (non-hydrate) wipes the visit accumulator")
+    }
+
+    current_visit_ms_preserved_on_hydrated_run_started()
+    {
+        ; Hydrate zeroes _currentVisitMs, and RunStarted{hydrated:true}
+        ; does NOT touch it -- so it stays zero. Pairs with the
+        ; non-persistence decision documented in KNOWN_ISSUES.
+        this.svc.Hydrate(Map("Mud Burrow", 60000))
+        this.svc.SetRunActive(true)
+        this.bus.Publish(Events.RunStarted, Map("runId", "hydrated", "hydrated", true))
+        Assert.Equal(0, this.svc.GetCurrentVisitMs(),
+            "Hydrated RunStarted leaves the accumulator at zero (post-Hydrate)")
+    }
+
+    current_visit_ms_resets_on_run_reset()
+    {
+        this.bus.Publish(Events.RunStarted, Map("runId", "x"))
+        this.bus.Publish(Events.ZoneChanged, Map("zoneName", "Mud Burrow"))
+        this.stubClock.AdvanceMs(3000)
+        this.bus.Publish(Events.TimerPaused, Map())   ; accumulator = 3000
+        this.bus.Publish(Events.RunReset, Map())
+        Assert.Equal(0, this.svc.GetCurrentVisitMs())
+    }
+
+    current_visit_ms_resets_on_run_cancelled()
+    {
+        this.bus.Publish(Events.RunStarted, Map("runId", "x"))
+        this.bus.Publish(Events.ZoneChanged, Map("zoneName", "Mud Burrow"))
+        this.stubClock.AdvanceMs(3000)
+        this.bus.Publish(Events.TimerPaused, Map())
+        this.bus.Publish(Events.RunCancelled, Map())
+        Assert.Equal(0, this.svc.GetCurrentVisitMs())
+    }
+
+    current_visit_ms_resets_on_run_completed()
+    {
+        ; Production sequence: TimerStopped -> RunCompleted. The
+        ; defensive zero-out in _OnRunCompleted covers the early-out
+        ; path in _FlushActive (where _startMs is already 0).
+        this.bus.Publish(Events.RunStarted, Map("runId", "x"))
+        this.bus.Publish(Events.ZoneChanged, Map("zoneName", "Mud Burrow"))
+        this.stubClock.AdvanceMs(3000)
+        this.bus.Publish(Events.TimerStopped, Map())   ; accumulator = 3000, _startMs = 0
+        this.bus.Publish(Events.RunCompleted, Map())
+        Assert.Equal(0, this.svc.GetCurrentVisitMs(),
+            "_OnRunCompleted defensively zeros the accumulator post-TimerStopped")
+    }
+
+    current_visit_ms_resets_on_manual_reset()
+    {
+        this.bus.Publish(Events.RunStarted, Map("runId", "x"))
+        this.bus.Publish(Events.ZoneChanged, Map("zoneName", "Mud Burrow"))
+        this.stubClock.AdvanceMs(3000)
+        this.bus.Publish(Events.TimerPaused, Map())
+        this.svc.Reset()
+        Assert.Equal(0, this.svc.GetCurrentVisitMs())
+    }
+
+    current_visit_ms_zero_after_hydrate()
+    {
+        this.svc.Hydrate(Map("Mud Burrow", 60000, "Vastiri Outskirts", 30000))
+        Assert.Equal(0, this.svc.GetCurrentVisitMs(),
+            "Hydrate zeroes the accumulator -- post-restart, no visit is in progress")
+    }
+
+    current_visit_ms_finalize_sequence_returns_interrupted_time()
+    {
+        ; End-to-end of the bug scenario: long visit in Z1, transition
+        ; to Z2, then hotkey while still in Z2. The accumulator after
+        ; TimerStopped equals only the interrupted (Z2) visit's time;
+        ; Z1's 60s is in _totals but NOT in _currentVisitMs because
+        ; that visit closed via transition.
+        this.bus.Publish(Events.RunStarted, Map("runId", "x"))
+        this.bus.Publish(Events.ZoneChanged, Map("zoneName", "Mud Burrow"))   ; Z1
+        this.stubClock.AdvanceMs(60000)
+        this.bus.Publish(Events.ZoneChanged, Map("zoneName", "Vastiri Outskirts"))   ; transition
+        this.stubClock.AdvanceMs(3000)
+        this.bus.Publish(Events.TimerStopped, Map())   ; hotkey
+
+        Assert.Equal(3000, this.svc.GetCurrentVisitMs(),
+            "Only the interrupted visit (3s in Vastiri Outskirts) is in the accumulator")
+        Assert.Equal(60000, this.svc.GetZoneTotal("Mud Burrow"),
+            "Z1's full visit is preserved in _totals (factual history)")
+        Assert.Equal(3000, this.svc.GetZoneTotal("Vastiri Outskirts"),
+            "Z2's interrupted visit is also in _totals (factual history)")
     }
 }
 

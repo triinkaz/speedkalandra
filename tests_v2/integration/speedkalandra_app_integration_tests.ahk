@@ -136,6 +136,10 @@ class SpeedKalandraAppIntegrationTests extends TestCase
         ; --- Cancel save flow (GSG §14 anti-regression: FIFO race fix) ---
         "cancelled_long_run_saves_to_history_with_zone_totals_intact",
 
+        ; --- Zone-PB exclusion (interrupted-by-hotkey visit) ---
+        "interrupted_visit_does_not_create_artificial_zone_pb",
+        "interrupted_visit_after_complete_visit_preserves_complete_visit_pb",
+
         ; --- Wave 9: regression tests for cataloged bugs without direct coverage ---
         ; Bug #9 (AUDIT): Riverbank resets level on every entry. Fix:
         ; exact match "The Riverbank" + _riverbankSeenInRun flag that
@@ -854,6 +858,115 @@ class SpeedKalandraAppIntegrationTests extends TestCase
         ; AFTER the save — _totals is now empty.
         Assert.Equal(0, this.app.zoneTracker.GetTotals().Count,
             "zone tracker state is cleared post-RunCancelled (subscriber ran after the hook)")
+    }
+
+    ; ============================================================
+    ; Zone-PB exclusion: interrupted-by-hotkey visit
+    ; ============================================================
+    ;
+    ; End-to-end guardrail for the fix that excludes the zone visit
+    ; interrupted by the FinalizeRun hotkey from PB-eligible zone
+    ; totals. The fix touches three layers (ZoneTrackingService
+    ; tracks per-visit elapsed; RunSnapshotSaver discounts it from
+    ; the totals passed to PersonalBestService.UpdateFromRun; the
+    ; same discount is mirrored by RebuildFromHistory on Undo). The
+    ; unit tests cover each layer in isolation; these two integration
+    ; tests prove the wiring works through the real composition root.
+
+    interrupted_visit_does_not_create_artificial_zone_pb()
+    {
+        ; Original bug scenario: user is deep into a run, then
+        ; presses the FinalizeRun hotkey right after entering a
+        ; fresh zone. Pre-fix, that zone's PB became the 3 s spent
+        ; in it (its only visit's total was 3 s, so 3 s landed in
+        ; the zonePbs map). The fix keeps the zone out of PB-eligible
+        ; totals when its only visit was the interrupted one.
+        this.app.bus.Publish(Commands.NewRunRequested, Map())
+        this._EnterZoneAndAdvance("The Riverbank",         180000)  ; 3 min
+        this._EnterZoneAndAdvance("Mud Burrow",             60000)  ; 1 min
+        this._EnterZoneAndAdvance("Clearfell Encampment",   3000)  ; 3 s, will be interrupted
+        producedRunId := this.app.runService.GetRunId()
+        this.app.bus.Publish(Commands.FinalizeRunRequested, Map())
+
+        ; History was written; the run is long enough.
+        Assert.Equal(1, this._ListRunFiles().Length,
+            "sanity: run saved (>=3min)")
+        Assert.Equal(producedRunId, this.app.personalBest.GetRunPbRunId(),
+            "sanity: global run PB recorded")
+
+        ; The first two zones each had a single complete visit;
+        ; they're PB-eligible.
+        Assert.Equal(180000, this.app.personalBest.GetZonePbMs("The Riverbank"),
+            "Riverbank closed via transition: full visit is a PB candidate")
+        Assert.Equal(60000, this.app.personalBest.GetZonePbMs("Mud Burrow"),
+            "Mud Burrow closed via transition: full visit is a PB candidate")
+
+        ; The interrupted zone has no PB at all -- this is the
+        ; assertion that would have FAILED before the fix (it would
+        ; have been 3000 ms).
+        Assert.Equal(0, this.app.personalBest.GetZonePbMs("Clearfell Encampment"),
+            "Interrupted-only visit is NOT a PB candidate (would have been 3000ms pre-fix)")
+
+        ; The factual history still records the visit -- the discount
+        ; is for PBs only, not for the run's totals or details.
+        loadedRun := this.app.runHistory.Load(producedRunId)
+        Assert.True(IsObject(loadedRun))
+        Assert.Equal("Clearfell Encampment", loadedRun["interruptedZoneName"],
+            "buildResult records which zone was interrupted")
+        Assert.Equal(3000, loadedRun["interruptedZoneVisitMs"],
+            "buildResult records the interrupted visit's elapsed")
+    }
+
+    interrupted_visit_after_complete_visit_preserves_complete_visit_pb()
+    {
+        ; Permissive scenario: zone X visited twice in the same run
+        ; (60 s closed via transition, then 3 s interrupted by
+        ; hotkey). The factual zoneTotals for X is 63000 ms (sum of
+        ; both visits), but the PB-eligible total is the closed
+        ; visit's 60000 ms -- only the interrupted visit's 3000 ms
+        ; is subtracted, the prior complete-visit time is preserved.
+        this.app.bus.Publish(Commands.NewRunRequested, Map())
+        this._EnterZoneAndAdvance("Mud Burrow",     60000)   ; visit 1: closed
+        this._EnterZoneAndAdvance("The Riverbank", 180000)   ; intermediate zone
+        this._EnterZoneAndAdvance("Mud Burrow",      3000)   ; visit 2: interrupted
+        producedRunId := this.app.runService.GetRunId()
+        this.app.bus.Publish(Commands.FinalizeRunRequested, Map())
+
+        Assert.Equal(1, this._ListRunFiles().Length, "sanity: run saved")
+
+        ; The Riverbank is a normal closed visit.
+        Assert.Equal(180000, this.app.personalBest.GetZonePbMs("The Riverbank"))
+
+        ; Mud Burrow's PB is the closed-visit time, NOT the sum and
+        ; NOT the interrupted visit. Pre-fix this would have been
+        ; 63000 (the factual sum).
+        Assert.Equal(60000, this.app.personalBest.GetZonePbMs("Mud Burrow"),
+            "Permissive: closed visit (60s) is the PB candidate; "
+            . "interrupted visit (3s) discounted, prior visit preserved")
+
+        ; Factual history: both visits show up in the run's details
+        ; (the plot builder produces detail rows per zone visit). The
+        ; discount applies only to PB candidates, NOT to the saved
+        ; history -- the run's full timeline survives intact.
+        ;
+        ; Note: loadedRun["totals"] is the per-category map
+        ; (mapa/cidade/loading/morte), not a per-zone lookup; the
+        ; per-zone data lives in loadedRun["details"]. We sum the
+        ; Mud Burrow detail rows defensively (the builder may emit
+        ; one row aggregating both visits, or one per visit; either
+        ; way the total is 63000ms).
+        loadedRun := this.app.runHistory.Load(producedRunId)
+        Assert.True(IsObject(loadedRun))
+        mudBurrowMs := 0
+        for _, d in loadedRun["details"]
+        {
+            if (d.Has("label") && d["label"] = "Mud Burrow")
+                mudBurrowMs += d["ms"]
+        }
+        Assert.Equal(63000, mudBurrowMs,
+            "Factual ms is the sum of both visits (no discount in history)")
+        Assert.Equal("Mud Burrow", loadedRun["interruptedZoneName"])
+        Assert.Equal(3000, loadedRun["interruptedZoneVisitMs"])
     }
 
     log_monitor_with_catalog_resolves_internal_id_in_zone_tracker()
