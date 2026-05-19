@@ -67,12 +67,12 @@ param(
     [switch]$Force,
     # Skip running the AHK test suite before packaging. By default the
     # test suite is run as a release gate; failures abort the build.
-    # -SkipTests bypasses the gate — use only for local iteration or
+    # -SkipTests bypasses the gate -- use only for local iteration or
     # the test of this script itself, never for actual releases.
     [switch]$SkipTests,
     # Explicit path to AutoHotkey64.exe (AHK v2). When unset,
     # Resolve-AhkPath tries the standard install locations and then
-    # PATH. The explicit value is respected even when wrong — fails
+    # PATH. The explicit value is respected even when wrong -- fails
     # fast instead of silently falling back to a system install,
     # which would otherwise hide CI misconfiguration.
     [string]$AhkPath = ""
@@ -85,7 +85,7 @@ param(
 # Resolves the AutoHotkey64.exe to use for the release-gate test
 # suite. Resolution order:
 #   1. -AhkPath explicit (must exist; failure here does NOT fall
-#      through — the user's explicit choice is respected even when
+#      through -- the user's explicit choice is respected even when
 #      wrong, otherwise a CI runner with a misconfigured -AhkPath
 #      would silently fall back to any AHK on PATH and bless the
 #      release with the wrong version)
@@ -103,7 +103,7 @@ function Resolve-AhkPath {
             return $Explicit
         }
         # Explicit miss: do NOT fall back. Return $null and let the
-        # caller produce the failure message — that way the user
+        # caller produce the failure message -- that way the user
         # sees "AhkPath '...' does not exist" instead of "AHK not
         # found", which would be confusing when they just passed
         # the flag.
@@ -204,12 +204,16 @@ Write-Host ""
 
 if (-not $SkipTests) {
     Write-Host "Running AHK test suite (release gate)..." -ForegroundColor Cyan
+    # Capture this BEFORE invoking AHK so the staleness check below
+    # has a reliable lower bound on when the run started, independent
+    # of how the suite reports its own duration.
+    $gateStartTime = Get-Date
     $ahkExe = Resolve-AhkPath -Explicit $AhkPath
     if (-not $ahkExe) {
         if ($AhkPath -ne "") {
             # Explicit miss: name the bad value so the user can fix it
             # without re-reading the help. Same exit policy whether the
-            # path is a typo or a real-but-deleted install — both
+            # path is a typo or a real-but-deleted install -- both
             # surface as "file does not exist".
             Write-Error "AhkPath '$AhkPath' does not exist. Fix the path or omit -AhkPath to let the script discover AHK v2 automatically."
         }
@@ -223,33 +227,80 @@ if (-not $SkipTests) {
     # SPEEDKALANDRA_TEST_NO_GUI=1 suppresses the final MsgBox and
     # makes the runner exit with 0/1 instead of waiting for OK.
     #
-    # Direct `& $ahkExe` instead of `Start-Process -Wait` because
-    # the latter caused intermittent hangs on Windows runners in CI
-    # (see .github/workflows/test.yml for the same fix). Push-Location
-    # gives AHK its working directory; the env var save/restore is
-    # in `try/finally` so a Ctrl+C in the middle of the suite doesn't
-    # leak SPEEDKALANDRA_TEST_NO_GUI=1 into the parent shell.
+    # WHY Start-Process and not `& $ahkExe ...`:
+    # AutoHotkey64.exe is a Windows-subsystem (GUI) executable, not
+    # console-subsystem. PowerShell's call operator (`&`) only waits
+    # implicitly on console-subsystem EXEs whose stdout/stderr are
+    # wired to the shell; for GUI-subsystem EXEs it returns immediately
+    # as fire-and-forget. (PowerShell 7 papers over this for some
+    # GUI EXEs but PowerShell 5.1 -- the default `powershell.exe` the
+    # build-dist.bat wrapper invokes -- does not.) The previous form
+    # `& $ahkExe "tests_v2\run_tests.ahk"` therefore produced a
+    # silently broken release gate: build-dist returned and went on
+    # to create the zip while the AHK process was still running the
+    # suite. Add the null-defensive `$exitCode = $null ? 0 : raw` on
+    # top and a real failure mid-suite would never reach this branch.
     #
-    # `$rawCode = $LASTEXITCODE` is captured immediately because PS 7
-    # on Windows runners has been observed returning $null from native
-    # processes that exit cleanly. Treat $null as 0 — a real failure
-    # would have set it to a positive integer.
+    # WHY NOT `Start-Process -Wait -NoNewWindow`:
+    # That form hung the GitHub Actions Windows runner for 19 minutes
+    # with no output -- a known interaction where the child process
+    # exits but inherits the shell's stdio handles, leaving the
+    # parent's `WaitForExit` blocked on a pipe that never closes.
+    # Plain `Start-Process -Wait -PassThru` (no -NoNewWindow) gives
+    # AHK its own detached process; -WindowStyle Hidden defends
+    # against any incidental console window flicker.
+    #
+    # The CI workflow (.github/workflows/test.yml) keeps using the
+    # `&` form because it runs under `shell: pwsh` (PowerShell 7),
+    # which DOES wait on GUI-subsystem EXEs invoked via `&` -- the
+    # bug above is local-only. Both paths produce the same observable
+    # behavior: a non-zero AHK exit aborts the build.
     $oldNoGui = $env:SPEEDKALANDRA_TEST_NO_GUI
     $env:SPEEDKALANDRA_TEST_NO_GUI = "1"
-    Push-Location -LiteralPath $SourceDir
     try {
-        & $ahkExe "tests_v2\run_tests.ahk"
-        $rawCode = $LASTEXITCODE
-        $exitCode = if ($null -eq $rawCode) { 0 } else { $rawCode }
+        $testProc = Start-Process -FilePath $ahkExe `
+                                  -ArgumentList "tests_v2\run_tests.ahk" `
+                                  -WorkingDirectory $SourceDir `
+                                  -Wait -PassThru `
+                                  -WindowStyle Hidden
+        # $testProc.ExitCode is the AHK ExitApp(N) value. Unlike
+        # $LASTEXITCODE after a `&` call, this is guaranteed populated
+        # by .NET's Process.ExitCode property after WaitForExit -- no
+        # null-defensive fallback needed.
+        $exitCode = $testProc.ExitCode
         if ($exitCode -ne 0) {
             Write-Error "Test suite failed (exit $exitCode). Release aborted. See tests_v2\tests_output.log for details."
             exit $exitCode
         }
+
+        # Defense in depth: an AHK exit 0 alone is not proof the suite
+        # actually ran during THIS build. If a future regression causes
+        # Start-Process -Wait to behave like the old fire-and-forget `&`
+        # (or some sibling Windows subsystem quirk emerges), we'd ship
+        # again on a stale gate. The test runner writes tests_output.log
+        # via TestReporter.Init at startup, so its LastWriteTime is a
+        # reliable lower bound for "the suite did start during this run".
+        # Compare against $gateStartTime captured before AHK was invoked:
+        # a stale log means AHK was never the process that wrote it (or
+        # it wrote nothing at all), and we must abort.
+        $outputLog = Join-Path $SourceDir "tests_v2\tests_output.log"
+        if (-not (Test-Path -LiteralPath $outputLog)) {
+            Write-Error "Release gate: AHK reported exit 0 but tests_v2\tests_output.log was not produced. The test runner either crashed before TestReporter.Init or the gate did not actually wait for AHK to run. Release aborted."
+            exit 1
+        }
+        $logMtime = (Get-Item -LiteralPath $outputLog).LastWriteTime
+        if ($logMtime -lt $gateStartTime) {
+            Write-Error ("Release gate: AHK reported exit 0 but tests_v2\tests_output.log is stale " +
+                         "(last write: $logMtime, gate started: $gateStartTime). " +
+                         "The AHK process did not produce a fresh log during this build -- either Start-Process -Wait " +
+                         "returned prematurely, or the runner skipped TestReporter.Init. Release aborted.")
+            exit 1
+        }
+
         Write-Host "Tests passed." -ForegroundColor Green
         Write-Host ""
     }
     finally {
-        Pop-Location
         $env:SPEEDKALANDRA_TEST_NO_GUI = $oldNoGui
     }
 }
@@ -419,7 +470,7 @@ $dataDir = Join-Path $DestDir "data"
 if (-not (Test-Path $dataDir)) {
     New-Item -ItemType Directory -Path $dataDir -Force | Out-Null
 }
-# data/runs/ — make sure it exists (RunHistoryRepository creates it
+# data/runs/ -- make sure it exists (RunHistoryRepository creates it
 # if missing, but better to guarantee it here).
 $runsDir = Join-Path $dataDir "runs"
 if (-not (Test-Path $runsDir)) {
