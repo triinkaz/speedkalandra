@@ -61,4 +61,11 @@ Client*.txt
 AUDITORIA-PRODUCAO.md
 REFACTOR-ROADMAP.md
 speedkalandra_gold_standard_guide.md
+speedkalandra_gold_standard_guide_v2.md
 speedkalandra_roadmap_10_10.md
+speedkalandra_roadmap_padrao_ouro.md
+
+# === AI assistant context (dev-only, never released) ===
+# CLAUDE.md is a pointer file for AI assistants reading the
+# repository between sessions. Not part of the public project.
+CLAUDE.md
