@@ -91,6 +91,9 @@ class SpeedKalandraAppIntegrationTests extends TestCase
         "constructor_does_not_throw_with_empty_ini",
         "constructor_no_run_active_initially",
         "constructor_event_tracer_not_enabled_by_default",
+        "event_tracer_start_registers_interceptor_on_app_bus",
+        "event_tracer_stop_removes_interceptor_from_app_bus",
+        "event_tracer_active_captures_events_published_through_app_bus",
 
         ; --- Run lifecycle via bus ---
         "new_run_via_command_starts_run",
@@ -255,6 +258,75 @@ class SpeedKalandraAppIntegrationTests extends TestCase
             "EventTraceLogger object is still instantiated for cheap flip-on later")
         Assert.False(this.app.eventTracer.IsEnabled(),
             "Interceptor not registered on the bus until Start() under the flag")
+    }
+
+    event_tracer_start_registers_interceptor_on_app_bus()
+    {
+        ; Companion to the test above: exercises the Start()-half of
+        ; the opt-in contract without going through app.Start() (which
+        ; would arm widgets / SetTimers). Verifies that wiring the
+        ; production EventTraceLogger against the production EventBus
+        ; actually flips IsEnabled() and registers exactly one
+        ; interceptor — i.e. the two pieces composed by __New are
+        ; compatible and the contract documented in the class header
+        ; ("Start adds interceptor") holds in the real app context,
+        ; not just in EventTraceLoggerTests's isolated EventBus.
+        Assert.Equal(0, this.app.bus.InterceptorCount(),
+            "sanity: no interceptor before Start")
+        Assert.False(this.app.eventTracer.IsEnabled())
+
+        this.app.eventTracer.Start()
+
+        Assert.True(this.app.eventTracer.IsEnabled())
+        Assert.Equal(1, this.app.bus.InterceptorCount(),
+            "tracer.Start() registers exactly one interceptor on the app's bus")
+    }
+
+    event_tracer_stop_removes_interceptor_from_app_bus()
+    {
+        ; Symmetric to the test above: Stop must clean up after
+        ; itself. Important for any future refactor that adds a
+        ; restart path (e.g. a runtime toggle in the Settings
+        ; dialog) — each Stop has to leave InterceptorCount() at 0
+        ; or the bus would accumulate dead interceptors over time.
+        this.app.eventTracer.Start()
+        Assert.Equal(1, this.app.bus.InterceptorCount(), "sanity: started")
+
+        this.app.eventTracer.Stop()
+
+        Assert.False(this.app.eventTracer.IsEnabled())
+        Assert.Equal(0, this.app.bus.InterceptorCount(),
+            "tracer.Stop() removes the interceptor from the app's bus")
+    }
+
+    event_tracer_active_captures_events_published_through_app_bus()
+    {
+        ; End-to-end check of the diagnostic feature: a tracer
+        ; registered on the app's production bus captures events
+        ; that the app itself publishes during normal operation.
+        ; Uses a side-by-side tracer with an InMemoryLogger so the
+        ; capture is inspectable without reading from a real log
+        ; file (the production `app.log` is a LogService writing to
+        ; disk; swapping it out would break dozens of unrelated
+        ; subscribers). The probe tracer shares the bus and follows
+        ; the same code path the production tracer would.
+        memLog := InMemoryLogger()
+        probe  := EventTraceLogger(this.app.bus, memLog)
+        probe.Start()
+
+        ; Trigger an event through the normal command path — same
+        ; thing a hotkey press or settings save would produce in
+        ; production. RunService consumes Commands.NewRunRequested
+        ; and publishes Events.RunStarted as a side effect, so the
+        ; trace should pick up both lines.
+        this.app.bus.Publish(Commands.NewRunRequested, Map())
+
+        Assert.True(memLog.HasEntry("INFO", Commands.NewRunRequested),
+            "command event captured by tracer registered on app.bus")
+        Assert.True(memLog.HasEntry("INFO", Events.RunStarted),
+            "derived event also captured (proves the tracer sees the full event stream, not just the trigger)")
+
+        probe.Stop()
     }
 
     ; ============================================================
