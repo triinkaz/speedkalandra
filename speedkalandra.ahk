@@ -280,4 +280,8 @@ SpeedKalandraOnExitHandler(reason, code)
     try app.Stop()
 }
 
-^!q::ExitApp()
+; Note: there is no global Exit hotkey on purpose. Use the tray
+; menu "Exit" item to close the app. An earlier `^!q::ExitApp()`
+; was removed because on ABNT2 / international keyboards AltGr+Q
+; (which the OS reports as LCtrl+RAlt+Q) was triggering it by
+; accident and closing the app mid-run.
