@@ -22,8 +22,8 @@
 ;   Timer shows "MM:SS.mmm" (3 digits). Refresh every 50ms (20fps) via
 ;   internal SetTimer — the standard Evt.Tick (300ms) would be too
 ;   slow to perceive ms running. Only the timer text updates at high
-;   frequency; other fields (zone, deaths, XP, bar) update on the
-;   normal tick.
+;   frequency; other fields (zone, deaths, XP) update on the normal
+;   tick.
 ;
 ; DYNAMIC COLORS (same as Compact):
 ;   - Timer below the current act's PB: goodStrong (#4ADE80 vivid green)
@@ -35,7 +35,7 @@
 ; CONSTRUCTION:
 ;   widget := SteveLayoutWidget(bus, position, onPersist, timer,
 ;                               zoneTracker, xp, zonesCatalog,
-;                               loadingTotals, pbService)
+;                               pbService)
 
 
 class SteveLayoutWidget extends LayoutWidgetBase
@@ -56,9 +56,8 @@ class SteveLayoutWidget extends LayoutWidgetBase
     static MARGIN_X      := 10
     static TIMER_W       := 210   ; wide enough to fit MM:SS.mmm for runs >= 1h without cropping
     static ACT_ZONE_GAP  := 8     ; margin between act-zone and timer
-    static BAR_TIMER_GAP := 12    ; horizontal space between bar end and timer
 
-    ; Line 2: deaths + XP + bar (full-height bar so it stays visible)
+    ; Line 2: deaths + XP
     static LINE2_Y       := 42
     static LINE2_H       := 18
     static DEATHS_W      := 36
@@ -75,31 +74,11 @@ class SteveLayoutWidget extends LayoutWidgetBase
     ; stress. Only the timer text updates at this rate.
     static TIMER_REFRESH_MS := 50
 
-    ; Bar (line 2) — same palette as Compact for consistency
-    static COLOR_MAPA    := "38BDF8"
-    static COLOR_LOADING := "FACC15"
-    static COLOR_CIDADE  := "A78BFA"
-
-    ; Decorative whale (mode mascot).
-    ; Optional image in the left corner of the widget. If missing,
-    ; layout returns to normal without it.
-    static WHALE_IMG_PATH := A_ScriptDir "\assets\whale_steve.png"
-    static WHALE_X := 4
-    static WHALE_Y := 8
-    static WHALE_W := 48
-    static WHALE_H := 48
-    static WHALE_GAP := 4   ; space between whale and content to the right
-
-    ; Runtime flag: true if the image loaded successfully in _BuildGui.
-    ; Used to decide whether to shift content right or not.
-    _whaleLoaded := false
-
     ; Services
     _timer         := ""
     _zoneTracker   := ""
     _xp            := ""
     _zonesCatalog  := ""
-    _loadingTotals := ""
     _pbService     := ""
 
     ; State (replicated from Compact for robust PB resolution)
@@ -128,7 +107,7 @@ class SteveLayoutWidget extends LayoutWidgetBase
     _highFreqTimerFn := ""
 
     __New(bus, position, onPersist, timer, zoneTracker, xp,
-          zonesCatalog := "", loadingTotals := "", pbService := "")
+          zonesCatalog := "", pbService := "")
     {
         super.__New(SteveLayoutWidget.WIDGET_ID,
                     SteveLayoutWidget.DISPLAY_NAME,
@@ -137,7 +116,6 @@ class SteveLayoutWidget extends LayoutWidgetBase
         this._zoneTracker   := zoneTracker
         this._xp            := xp
         this._zonesCatalog  := zonesCatalog
-        this._loadingTotals := loadingTotals
         this._pbService     := pbService
 
         this._handlerTick           := (data) => this._OnTick(data)
@@ -196,9 +174,6 @@ class SteveLayoutWidget extends LayoutWidgetBase
         this._BuildKalandraBand(0, 0, w, h, "surface")
         this._BuildAccentStripe(0, 0, w, stripeH)
 
-        ; v17.15.3: decorative whale removed (minimalist feedback).
-        ; contentX now always at standard margin.
-        this._whaleLoaded := false
         contentX := marginX
 
         ; ============ LINE 1: act+zone | highlighted timer ============
@@ -214,10 +189,9 @@ class SteveLayoutWidget extends LayoutWidgetBase
             "")
 
         ; Highlighted timer (right) — BOLD, large font, dynamic color.
-        ; Occupies FULL HEIGHT (line 1 + line 2): the line 2 bar stops
-        ; before the timer (BAR_TIMER_GAP), leaving that "L" of space
-        ; for the timer to grow vertically. Style 0x200 (SS_CENTERIMAGE)
-        ; centers the text vertically within the control.
+        ; Occupies FULL HEIGHT (line 1 + line 2). Style 0x200
+        ; (SS_CENTERIMAGE) centers the text vertically within the
+        ; control.
         timerH := line2Y + line2H - line1Y
         this._SetFont(fontTimer, "text", "bold")
         this._ctrls["line1_timer"] := wg.Add("Text",
@@ -228,8 +202,6 @@ class SteveLayoutWidget extends LayoutWidgetBase
             "")
 
         ; ============ LINE 2: deaths + xp ============
-        ; v17.15.3 (minimalist feedback): the Map/Loading/Town bar was
-        ; removed from the Steve layout. Line 2 only has deaths + XP.
         x := contentX
 
         ; deaths (left)
@@ -301,8 +273,6 @@ class SteveLayoutWidget extends LayoutWidgetBase
         this._RefreshTimerOnly()
         this._RefreshDeaths()
         this._RefreshXp()
-        ; v17.15.3: _RefreshBar removed (Map/Loading/Town bar is out
-        ; of the Steve layout now).
     }
 
     _RefreshActZone()
@@ -387,11 +357,6 @@ class SteveLayoutWidget extends LayoutWidgetBase
             this._lastXpColor := color
         }
     }
-
-    ; v17.15.3: _RefreshBar removed. The Map/Loading/Town stacked bar
-    ; was on line 2 but did not fit the minimalist spirit of Steve
-    ; mode (Steve/Trinka feedback via Discord). Compact layout still
-    ; has that bar for those who want the distribution visible.
 
     ; ============================================================
     ; State event handlers
@@ -481,11 +446,10 @@ class SteveLayoutWidget extends LayoutWidgetBase
         return Theme.Color("danger")
     }
 
-    ; Formats ms as "MM:SS.cc" or "H:MM:SS".
-    ; v17.15.3 (Trinka/Steve feedback): in runs >= 1h, hides the
-    ; hundredths. Reason: "H:MM:SS.cc" cropped on the left in the
-    ; Steve layout. In sub-1h runs, hundredths are visible to give
-    ; a sense of continuous motion at 50ms refresh.
+    ; Formats ms as "MM:SS.cc" or "H:MM:SS". In runs >= 1h the
+    ; hundredths are hidden because "H:MM:SS.cc" was cropping on the
+    ; left edge of this layout; sub-1h runs keep the hundredths to
+    ; give a sense of continuous motion at the 50ms refresh rate.
     _FormatMsWithMillis(ms)
     {
         if (ms < 0)

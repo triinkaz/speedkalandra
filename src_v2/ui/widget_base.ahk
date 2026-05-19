@@ -7,8 +7,8 @@
 ;   - Shared helpers: _BuildHeader (title bar + decorative X).
 ;   - Position/scale/visibility mutators that persist via callback.
 ;
-; NOT done in this phase (coming in future sub-phases):
-;   - Drag/resize via mouse (planned for post-Phase 6 or WidgetManager).
+; NOT done yet (open items):
+;   - Drag/resize via mouse (will live in WidgetManager when introduced).
 ;   - Close button click handler (X is decorative now).
 ;   - Hover-hide transparency.
 ;
@@ -59,7 +59,7 @@ class WidgetBase
     _w      := 0         ; width calculated by _BuildGui
     _h      := 0         ; height calculated by _BuildGui
 
-    ; --- Mode-driven visibility (Phase 9.7) ---
+    ; --- Mode-driven visibility ---
     ; NON-persistent flag, controlled by OverlayModeApplier according
     ; to the current mode (NORMAL/COMPACT/MICRO). Show() requires both
     ; _position.visible (user preference, persisted) and _modeVisible
@@ -86,10 +86,10 @@ class WidgetBase
         this._position := position
         this._onPersist := onPersist
 
-        ; Item 1 (overlay refinement): subscribes to Ctrl state changes
-        ; to show/hide highlight border (visual feedback of "now
-        ; clickable/draggable"). Tolerant of Show not yet called —
-        ; _SetCtrlHighlightVisible is a no-op if ctrls is empty.
+        ; Subscribes to Ctrl state changes to show/hide the highlight
+        ; border (visual feedback of "now clickable/draggable"). Tolerant
+        ; of Show not yet called — _SetCtrlHighlightVisible is a no-op
+        ; if ctrls is empty.
         this._bus.Subscribe(Events.CtrlStateChanged, (data) => this._OnCtrlStateChanged(data))
     }
 
@@ -99,7 +99,7 @@ class WidgetBase
 
     IsVisible()  => this._position.visible        ; user preference
     IsRendered() => this._gui != ""                ; actually rendered on screen
-    IsModeVisible() => this._modeVisible           ; mode filter (Phase 9.7)
+    IsModeVisible() => this._modeVisible           ; mode filter
     GetPosition() => this._position
     GetScale()    => this._position.scale
     GetSize()     => Map("w", this._w, "h", this._h)
@@ -110,7 +110,7 @@ class WidgetBase
 
     ; Creates the Gui and shows it on screen. No-op if:
     ;   - position.visible = false (widget marked as invisible)
-    ;   - _modeVisible = false (current mode hides this widget) [Phase 9.7]
+    ;   - _modeVisible = false (current mode hides this widget)
     ;   - already rendered
     Show()
     {
@@ -121,7 +121,7 @@ class WidgetBase
         if this._gui
             return
 
-        ; Item 2 (click-through fix v2): LAYERED + TRANSPARENT set
+        ; Click-through: the widget needs LAYERED + TRANSPARENT, set
         ; AFTER Gui creation via WinSetTransparent + WinSetExStyle.
         ;
         ; Why not in the Gui creation flag? In AHK v2, creating the
@@ -153,8 +153,8 @@ class WidgetBase
         if (this._w <= 0 || this._h <= 0)
             throw Error("WidgetBase.Show: '" this.id "'._BuildGui did not set _w/_h correctly")
 
-        ; Item 1: creates 4 Progress controls as the highlight border
-        ; (hidden initially). Shown/hidden via Evt.CtrlStateChanged.
+        ; Highlight border: creates 4 Progress controls as the
+        ; (hidden initially) border, shown/hidden via Evt.CtrlStateChanged.
         ; Added AFTER _BuildGui so they are at the top of the z-order
         ; (rendered over the content).
         this._BuildCtrlHighlight()
@@ -170,17 +170,17 @@ class WidgetBase
 
         wg.Show("NoActivate X" posX " Y" posY " W" this._w " H" this._h)
 
-        ; Item 2 (after Show): WinSetTransparent ADDS LAYERED + alpha=255
-        ; (fully opaque) via SetLayeredWindowAttributes. More reliable
-        ; than setting LAYERED via Gui flag.
+        ; WinSetTransparent ADDS LAYERED + alpha=255 (fully opaque)
+        ; via SetLayeredWindowAttributes. More reliable than setting
+        ; LAYERED via Gui flag.
         try WinSetTransparent(255, "ahk_id " wg.Hwnd)
-        ; Item 2: WS_EX_TRANSPARENT (0x20) adds cross-process click-through.
+        ; WS_EX_TRANSPARENT (0x20) adds cross-process click-through.
         ; OverlayInteractionService toggles this bit when Ctrl flips.
         try WinSetExStyle("+0x20", "ahk_id " wg.Hwnd)
 
-        ; Smoke fix Turn 2: registers the Hwnd with OverlayInteractionService
-        ; for click-through (default) + Ctrl drag (interactive).
-        ; Static singleton set by the composition root in Start(). In
+        ; Register the Hwnd with OverlayInteractionService for
+        ; click-through (default) + Ctrl drag (interactive). Static
+        ; singleton set by the composition root in Start(). In
         ; headless or if the service didn't come up, silent no-op.
         if (OverlayInteractionService.Instance != "")
             OverlayInteractionService.Instance.RegisterHwnd(
@@ -194,8 +194,8 @@ class WidgetBase
     {
         if !this._gui
             return
-        ; Smoke fix Turn 2: unregisters from OverlayInteractionService
-        ; BEFORE Destroy() to avoid drag callback receiving a zombie Hwnd.
+        ; Unregister from OverlayInteractionService BEFORE Destroy()
+        ; to avoid drag callback receiving a zombie Hwnd.
         if (OverlayInteractionService.Instance != "")
         {
             try OverlayInteractionService.Instance.UnregisterHwnd(this._gui.Hwnd)
@@ -239,7 +239,7 @@ class WidgetBase
             this.Hide()
     }
 
-    ; Toggles temporary mode-driven visibility (Phase 9.7). Does NOT
+    ; Toggles temporary mode-driven visibility. Does NOT
     ; persist — it's the current-mode filter applied by
     ; OverlayModeApplier on Evt.OverlayModeChanged.
     ;
@@ -259,7 +259,7 @@ class WidgetBase
             this.Hide()
     }
 
-    ; Swaps the OverlayPosition reference used by the widget (Phase 9.10).
+    ; Swaps the OverlayPosition reference used by the widget.
     ; Does NOT persist — it's just a swap to point to the current mode's
     ; layout (OverlayModeApplier queries OverlayLayout.GetPositionForMode
     ; and passes the result here before SetModeVisible).
@@ -430,7 +430,7 @@ class WidgetBase
     }
 
     ; ============================================================
-    ; Ctrl highlight border (Item 1) — visual feedback of Ctrl active
+    ; Ctrl highlight border — visual feedback when Ctrl is active
     ; ============================================================
     ;
     ; Creates 4 Progress controls of 3px in accent color ('D8492F' orange),
@@ -525,11 +525,11 @@ class WidgetBase
     ; Private helpers
     ; ============================================================
 
-    ; Smoke fix Turn 2: callback called by OverlayInteractionService
-    ; when the user finishes a drag (LButton up). Reads the Gui's real
-    ; position via WinGetPos, converts to percentage relative to the
-    ; screen, and persists into this._position. Sets centered=false
-    ; (user moved manually).
+    ; Callback called by OverlayInteractionService when the user
+    ; finishes a drag (LButton up). Reads the Gui's real position via
+    ; WinGetPos, converts to percentage relative to the screen, and
+    ; persists into this._position. Sets centered=false (user moved
+    ; manually).
     _UpdatePositionFromGui()
     {
         if !this._gui

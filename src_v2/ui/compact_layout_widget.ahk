@@ -363,7 +363,7 @@ class CompactLayoutWidget extends LayoutWidgetBase
         ; --- LINE 2: 3 zones ---
         ; Zone 1: "Lv 47 · Area 10" (left-aligned)
         ; Zone 2: "XP" (fixed text, centered, dynamic color)
-        ; Zone 3: "PB MM:SS / MM:SS" (soft lavender color — PB display, v17.13)
+        ; Zone 3: "PB MM:SS / MM:SS" — zone PB / run PB, fixed teal color
         halfW := contentW / 2
         quarterW := contentW / 4
 

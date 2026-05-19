@@ -147,8 +147,8 @@ class ImportPreviewDialog
         g.Add("Text", "x32 y198 w528", "Conflicts (will rename _imported): " sum["rename"])
 
         ; --- Warnings (if any) ---
-        ; v0.1.0 Phase 5: cap at 5 visible to avoid dialog overflow when
-        ; the file has many warnings. Final summary shows how many were
+        ; Cap warnings list at 5 visible to avoid dialog overflow when
+        ; the file has many warnings. Final line shows how many were
         ; left out.
         wY := 224
         if prev["warnings"].Length > 0

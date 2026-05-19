@@ -349,7 +349,7 @@ class SpeedKalandraApp
         this.steveWidget := SteveLayoutWidget(
             this.bus, stevePos, this._persistFn,
             this.timer, this.zoneTracker, this.xpService,
-            this.zonesCatalog, this.loadingTotals, this.personalBest
+            this.zonesCatalog, this.personalBest
         )
 
         this.widgets := Map()

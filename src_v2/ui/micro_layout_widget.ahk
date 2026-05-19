@@ -196,7 +196,7 @@ class MicroLayoutWidget extends LayoutWidgetBase
         try ctrl.Value := "XP"
     }
 
-    ; v0.1.2 (audit #19): consolidated into Duration.FormatMs.
+    ; Thin alias kept so call sites in this file don't need rewriting.
     _FormatMs(ms) => Duration.FormatMs(ms)
 
     _OnTick(data)

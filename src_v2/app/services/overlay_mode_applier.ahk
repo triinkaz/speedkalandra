@@ -23,7 +23,7 @@ class OverlayModeApplier
 {
     static LAYOUT_COMPACT_ID := "compactLayout"
     static LAYOUT_MICRO_ID   := "microLayout"
-    static LAYOUT_STEVE_ID   := "steveLayout"   ; v17.14
+    static LAYOUT_STEVE_ID   := "steveLayout"
 
     _bus     := ""
     _widgets := ""    ; Map<id, WidgetBase>
