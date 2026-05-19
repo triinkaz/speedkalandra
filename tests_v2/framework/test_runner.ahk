@@ -78,12 +78,22 @@ class TestRunner
 
     static _RunOne(cls, methodName, fullName)
     {
+        ; CI diagnostic: write a marker before each test runs and another
+        ; after it finishes. If the boot log ends with "RUN: X::y" and no
+        ; matching "OK: X::y" (or "FAIL/ERR"), the AHK process died while
+        ; executing that test — names the exact culprit for the CI hang.
+        ; Cost is ~3600 short writes per run; trivial for FileAppend.
+        try FileAppend("RUN: " fullName "`n",
+            A_ScriptDir "\tests_boot.log", "UTF-8")
+
         try
         {
             instance := cls()
         }
         catch as e
         {
+            try FileAppend("ERR: " fullName " (instance ctor)`n",
+                A_ScriptDir "\tests_boot.log", "UTF-8")
             return { kind: "error", err: e }
         }
 
@@ -95,6 +105,8 @@ class TestRunner
         }
         catch as e
         {
+            try FileAppend("ERR: " fullName " (Setup)`n",
+                A_ScriptDir "\tests_boot.log", "UTF-8")
             TestRunner._SafeTeardown(instance)
             return { kind: "error", err: e }
         }
@@ -120,6 +132,9 @@ class TestRunner
 
         ; Teardown always (even after failure) - best effort, swallowed
         TestRunner._SafeTeardown(instance)
+
+        try FileAppend("OK: " fullName " [" testOutcome.kind "]`n",
+            A_ScriptDir "\tests_boot.log", "UTF-8")
 
         return testOutcome
     }
