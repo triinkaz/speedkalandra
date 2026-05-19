@@ -77,6 +77,23 @@ class RunExportFormatTests extends TestCase
         "validate_rejects_run_pb_run_id_with_bracket",
         "validate_accepts_safe_punctuation_in_textual_fields",
 
+        ; --- ValidateSchema: operational limits (import hardening) ---
+        "validate_rejects_runs_array_exceeding_max",
+        "validate_rejects_invalid_run_id_format",
+        "validate_accepts_run_id_with_suffix",
+        "validate_rejects_run_id_exceeding_max_length",
+        "validate_rejects_profile_exceeding_max_length",
+        "validate_rejects_totals_exceeding_max_entries",
+        "validate_rejects_actcheckpoints_exceeding_max_entries",
+        "validate_rejects_details_exceeding_max_entries",
+        "validate_rejects_zone_name_exceeding_max_length",
+        "validate_rejects_detail_label_exceeding_max_length",
+        "validate_rejects_zone_pbs_exceeding_max_entries",
+        "validate_rejects_zone_pb_key_exceeding_max_length",
+        "validate_rejects_run_pb_run_id_exceeding_max_length",
+        "validate_rejects_invalid_run_pb_run_id_format",
+        "validate_accepts_empty_run_pb_run_id",
+
         ; --- ValidateSchema: valid + warnings ---
         "validate_returns_valid_for_minimal_correct_schema",
         "validate_includes_warning_when_exported_at_missing",
@@ -632,6 +649,244 @@ class RunExportFormatTests extends TestCase
                     "ms", 5000, "note", "Act 1; pre-boss", "timestamp", "")
             ]
         ))
+        validation := RunExportFormat.ValidateSchema(payload)
+        firstError := validation["errors"].Length > 0 ? validation["errors"][1] : "<no error>"
+        Assert.True(validation["valid"], firstError)
+    }
+
+    ; ============================================================
+    ; ValidateSchema: operational limits (import hardening)
+    ; ============================================================
+    ;
+    ; The import boundary is the most untrusted surface in the
+    ; app. The exporter only emits well-formed payloads, but
+    ; hand-edited or maliciously crafted JSON could carry millions
+    ; of runs, gigabytes of single-field strings, or runIds that
+    ; would name themselves as path traversal sequences. Each cap
+    ; below has a paired test — the reasoning for the specific
+    ; numbers lives in RunExportFormat (see the constants block).
+    ;
+    ; All tests build a structurally valid payload first via
+    ; _BuildParsedPayload, then mutate the one field under test;
+    ; this isolates the failure cause from any other check.
+
+    validate_rejects_runs_array_exceeding_max()
+    {
+        ; Build a payload with MAX_RUNS_PER_FILE + 1 minimal runs.
+        ; The cap is enforced BEFORE per-run validation, so the
+        ; entries themselves can be cheap stubs — we're testing
+        ; the early-exit, not the inner loop.
+        bigArray := []
+        loop RunExportFormat.MAX_RUNS_PER_FILE + 1
+            bigArray.Push(Map("runId", "20260101_000000", "totalMs", 1000))
+        validation := RunExportFormat.ValidateSchema(Map(
+            "schemaVersion", 1,
+            "runs", bigArray
+        ))
+        Assert.False(validation["valid"])
+        Assert.True(InStr(validation["errors"][1], "exceeds maximum") > 0,
+            "error names the cap, not just 'invalid runs'")
+        Assert.True(InStr(validation["errors"][1], "runs") > 0)
+    }
+
+    validate_rejects_invalid_run_id_format()
+    {
+        ; A non-empty runId that doesn't match YYYYMMDD_HHMMSS
+        ; must be rejected (it would become the saved filename
+        ; on disk, possibly carrying path separators or
+        ; AHK-meaningful chars).
+        payload := this._BuildParsedPayload(Map("runId", "not-a-runid"))
+        validation := RunExportFormat.ValidateSchema(payload)
+        Assert.False(validation["valid"])
+        Assert.True(InStr(validation["errors"][1], "runId") > 0)
+        Assert.True(InStr(validation["errors"][1], "invalid format") > 0,
+            "error message identifies the cause")
+    }
+
+    validate_accepts_run_id_with_suffix()
+    {
+        ; Positive control: the legacy `YYYYMMDD_HHMMSS_<suffix>`
+        ; form (used historically for profile-tagged runIds, and
+        ; today for rename-on-conflict during import) must keep
+        ; passing validation — RunImportService relies on it.
+        payload := this._BuildParsedPayload(Map("runId", "20260515_103045_imported_2"))
+        validation := RunExportFormat.ValidateSchema(payload)
+        firstError := validation["errors"].Length > 0 ? validation["errors"][1] : "<no error>"
+        Assert.True(validation["valid"], firstError)
+    }
+
+    validate_rejects_run_id_exceeding_max_length()
+    {
+        ; A 600-char runId would otherwise pass the format check
+        ; only because the regex `(_[a-zA-Z0-9_-]+)?` accepts an
+        ; arbitrarily long suffix. The length cap is what stops it.
+        bigSuffix := ""
+        loop 600
+            bigSuffix .= "a"
+        oversized := "20260101_000000_" bigSuffix
+        payload := this._BuildParsedPayload(Map("runId", oversized))
+        validation := RunExportFormat.ValidateSchema(payload)
+        Assert.False(validation["valid"])
+        Assert.True(InStr(validation["errors"][1], "runId") > 0)
+        Assert.True(InStr(validation["errors"][1], "maximum length") > 0)
+    }
+
+    validate_rejects_profile_exceeding_max_length()
+    {
+        bigProfile := ""
+        loop RunExportFormat.MAX_STRING_LEN + 1
+            bigProfile .= "x"
+        payload := this._BuildParsedPayload(Map("profile", bigProfile))
+        validation := RunExportFormat.ValidateSchema(payload)
+        Assert.False(validation["valid"])
+        Assert.True(InStr(validation["errors"][1], "profile") > 0)
+        Assert.True(InStr(validation["errors"][1], "maximum length") > 0)
+    }
+
+    validate_rejects_totals_exceeding_max_entries()
+    {
+        bigTotals := Map()
+        loop RunExportFormat.MAX_TOTALS_PER_RUN + 1
+            bigTotals["zone_" A_Index] := A_Index * 1000
+        payload := this._BuildParsedPayload(Map("totals", bigTotals))
+        validation := RunExportFormat.ValidateSchema(payload)
+        Assert.False(validation["valid"])
+        Assert.True(InStr(validation["errors"][1], "totals") > 0)
+        Assert.True(InStr(validation["errors"][1], "exceeds maximum") > 0)
+    }
+
+    validate_rejects_actcheckpoints_exceeding_max_entries()
+    {
+        bigCheckpoints := Map()
+        loop RunExportFormat.MAX_ACT_CHECKPOINTS + 1
+            bigCheckpoints[A_Index] := A_Index * 100000
+        payload := this._BuildParsedPayload(Map("actCheckpoints", bigCheckpoints))
+        validation := RunExportFormat.ValidateSchema(payload)
+        Assert.False(validation["valid"])
+        Assert.True(InStr(validation["errors"][1], "actCheckpoints") > 0)
+        Assert.True(InStr(validation["errors"][1], "exceeds maximum") > 0)
+    }
+
+    validate_rejects_details_exceeding_max_entries()
+    {
+        bigDetails := []
+        loop RunExportFormat.MAX_DETAILS_PER_RUN + 1
+            bigDetails.Push(Map("category", "mapa", "label", "Z",
+                "ms", 100, "note", "", "timestamp", ""))
+        payload := this._BuildParsedPayload(Map("details", bigDetails))
+        validation := RunExportFormat.ValidateSchema(payload)
+        Assert.False(validation["valid"])
+        Assert.True(InStr(validation["errors"][1], "details") > 0)
+        Assert.True(InStr(validation["errors"][1], "exceeds maximum") > 0)
+    }
+
+    validate_rejects_zone_name_exceeding_max_length()
+    {
+        bigZone := ""
+        loop RunExportFormat.MAX_STRING_LEN + 1
+            bigZone .= "z"
+        payload := this._BuildParsedPayload(Map(
+            "totals", Map(bigZone, 5000)
+        ))
+        validation := RunExportFormat.ValidateSchema(payload)
+        Assert.False(validation["valid"])
+        Assert.True(InStr(validation["errors"][1], "totals") > 0)
+        Assert.True(InStr(validation["errors"][1], "maximum length") > 0)
+    }
+
+    validate_rejects_detail_label_exceeding_max_length()
+    {
+        bigLabel := ""
+        loop RunExportFormat.MAX_STRING_LEN + 1
+            bigLabel .= "l"
+        payload := this._BuildParsedPayload(Map(
+            "details", [
+                Map("category", "mapa", "label", bigLabel,
+                    "ms", 5000, "note", "", "timestamp", "")
+            ]
+        ))
+        validation := RunExportFormat.ValidateSchema(payload)
+        Assert.False(validation["valid"])
+        Assert.True(InStr(validation["errors"][1], "label") > 0)
+        Assert.True(InStr(validation["errors"][1], "maximum length") > 0)
+    }
+
+    validate_rejects_zone_pbs_exceeding_max_entries()
+    {
+        bigZonePbs := Map()
+        loop RunExportFormat.MAX_ZONE_PBS + 1
+            bigZonePbs["zone_" A_Index] := A_Index * 1000
+        pbs := Map(
+            "runPbMs",    7100000,
+            "runPbRunId", "20260512_142345",
+            "zonePbs",    bigZonePbs
+        )
+        payload := this._BuildParsedPayload("", pbs)
+        validation := RunExportFormat.ValidateSchema(payload)
+        Assert.False(validation["valid"])
+        Assert.True(InStr(validation["errors"][1], "zonePbs") > 0)
+        Assert.True(InStr(validation["errors"][1], "exceeds maximum") > 0)
+    }
+
+    validate_rejects_zone_pb_key_exceeding_max_length()
+    {
+        bigZone := ""
+        loop RunExportFormat.MAX_STRING_LEN + 1
+            bigZone .= "k"
+        pbs := Map(
+            "runPbMs",    7100000,
+            "runPbRunId", "20260512_142345",
+            "zonePbs",    Map(bigZone, 100000)
+        )
+        payload := this._BuildParsedPayload("", pbs)
+        validation := RunExportFormat.ValidateSchema(payload)
+        Assert.False(validation["valid"])
+        Assert.True(InStr(validation["errors"][1], "zonePbs") > 0)
+        Assert.True(InStr(validation["errors"][1], "maximum length") > 0)
+    }
+
+    validate_rejects_run_pb_run_id_exceeding_max_length()
+    {
+        bigRunId := "20260101_000000_"
+        loop 600
+            bigRunId .= "a"
+        pbs := Map(
+            "runPbMs",    7100000,
+            "runPbRunId", bigRunId
+        )
+        payload := this._BuildParsedPayload("", pbs)
+        validation := RunExportFormat.ValidateSchema(payload)
+        Assert.False(validation["valid"])
+        Assert.True(InStr(validation["errors"][1], "runPbRunId") > 0)
+        Assert.True(InStr(validation["errors"][1], "maximum length") > 0)
+    }
+
+    validate_rejects_invalid_run_pb_run_id_format()
+    {
+        ; A clean, short but malformed runPbRunId fails the format
+        ; check (not the length check, not the INI-char check).
+        ; This is the gap RunId.IsValid closes for PBs.
+        pbs := Map(
+            "runPbMs",    7100000,
+            "runPbRunId", "not-a-valid-runid"
+        )
+        payload := this._BuildParsedPayload("", pbs)
+        validation := RunExportFormat.ValidateSchema(payload)
+        Assert.False(validation["valid"])
+        Assert.True(InStr(validation["errors"][1], "runPbRunId") > 0)
+        Assert.True(InStr(validation["errors"][1], "invalid format") > 0)
+    }
+
+    validate_accepts_empty_run_pb_run_id()
+    {
+        ; Positive control: an empty runPbRunId is the well-formed
+        ; "no PB yet" state (a PB block with runPbMs=0 and no
+        ; anchored runId). The format check must skip empty values.
+        pbs := Map(
+            "runPbMs",    0,
+            "runPbRunId", ""
+        )
+        payload := this._BuildParsedPayload("", pbs)
         validation := RunExportFormat.ValidateSchema(payload)
         firstError := validation["errors"].Length > 0 ? validation["errors"][1] : "<no error>"
         Assert.True(validation["valid"], firstError)

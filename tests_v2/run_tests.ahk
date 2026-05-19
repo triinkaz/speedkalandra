@@ -312,6 +312,7 @@ SpeedKalandraMsgBox(text, title := "", options := "") {
 #Include unit\app\services\focus_auto_pause_service_tests.ahk
 #Include unit\app\services\overlay_interaction_service_tests.ahk
 #Include unit\app\services\event_trace_logger_tests.ahk
+#Include unit\app\services\run_import_service_tests.ahk
 
 ; ------------------------------------------------------------
 ; Suites - app/ (composition-root collaborators)

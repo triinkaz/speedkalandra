@@ -47,6 +47,17 @@ class RunImportService
 {
     static MAX_RENAME_ATTEMPTS := 10
 
+    ; Hard ceiling on the size of an imported JSON file. FileRead
+    ; pulls the entire file into memory before parsing; a 100 MB
+    ; export (real or crafted) would consume 100 MB+ of RAM just
+    ; to fail later on schema validation. Refuse before reading.
+    ;
+    ; 10 MB covers extremely large legitimate exports (a multi-league
+    ; archive at MAX_RUNS_PER_FILE=5000 with full details produces
+    ; roughly 4–6 MB), with margin for future schema growth. Anything
+    ; larger is either malformed or adversarial.
+    static MAX_FILE_BYTES := 10485760   ; 10 * 1024 * 1024
+
     _bus          := ""
     _runHistory   := ""
     _personalBest := ""
@@ -89,6 +100,28 @@ class RunImportService
         if !FileExist(inputPath)
         {
             result["errors"].Push("File not found: " inputPath)
+            return result
+        }
+
+        ; Size cap BEFORE FileRead. FileGetSize is a metadata query
+        ; (no read); FileRead would otherwise pull the entire file
+        ; into memory before any size-related error could surface.
+        ; The catch covers transient races (file deleted between
+        ; FileExist and FileGetSize) without leaking the exception
+        ; into the result.
+        fileBytes := 0
+        try fileBytes := FileGetSize(inputPath)
+        catch as ex
+        {
+            result["errors"].Push("Failed to stat file: " ex.Message)
+            return result
+        }
+        if (fileBytes > RunImportService.MAX_FILE_BYTES)
+        {
+            result["errors"].Push("File too large: " fileBytes " bytes (limit: "
+                . RunImportService.MAX_FILE_BYTES " bytes / "
+                . Round(RunImportService.MAX_FILE_BYTES / 1048576, 1) " MB). "
+                . "Refusing to load to avoid memory exhaustion.")
             return result
         }
 

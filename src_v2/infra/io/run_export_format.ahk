@@ -75,6 +75,56 @@ class RunExportFormat
     static EXPORTER_NAME := "SpeedKalandra"
 
     ; ============================================================
+    ; Operational import limits
+    ; ============================================================
+    ;
+    ; The schema validator rejects any payload that exceeds these.
+    ; The bar for each limit is "clearly above what a real session
+    ; produces, low enough to refuse adversarial or accidentally
+    ; gigantic files before they hit FileRead / Save". External
+    ; input crossing the import boundary is the most untrusted
+    ; surface in the app — a hand-edited or maliciously crafted
+    ; JSON can carry 50 MB of nested arrays that would happily
+    ; FileRead into memory and only fail later on FileMove.
+    ;
+    ; Reasoning per limit:
+    ;
+    ;   MAX_RUNS_PER_FILE = 5000
+    ;     A typical PoE2 league spans ~50–200 runs per player.
+    ;     5000 covers multi-league exports without opening the door
+    ;     to a 1-million-entry array.
+    ;
+    ;   MAX_STRING_LEN = 500
+    ;     Zone names cap at ~40 chars in the live catalog; profile
+    ;     and patch are user-defined but should fit a single line.
+    ;     500 leaves headroom for human input (long custom profile
+    ;     names, build descriptors with parens and punctuation —
+    ;     `validate_accepts_safe_punctuation_in_textual_fields`
+    ;     exercises a 300-char label) without allowing 10 MB of
+    ;     single-field payload.
+    ;
+    ;   MAX_DETAILS_PER_RUN = 1000
+    ;     A 4-hour run with one zone change every 15 seconds = 960
+    ;     details, plus per-loading rows. 1000 fits the realistic
+    ;     worst case; beyond that the file is malformed or
+    ;     adversarial.
+    ;
+    ;   MAX_TOTALS_PER_RUN / MAX_ZONE_PBS = 200
+    ;     The current PoE2 zone catalog has 77 entries. 200
+    ;     absorbs future expansion (acts beyond 6, side content)
+    ;     without admitting a 10000-zone fabricated payload.
+    ;
+    ;   MAX_ACT_CHECKPOINTS = 20
+    ;     The campaign has 6 acts at the moment. 20 absorbs future
+    ;     acts; anything past that is broken input.
+    static MAX_RUNS_PER_FILE := 5000
+    static MAX_STRING_LEN := 500
+    static MAX_DETAILS_PER_RUN := 1000
+    static MAX_TOTALS_PER_RUN := 200
+    static MAX_ZONE_PBS := 200
+    static MAX_ACT_CHECKPOINTS := 20
+
+    ; ============================================================
     ; Serialize(runs, pbData, options) -> JSON-ready Map
     ;
     ;   runs    : Array<buildResult> (Maps in the builder's format)
@@ -177,6 +227,16 @@ class RunExportFormat
         else if !IsObject(parsed["runs"]) || !(parsed["runs"] is Array)
         {
             errors.Push("'runs' field must be an array")
+        }
+        else if (parsed["runs"].Length > RunExportFormat.MAX_RUNS_PER_FILE)
+        {
+            ; Refuse before iterating into per-run validation. A
+            ; 100k-entry runs array would otherwise run the full
+            ; _ValidateRun loop with all its sub-checks before
+            ; reporting failure, wasting time and memory on input
+            ; that's known-bad at a glance.
+            errors.Push("'runs' has " parsed["runs"].Length
+                . " entries, exceeds maximum of " RunExportFormat.MAX_RUNS_PER_FILE)
         }
         else
         {
@@ -719,45 +779,112 @@ class RunExportFormat
         ; RunHistoryRepository._SerializeBuildResultToIni catches
         ; the case where a future parser regression smuggles a bad
         ; char in through some other code path.
+        ;
+        ; The length cap runs alongside the char check: a 50 MB
+        ; "profile" field would otherwise pass _FindIniBreakingChar
+        ; (no \r\n[]) and only fail much later on disk-write. One
+        ; cap, one place, one clear error.
         textFields := ["runId", "profile", "patch", "firstTs"]
         for _, fieldName in textFields
         {
             if !run.Has(fieldName)
                 continue
-            badChar := RunExportFormat._FindIniBreakingChar(String(run[fieldName]))
+            fieldValue := String(run[fieldName])
+            if (StrLen(fieldValue) > RunExportFormat.MAX_STRING_LEN)
+            {
+                errors.Push("runs[" idx "]." fieldName
+                    . " exceeds maximum length of " RunExportFormat.MAX_STRING_LEN
+                    . " characters (got " StrLen(fieldValue) ")")
+                continue   ; one error per field is enough
+            }
+            badChar := RunExportFormat._FindIniBreakingChar(fieldValue)
             if (badChar != "")
                 errors.Push("runs[" idx "]." fieldName
                     . " contains INI-breaking character (" . badChar
                     . "); reject \\r \\n [ ] in textual fields")
         }
 
-        ; totals: keys are zone names. Reject if any key contains a
-        ; structural char, OR if any value is not a non-negative integer.
-        ; Zone times can legitimately be 0 (e.g. a zone visited and
-        ; immediately exited), so the lower bound is 0 not 1. Negative
-        ; values would distort the plot and PB comparisons silently.
-        ; One error per category is enough — the user can fix the source
-        ; file and re-import; if both checks fail in the same iteration,
+        ; runId format check runs AFTER the textFields loop so structural
+        ; problems (\r\n[] in the value, or length above MAX_STRING_LEN)
+        ; are reported before the regex mismatch. A runId like
+        ; "20260515\n_evil" hits the INI-breaking branch and we never get
+        ; here — historical contract preserved (the suite has a test
+        ; that asserts the first error names INI-breaking, not format).
+        ; runId determines the saved filename (data/runs/{runId}.ini)
+        ; and is the conflict-resolution key during import, so the
+        ; format check anchors on the same YYYYMMDD_HHMMSS[_suffix]
+        ; pattern the exporter emits.
+        if run.Has("runId")
+        {
+            runIdStr := String(run["runId"])
+            alreadyReported := (runIdStr = "")
+                || (StrLen(runIdStr) > RunExportFormat.MAX_STRING_LEN)
+                || (RunExportFormat._FindIniBreakingChar(runIdStr) != "")
+            if (!alreadyReported && !RunId.IsValid(runIdStr))
+            {
+                errors.Push("runs[" idx "]: 'runId' has invalid format ('"
+                    . runIdStr "'); expected YYYYMMDD_HHMMSS"
+                    . " with optional alphanumeric suffix")
+            }
+        }
+
+        ; totals: keys are zone names. Reject if the map is
+        ; oversized, OR if any key contains a structural char or
+        ; exceeds the string length cap, OR if any value is not a
+        ; non-negative integer. Zone times can legitimately be 0
+        ; (e.g. a zone visited and immediately exited), so the
+        ; lower bound is 0 not 1. Negative values would distort
+        ; the plot and PB comparisons silently. One error per
+        ; category is enough — the user can fix the source file
+        ; and re-import; if both checks fail in the same iteration,
         ; the INI-char message wins (it's the more structural problem).
         if run.Has("totals") && IsObject(run["totals"]) && (run["totals"] is Map)
         {
-            for zoneName, zoneValue in run["totals"]
+            if (run["totals"].Count > RunExportFormat.MAX_TOTALS_PER_RUN)
             {
-                badChar := RunExportFormat._FindIniBreakingChar(String(zoneName))
-                if (badChar != "")
+                errors.Push("runs[" idx "].totals has " run["totals"].Count
+                    . " entries, exceeds maximum of " RunExportFormat.MAX_TOTALS_PER_RUN)
+            }
+            else
+            {
+                for zoneName, zoneValue in run["totals"]
                 {
-                    errors.Push("runs[" idx "].totals key '" . zoneName
-                        . "' contains INI-breaking character (" . badChar
-                        . "); reject \\r \\n [ ] in textual fields")
-                    break
-                }
-                if (!IsNumber(zoneValue) || Integer(zoneValue) < 0)
-                {
-                    errors.Push("runs[" idx "].totals['" . zoneName
-                        . "']: must be a non-negative integer")
-                    break
+                    zoneNameStr := String(zoneName)
+                    if (StrLen(zoneNameStr) > RunExportFormat.MAX_STRING_LEN)
+                    {
+                        errors.Push("runs[" idx "].totals key '" SubStr(zoneNameStr, 1, 40)
+                            . "...' exceeds maximum length of " RunExportFormat.MAX_STRING_LEN
+                            . " characters")
+                        break
+                    }
+                    badChar := RunExportFormat._FindIniBreakingChar(zoneNameStr)
+                    if (badChar != "")
+                    {
+                        errors.Push("runs[" idx "].totals key '" . zoneNameStr
+                            . "' contains INI-breaking character (" . badChar
+                            . "); reject \\r \\n [ ] in textual fields")
+                        break
+                    }
+                    if (!IsNumber(zoneValue) || Integer(zoneValue) < 0)
+                    {
+                        errors.Push("runs[" idx "].totals['" . zoneNameStr
+                            . "']: must be a non-negative integer")
+                        break
+                    }
                 }
             }
+        }
+
+        ; actCheckpoints: bounded by the campaign-act count. A
+        ; payload with thousands of entries here is malformed
+        ; (Map<int, int>; the validator earlier confirmed it's a
+        ; Map but didn't bound the size).
+        if run.Has("actCheckpoints") && IsObject(run["actCheckpoints"])
+            && (run["actCheckpoints"] is Map)
+            && (run["actCheckpoints"].Count > RunExportFormat.MAX_ACT_CHECKPOINTS)
+        {
+            errors.Push("runs[" idx "].actCheckpoints has " run["actCheckpoints"].Count
+                . " entries, exceeds maximum of " RunExportFormat.MAX_ACT_CHECKPOINTS)
         }
 
         ; details: category / label / note / timestamp are all written
@@ -769,31 +896,47 @@ class RunExportFormat
         ; corrupt the per-segment totals in the plot).
         if run.Has("details") && IsObject(run["details"]) && (run["details"] is Array)
         {
-            for detailIdx, detailRow in run["details"]
+            if (run["details"].Length > RunExportFormat.MAX_DETAILS_PER_RUN)
             {
-                if !IsObject(detailRow)
-                    continue
-                detailTextFields := ["category", "label", "note", "timestamp"]
-                for _, fieldName in detailTextFields
+                errors.Push("runs[" idx "].details has " run["details"].Length
+                    . " entries, exceeds maximum of " RunExportFormat.MAX_DETAILS_PER_RUN)
+            }
+            else
+            {
+                for detailIdx, detailRow in run["details"]
                 {
-                    if !detailRow.Has(fieldName)
+                    if !IsObject(detailRow)
                         continue
-                    badChar := RunExportFormat._FindIniBreakingChar(String(detailRow[fieldName]))
-                    if (badChar != "")
+                    detailTextFields := ["category", "label", "note", "timestamp"]
+                    for _, fieldName in detailTextFields
                     {
-                        errors.Push("runs[" idx "].details[" detailIdx "]." fieldName
-                            . " contains INI-breaking character (" . badChar
-                            . "); reject \\r \\n [ ] in textual fields")
-                        break
+                        if !detailRow.Has(fieldName)
+                            continue
+                        fieldValue := String(detailRow[fieldName])
+                        if (StrLen(fieldValue) > RunExportFormat.MAX_STRING_LEN)
+                        {
+                            errors.Push("runs[" idx "].details[" detailIdx "]." fieldName
+                                . " exceeds maximum length of " RunExportFormat.MAX_STRING_LEN
+                                . " characters (got " StrLen(fieldValue) ")")
+                            break
+                        }
+                        badChar := RunExportFormat._FindIniBreakingChar(fieldValue)
+                        if (badChar != "")
+                        {
+                            errors.Push("runs[" idx "].details[" detailIdx "]." fieldName
+                                . " contains INI-breaking character (" . badChar
+                                . "); reject \\r \\n [ ] in textual fields")
+                            break
+                        }
                     }
-                }
-                ; ms check is independent of the INI-char checks: a
-                ; row with both problems will report both errors. The
-                ; user fixes them in one editing pass.
-                if detailRow.Has("ms") && (!IsNumber(detailRow["ms"]) || Integer(detailRow["ms"]) < 0)
-                {
-                    errors.Push("runs[" idx "].details[" detailIdx
-                        . "].ms: must be a non-negative integer")
+                    ; ms check is independent of the INI-char/length checks:
+                    ; a row with both problems will report both errors. The
+                    ; user fixes them in one editing pass.
+                    if detailRow.Has("ms") && (!IsNumber(detailRow["ms"]) || Integer(detailRow["ms"]) < 0)
+                    {
+                        errors.Push("runs[" idx "].details[" detailIdx
+                            . "].ms: must be a non-negative integer")
+                    }
                 }
             }
         }
@@ -840,24 +983,66 @@ class RunExportFormat
         ; of those characters slipping into a value would either
         ; corrupt the file outright or silently merge fields across
         ; sections on the next save. Reject at import time.
+        ;
+        ; The length cap mirrors what _ValidateRun applies to its own
+        ; textual fields: oversized values bypass the char check (they
+        ; might be huge but clean), and a 10 MB runPbRunId or zone-PB
+        ; key has no legitimate origin.
         if pbs.Has("runPbRunId")
         {
-            badChar := RunExportFormat._FindIniBreakingChar(String(pbs["runPbRunId"]))
-            if (badChar != "")
-                errors.Push("personalBests.runPbRunId contains INI-breaking character ("
-                    . badChar . "); reject \\r \\n [ ] in textual fields")
+            runPbRunIdStr := String(pbs["runPbRunId"])
+            if (StrLen(runPbRunIdStr) > RunExportFormat.MAX_STRING_LEN)
+            {
+                errors.Push("personalBests.runPbRunId exceeds maximum length of "
+                    . RunExportFormat.MAX_STRING_LEN " characters (got "
+                    . StrLen(runPbRunIdStr) ")")
+            }
+            else
+            {
+                badChar := RunExportFormat._FindIniBreakingChar(runPbRunIdStr)
+                if (badChar != "")
+                    errors.Push("personalBests.runPbRunId contains INI-breaking character ("
+                        . badChar . "); reject \\r \\n [ ] in textual fields")
+                else if (runPbRunIdStr != "" && !RunId.IsValid(runPbRunIdStr))
+                {
+                    ; A clean, length-bounded but malformed runPbRunId
+                    ; would still cause grief downstream when PB rebuild
+                    ; tries to correlate it to a saved run. Empty is
+                    ; allowed because a PB block with no anchored runId
+                    ; is the well-formed "no PB yet" state.
+                    errors.Push("personalBests.runPbRunId has invalid format ('"
+                        . runPbRunIdStr "'); expected YYYYMMDD_HHMMSS"
+                        . " with optional alphanumeric suffix")
+                }
+            }
         }
         if pbs.Has("zonePbs") && IsObject(pbs["zonePbs"]) && (pbs["zonePbs"] is Map)
         {
-            for zoneName, _ in pbs["zonePbs"]
+            if (pbs["zonePbs"].Count > RunExportFormat.MAX_ZONE_PBS)
             {
-                badChar := RunExportFormat._FindIniBreakingChar(String(zoneName))
-                if (badChar != "")
+                errors.Push("personalBests.zonePbs has " pbs["zonePbs"].Count
+                    . " entries, exceeds maximum of " RunExportFormat.MAX_ZONE_PBS)
+            }
+            else
+            {
+                for zoneName, _ in pbs["zonePbs"]
                 {
-                    errors.Push("personalBests.zonePbs key '" . zoneName
-                        . "' contains INI-breaking character (" . badChar
-                        . "); reject \\r \\n [ ] in textual fields")
-                    break   ; one error is enough; user can fix and re-import
+                    zoneNameStr := String(zoneName)
+                    if (StrLen(zoneNameStr) > RunExportFormat.MAX_STRING_LEN)
+                    {
+                        errors.Push("personalBests.zonePbs key '" SubStr(zoneNameStr, 1, 40)
+                            . "...' exceeds maximum length of " RunExportFormat.MAX_STRING_LEN
+                            . " characters")
+                        break
+                    }
+                    badChar := RunExportFormat._FindIniBreakingChar(zoneNameStr)
+                    if (badChar != "")
+                    {
+                        errors.Push("personalBests.zonePbs key '" . zoneNameStr
+                            . "' contains INI-breaking character (" . badChar
+                            . "); reject \\r \\n [ ] in textual fields")
+                        break   ; one error is enough; user can fix and re-import
+                    }
                 }
             }
         }
