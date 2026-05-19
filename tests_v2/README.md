@@ -1,6 +1,6 @@
 # SpeedKalandra Test Suite
 
-Self-contained AHK v2 test suite for SpeedKalandra. Pure AHK v2 — no external runner, no `pip install`, no `npm`. Over 1500 tests across `core/`, `domain/`, `infra/`, `app/`, `ui/`, and integration.
+Self-contained AHK v2 test suite for SpeedKalandra. Pure AHK v2 — no external runner, no `pip install`, no `npm`. Over 1800 tests across `core/`, `domain/`, `infra/`, `app/`, `ui/`, and integration.
 
 ## How to run
 
@@ -139,7 +139,7 @@ Full suite runs in roughly 25 seconds on a typical desktop. Coverage by layer:
 | `infra/io/` | AtomicWriter, TextEncoding, IniFile, CsvFile, JsonFile, RunExportFormat |
 | `infra/` repos | ZonesCatalog, PersonalBestRepository, RunStateRepository, RunHistoryRepository, SettingsRepository |
 | `app/services/` pure | XpService, AppTickEmitter, HudPixelScanner, LoadingTotalsService, TimerService, ActCheckpointTracker, RunStatsRecorder, PersonalBestService, RunStatsPlotBuilder |
-| `app/services/` stateful | ZoneTrackingService, LogMonitorService, LoadingDetectionService, RunService, AutoStartService, AutoFinalizeService |
+| `app/services/` stateful | ZoneTrackingService, LogMonitorService, LoadingDetectionService, RunService, AutoStartService, AutoFinalizeService, RunImportService (size gate) |
 | `app/services/` OS hooks | OverlayModeService, OverlayModeApplier, HotkeyService, FocusAutoPauseService, OverlayInteractionService |
 | `app/` composition | BootPrompts, RunSnapshotSaver |
 | `ui/` | Theme, HotkeyFormatter, WidgetBase, LayoutWidgetBase |

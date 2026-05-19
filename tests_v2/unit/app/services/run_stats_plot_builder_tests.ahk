@@ -122,7 +122,11 @@ class RunStatsPlotBuilderTests extends TestCase
 
         ; --- totals + totalMs ---
         "totals_initialized_with_all_four_keys_at_zero",
-        "total_ms_is_sum_of_all_category_totals"
+        "total_ms_is_sum_of_all_category_totals",
+
+        ; --- Defensive: large run histories ---
+        "build_aggregates_100_plus_zone_entries_without_overflow",
+        "build_aggregates_100_plus_loading_events_without_overflow"
     ]
 
     ; ============================================================
@@ -569,6 +573,75 @@ class RunStatsPlotBuilderTests extends TestCase
         ))
         ; mapa=60000 + cidade=15000 + loading=4000 + morte=(2*5000)=10000 = 89000
         Assert.Equal(89000, data["totalMs"])
+    }
+
+    ; ============================================================
+    ; Defensive: large run histories
+    ; ============================================================
+    ;
+    ; The plot dialog feeds Build() either the current in-memory
+    ; snapshot (RunStatsRecorder.GetSnapshot) or a snapshot
+    ; reconstructed from a saved run. The latter is bounded by the
+    ; import schema (MAX_DETAILS_PER_RUN = 1000), but the in-memory
+    ; path has no equivalent cap — a long marathon run that traverses
+    ; every zone several times will produce a large zoneTotals map
+    ; and a long loadingEvents array. The builder must aggregate
+    ; these in linear time without integer overflow or detail loss.
+    ;
+    ; 100 entries is the realistic worst case for a single run; the
+    ; test uses 120 to exercise the path with margin.
+
+    build_aggregates_100_plus_zone_entries_without_overflow()
+    {
+        ; 120 unknown zones (not in the catalog) at 60s each. Unknown
+        ; zones categorize as `mapa` with an empty note, exercising
+        ; the same code path a stress run with many novel zones
+        ; would hit. Total: 120 * 60000 = 7,200,000 ms (2h). Well
+        ; below INT_MAX (2^31-1 = ~2.1 billion), but high enough that
+        ; a 16-bit accumulator would silently wrap to a small positive.
+        zoneTotals := Map()
+        loop 120
+            zoneTotals["Zone_" A_Index] := 60000
+
+        data := this.builder.Build(Map(
+            "zoneTotals", zoneTotals,
+            "deathCount", 0
+        ))
+
+        Assert.Equal(120, data["details"].Length,
+            "every zone entry produced exactly one detail row")
+        Assert.Equal(7200000, data["totals"]["mapa"],
+            "sum is exact: 120 × 60000 ms, no overflow or rounding")
+        Assert.Equal(7200000, data["totalMs"],
+            "totalMs equals the sole non-zero category total")
+    }
+
+    build_aggregates_100_plus_loading_events_without_overflow()
+    {
+        ; 150 loading transitions at 5s each. Total: 750,000 ms
+        ; (12.5 min of loading), which is plausible for a long
+        ; play session with many zone changes. Each event becomes
+        ; one detail row labeled "from -> to".
+        loadingEvents := []
+        loop 150
+        {
+            loadingEvents.Push(Map(
+                "durationMs", 5000,
+                "fromZone",   "Zone_" A_Index,
+                "toZone",     "Zone_" (A_Index + 1)
+            ))
+        }
+
+        data := this.builder.Build(Map(
+            "loadingEvents", loadingEvents,
+            "deathCount",    0
+        ))
+
+        Assert.Equal(150, data["details"].Length,
+            "every loading event produced exactly one detail row")
+        Assert.Equal(750000, data["totals"]["loading"],
+            "sum is exact: 150 × 5000 ms")
+        Assert.Equal(750000, data["totalMs"])
     }
 }
 

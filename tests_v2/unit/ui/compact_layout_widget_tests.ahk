@@ -127,6 +127,10 @@ class CompactLayoutWidgetTests extends TestCase
         "on_run_restart_zeroes_counter",
         "on_zone_entered_mutates_current_zone_and_act",
 
+        ; --- Defensive: extremely long zone names ---
+        "estimate_text_w_handles_200_char_zone_name_linearly",
+        "on_zone_entered_accepts_200_char_zone_name_without_throwing",
+
         ; --- Lifecycle ---
         "dispose_unsubscribes_all_handlers"
     ]
@@ -363,6 +367,64 @@ class CompactLayoutWidgetTests extends TestCase
 
         Assert.Equal("Mud Burrow", this.widget._currentZone)
         Assert.Equal(1,            this.widget._currentAct)
+    }
+
+    ; ============================================================
+    ; Defensive: extremely long zone names
+    ; ============================================================
+    ;
+    ; Real PoE2 zone names cap at ~40 chars; the import validator
+    ; allows up to MAX_STRING_LEN (500). Between those, a value of
+    ; 200 characters is the realistic worst case for a hand-edited
+    ; INI or a future game expansion with verbose location strings
+    ; ("The Deep Forge Where the Brass Mistress Sleeps Beneath…").
+    ; The widget must not throw on the state-mutation path —
+    ; rendering (font shrink, clipping) is delegated to the lazy
+    ; _Refresh tick guarded by `if !this._gui return`, which we
+    ; can't exercise headless. The pure-helper _EstimateTextW must
+    ; remain linear at this length so the font-shrink loop in the
+    ; real render path terminates instead of looping on bad math.
+
+    estimate_text_w_handles_200_char_zone_name_linearly()
+    {
+        ; 200-char string at font size 10. The estimator is
+        ; chars × fontSize × 0.6; for 200 chars that's exactly
+        ; 1200, well below INT_MAX. The test asserts the value is
+        ; in the expected range and that there's no overflow,
+        ; truncation, or wraparound to a negative number.
+        bigName := ""
+        loop 200
+            bigName .= "A"
+        w200 := CompactLayoutWidget._EstimateTextW(bigName, 10)
+        ; Expected exact value at the documented formula:
+        ;   chars * fontSize * 0.6 = 200 * 10 * 0.6 = 1200
+        Assert.True(w200 > 0,
+            "estimator returns a positive number (got " w200 ")")
+        Assert.True(w200 >= 1000 && w200 <= 1400,
+            "estimator stays close to the documented chars*fontSize*0.6 "
+            . "formula (got " w200 ", expected ~1200)")
+    }
+
+    on_zone_entered_accepts_200_char_zone_name_without_throwing()
+    {
+        ; State-mutation path only. The widget's bus subscription
+        ; writes _currentZone and _currentAct on the ZoneEntered
+        ; payload; the next _Refresh would apply font shrink
+        ; against the real Gui controls. Headless, the bus path
+        ; must complete without an exception and store the value
+        ; verbatim for the next render to consume.
+        bigName := ""
+        loop 200
+            bigName .= "Z"
+
+        this.bus.Publish(Events.ZoneEntered, Map(
+            "zoneName", bigName,
+            "actIndex", 1
+        ))
+
+        Assert.Equal(bigName, this.widget._currentZone,
+            "long zone name stored verbatim, no truncation in the handler")
+        Assert.Equal(1, this.widget._currentAct)
     }
 
     ; ============================================================

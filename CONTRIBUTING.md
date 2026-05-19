@@ -24,7 +24,7 @@ If you can reproduce it consistently, say so. If it happened once and went away,
 Open an issue with `[feature request]` in the title. Make a case for why it fits this tool's philosophy:
 
 - **Minimalist** — focused on speedrun timing and visualization
-- **Read-only** in relation to PoE2 — never sends inputs or modifies game state
+- **Read-only** in relation to PoE2 — never sends gameplay commands or modifies game state (the defensive modifier-keyup on script exit is OS-level housekeeping, not gameplay input)
 - **No gameplay assistance** — not a build planner, not a loot tracker, not a trade tool
 
 I might still say no, but I'll consider it.
@@ -58,7 +58,7 @@ Forks are welcome. GPL v3 requires forks remain open-source under the same licen
 
 ## What I won't merge
 
-- Code that injects into the PoE2 process or sends inputs to the game
+- Code that injects into the PoE2 process or sends gameplay commands to the game (the existing defensive `{Ctrl up}{Alt up}{Shift up}` on script exit and before opening dialogs is OS-level housekeeping for AHK's "stuck modifier" failure mode, not a gameplay input; expanding that surface beyond housekeeping is out of scope)
 - Gameplay assistance features (build planners, loot filters, trade automation)
 - Telemetry that phones home
 - Ads or monetization integrations within the tracker itself
