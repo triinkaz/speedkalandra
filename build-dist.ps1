@@ -222,21 +222,34 @@ if (-not $SkipTests) {
 
     # SPEEDKALANDRA_TEST_NO_GUI=1 suppresses the final MsgBox and
     # makes the runner exit with 0/1 instead of waiting for OK.
+    #
+    # Direct `& $ahkExe` instead of `Start-Process -Wait` because
+    # the latter caused intermittent hangs on Windows runners in CI
+    # (see .github/workflows/test.yml for the same fix). Push-Location
+    # gives AHK its working directory; the env var save/restore is
+    # in `try/finally` so a Ctrl+C in the middle of the suite doesn't
+    # leak SPEEDKALANDRA_TEST_NO_GUI=1 into the parent shell.
+    #
+    # `$rawCode = $LASTEXITCODE` is captured immediately because PS 7
+    # on Windows runners has been observed returning $null from native
+    # processes that exit cleanly. Treat $null as 0 — a real failure
+    # would have set it to a positive integer.
     $oldNoGui = $env:SPEEDKALANDRA_TEST_NO_GUI
     $env:SPEEDKALANDRA_TEST_NO_GUI = "1"
+    Push-Location -LiteralPath $SourceDir
     try {
-        $testProc = Start-Process -FilePath $ahkExe `
-                                  -ArgumentList "tests_v2\run_tests.ahk" `
-                                  -WorkingDirectory $SourceDir `
-                                  -Wait -PassThru -NoNewWindow
-        if ($testProc.ExitCode -ne 0) {
-            Write-Error "Test suite failed (exit $($testProc.ExitCode)). Release aborted. See tests_v2\tests_output.log for details."
-            exit $testProc.ExitCode
+        & $ahkExe "tests_v2\run_tests.ahk"
+        $rawCode = $LASTEXITCODE
+        $exitCode = if ($null -eq $rawCode) { 0 } else { $rawCode }
+        if ($exitCode -ne 0) {
+            Write-Error "Test suite failed (exit $exitCode). Release aborted. See tests_v2\tests_output.log for details."
+            exit $exitCode
         }
         Write-Host "Tests passed." -ForegroundColor Green
         Write-Host ""
     }
     finally {
+        Pop-Location
         $env:SPEEDKALANDRA_TEST_NO_GUI = $oldNoGui
     }
 }
