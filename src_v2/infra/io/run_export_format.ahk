@@ -691,7 +691,96 @@ class RunExportFormat
         if run.Has("details") && (!IsObject(run["details"]) || !(run["details"] is Array))
             errors.Push("runs[" idx "]: 'details' must be an array")
 
+        ; INI-breaking character check on every textual field that
+        ; ends up in the per-run INI file (data/runs/{runId}.ini).
+        ; `\r\n[]` would corrupt the INI structurally — newlines
+        ; merge values across sections, brackets fake section
+        ; headers. Reject at import time with a clear message.
+        ;
+        ; Internal saves don't normally hit these characters
+        ; (profile/patch come from the user's INI, firstTs from
+        ; FormatTime, zone names from the catalog), so this guard
+        ; is mainly for hand-edited or maliciously crafted JSON
+        ; imports. The matching defensive throw in
+        ; RunHistoryRepository._SerializeBuildResultToIni catches
+        ; the case where a future parser regression smuggles a bad
+        ; char in through some other code path.
+        textFields := ["runId", "profile", "patch", "firstTs"]
+        for _, fieldName in textFields
+        {
+            if !run.Has(fieldName)
+                continue
+            badChar := RunExportFormat._FindIniBreakingChar(String(run[fieldName]))
+            if (badChar != "")
+                errors.Push("runs[" idx "]." fieldName
+                    . " contains INI-breaking character (" . badChar
+                    . "); reject \\r \\n [ ] in textual fields")
+        }
+
+        ; totals: keys are zone names. Reject if any key contains a
+        ; structural char. One error is enough — user can fix the
+        ; source file and re-import.
+        if run.Has("totals") && IsObject(run["totals"]) && (run["totals"] is Map)
+        {
+            for zoneName, _ in run["totals"]
+            {
+                badChar := RunExportFormat._FindIniBreakingChar(String(zoneName))
+                if (badChar != "")
+                {
+                    errors.Push("runs[" idx "].totals key '" . zoneName
+                        . "' contains INI-breaking character (" . badChar
+                        . "); reject \\r \\n [ ] in textual fields")
+                    break
+                }
+            }
+        }
+
+        ; details: category / label / note / timestamp are all written
+        ; back to disk as part of the [details] section value lines.
+        ; A newline in any of them would split the row across two
+        ; INI lines and the count would mismatch on load.
+        if run.Has("details") && IsObject(run["details"]) && (run["details"] is Array)
+        {
+            for detailIdx, detailRow in run["details"]
+            {
+                if !IsObject(detailRow)
+                    continue
+                detailTextFields := ["category", "label", "note", "timestamp"]
+                for _, fieldName in detailTextFields
+                {
+                    if !detailRow.Has(fieldName)
+                        continue
+                    badChar := RunExportFormat._FindIniBreakingChar(String(detailRow[fieldName]))
+                    if (badChar != "")
+                    {
+                        errors.Push("runs[" idx "].details[" detailIdx "]." fieldName
+                            . " contains INI-breaking character (" . badChar
+                            . "); reject \\r \\n [ ] in textual fields")
+                        break
+                    }
+                }
+            }
+        }
+
         return errors
+    }
+
+    ; Returns the literal name of the first INI-breaking character
+    ; found in `s` (e.g. "\\n", "\\r", "[", "]"), or "" when the
+    ; string is clean. The textual name makes the resulting error
+    ; message readable ("contains INI-breaking character (\\n)")
+    ; instead of cryptic byte values.
+    static _FindIniBreakingChar(s)
+    {
+        if (InStr(s, "`r") > 0)
+            return "\r"
+        if (InStr(s, "`n") > 0)
+            return "\n"
+        if (InStr(s, "[") > 0)
+            return "["
+        if (InStr(s, "]") > 0)
+            return "]"
+        return ""
     }
 
     static _ValidatePbs(pbs)
@@ -708,6 +797,34 @@ class RunExportFormat
             errors.Push("personalBests.runPbByAct: must be an object")
         if pbs.Has("zonePbs") && (!IsObject(pbs["zonePbs"]) || !(pbs["zonePbs"] is Map))
             errors.Push("personalBests.zonePbs: must be an object")
+
+        ; INI-breaking character check on textual fields. The saved
+        ; runs live in an INI file (data/runs/{runId}.ini) whose
+        ; structure depends on `\r\n[]` having reserved meaning. Any
+        ; of those characters slipping into a value would either
+        ; corrupt the file outright or silently merge fields across
+        ; sections on the next save. Reject at import time.
+        if pbs.Has("runPbRunId")
+        {
+            badChar := RunExportFormat._FindIniBreakingChar(String(pbs["runPbRunId"]))
+            if (badChar != "")
+                errors.Push("personalBests.runPbRunId contains INI-breaking character ("
+                    . badChar . "); reject \\r \\n [ ] in textual fields")
+        }
+        if pbs.Has("zonePbs") && IsObject(pbs["zonePbs"]) && (pbs["zonePbs"] is Map)
+        {
+            for zoneName, _ in pbs["zonePbs"]
+            {
+                badChar := RunExportFormat._FindIniBreakingChar(String(zoneName))
+                if (badChar != "")
+                {
+                    errors.Push("personalBests.zonePbs key '" . zoneName
+                        . "' contains INI-breaking character (" . badChar
+                        . "); reject \\r \\n [ ] in textual fields")
+                    break   ; one error is enough; user can fix and re-import
+                }
+            }
+        }
         return errors
     }
 

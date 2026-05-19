@@ -104,17 +104,23 @@ class RunHistoryRepository
         if (totalMs < 1000)
             return false
 
-        path    := this._PathForRunId(currentRunId)
-        content := this._SerializeBuildResultToIni(buildResult, currentRunId, totalMs)
+        path := this._PathForRunId(currentRunId)
 
         try
         {
+            ; Build the INI text inside the try so any ValueError
+            ; from _AssertNoIniBreakingChars (a textual field with
+            ; \r\n[] in it) is caught and surfaced through the same
+            ; WarningSink that handles AtomicWriter failures — same
+            ; "Save failed for runId ..." path either way.
+            content := this._SerializeBuildResultToIni(buildResult, currentRunId, totalMs)
             AtomicWriter.WriteAll(path, content, "UTF-16")
             return true
         }
         catch as ex
         {
-            ; Disk full, permission denied, locked destination, etc.
+            ; Disk full, permission denied, locked destination, or
+            ; a field with INI-breaking characters from upstream.
             ; Surface via the injected sink so finalize-time save
             ; failures don't disappear silently into the bus handler.
             this._warn.Warn("Save failed for runId " . currentRunId, ex)
@@ -129,16 +135,34 @@ class RunHistoryRepository
     ; Sections always appear in the same order (meta → totals →
     ; checkpoints → details) and use CRLF line endings so a user
     ; opening the file in Notepad sees the conventional layout.
+    ;
+    ; Defensive char check: any textual field containing `\r`, `\n`,
+    ; `[` or `]` is rejected with ValueError. These would corrupt
+    ; the INI structurally (newlines merge sections; brackets fake
+    ; section headers). Normal save paths can't hit this (profile
+    ; and patch come from the user's INI, firstTs from FormatTime,
+    ; zone names from the catalog), so reaching this throw means
+    ; some upstream parser produced unexpected text — better to
+    ; refuse the save and surface the failure through the sink than
+    ; to silently corrupt the run file. The mirror check at import
+    ; time lives in RunExportFormat._ValidateRun.
     _SerializeBuildResultToIni(buildResult, currentRunId, totalMs)
     {
         sb := ""
 
         ; ---- [meta] ----
         sb .= "[meta]`r`n"
+        RunHistoryRepository._AssertNoIniBreakingChars(currentRunId, "runId")
         sb .= "runId=" . currentRunId . "`r`n"
-        sb .= "profile=" . (buildResult.Has("profile")       ? String(buildResult["profile"])       : "") . "`r`n"
-        sb .= "patch="   . (buildResult.Has("patch")         ? String(buildResult["patch"])         : "") . "`r`n"
-        sb .= "firstTs=" . (buildResult.Has("firstTs")       ? String(buildResult["firstTs"])       : "") . "`r`n"
+        profile := buildResult.Has("profile") ? String(buildResult["profile"]) : ""
+        RunHistoryRepository._AssertNoIniBreakingChars(profile, "profile")
+        sb .= "profile=" . profile . "`r`n"
+        patch := buildResult.Has("patch") ? String(buildResult["patch"]) : ""
+        RunHistoryRepository._AssertNoIniBreakingChars(patch, "patch")
+        sb .= "patch=" . patch . "`r`n"
+        firstTs := buildResult.Has("firstTs") ? String(buildResult["firstTs"]) : ""
+        RunHistoryRepository._AssertNoIniBreakingChars(firstTs, "firstTs")
+        sb .= "firstTs=" . firstTs . "`r`n"
         sb .= "totalMs=" . Integer(totalMs)                                                                . "`r`n"
         sb .= "deathCount="    . Integer(buildResult.Has("deathCount")    ? buildResult["deathCount"]    : 0) . "`r`n"
         sb .= "maxActReached=" . Integer(buildResult.Has("maxActReached") ? buildResult["maxActReached"] : 0) . "`r`n"
@@ -150,7 +174,11 @@ class RunHistoryRepository
         if IsObject(totals)
         {
             for key, ms in totals
-                sb .= String(key) . "=" . String(ms) . "`r`n"
+            {
+                keyStr := String(key)
+                RunHistoryRepository._AssertNoIniBreakingChars(keyStr, "totals key")
+                sb .= keyStr . "=" . String(ms) . "`r`n"
+            }
         }
         sb .= "`r`n"
 
@@ -177,6 +205,13 @@ class RunHistoryRepository
         ; `count` is written last so it always matches the number of
         ; rows above it, even when rows were filtered out for being
         ; non-objects.
+        ;
+        ; Each row is serialized via _SerializeDetail which already
+        ; escapes the `|` separator ("\\|") and literal backslash
+        ; ("\\\\"). Beyond that, the underlying text fields still
+        ; need the INI-breaking char guard — a `\n` in `label` would
+        ; split the row into two INI lines and the `count` value
+        ; would be wrong on load.
         sb .= "[details]`r`n"
         details := buildResult.Has("details") ? buildResult["details"] : []
         n := 0
@@ -186,6 +221,12 @@ class RunHistoryRepository
             {
                 if !IsObject(row)
                     continue
+                for _, fieldName in ["category", "label", "note", "timestamp"]
+                {
+                    if row.Has(fieldName)
+                        RunHistoryRepository._AssertNoIniBreakingChars(
+                            String(row[fieldName]), "details." . fieldName)
+                }
                 line := RunHistoryRepository._SerializeDetail(row)
                 sb .= String(n) . "=" . line . "`r`n"
                 n += 1
@@ -194,6 +235,27 @@ class RunHistoryRepository
         sb .= "count=" . n . "`r`n"
 
         return sb
+    }
+
+    ; Throws ValueError if `s` contains any of the characters that
+    ; would corrupt the INI structure (\r, \n, [, ]). The caller's
+    ; try/catch in Save routes the failure through the WarningSink.
+    ; Same set of characters that RunExportFormat._FindIniBreakingChar
+    ; rejects at import time — keep the two in sync.
+    static _AssertNoIniBreakingChars(s, fieldName)
+    {
+        if (InStr(s, "`r") > 0)
+            throw ValueError("RunHistoryRepository: " . fieldName
+                . " contains INI-breaking character (\r); cannot serialize")
+        if (InStr(s, "`n") > 0)
+            throw ValueError("RunHistoryRepository: " . fieldName
+                . " contains INI-breaking character (\n); cannot serialize")
+        if (InStr(s, "[") > 0)
+            throw ValueError("RunHistoryRepository: " . fieldName
+                . " contains INI-breaking character ([); cannot serialize")
+        if (InStr(s, "]") > 0)
+            throw ValueError("RunHistoryRepository: " . fieldName
+                . " contains INI-breaking character (]); cannot serialize")
     }
 
     ; Lists run IDs available on disk, sorted by modification time

@@ -56,6 +56,17 @@ class RunExportFormatTests extends TestCase
         "validate_returns_invalid_when_run_missing_run_id",
         "validate_returns_invalid_when_run_total_ms_not_positive",
 
+        ; --- ValidateSchema: INI-breaking characters (Fase 5) ---
+        "validate_rejects_run_id_with_newline",
+        "validate_rejects_profile_with_bracket",
+        "validate_rejects_patch_with_carriage_return",
+        "validate_rejects_totals_key_with_close_bracket",
+        "validate_rejects_detail_label_with_newline",
+        "validate_rejects_detail_note_with_bracket",
+        "validate_rejects_zone_pbs_key_with_newline",
+        "validate_rejects_run_pb_run_id_with_bracket",
+        "validate_accepts_safe_punctuation_in_textual_fields",
+
         ; --- ValidateSchema: valid + warnings ---
         "validate_returns_valid_for_minimal_correct_schema",
         "validate_includes_warning_when_exported_at_missing",
@@ -305,6 +316,178 @@ class RunExportFormatTests extends TestCase
             "runs", [Map("runId", "20260101_000000", "totalMs", 0)]
         ))
         Assert.False(validation["valid"])
+    }
+
+    ; ============================================================
+    ; ValidateSchema: INI-breaking characters (Fase 5)
+    ; ============================================================
+    ;
+    ; Imported runs are persisted to data/runs/{runId}.ini, whose
+    ; structure depends on \r, \n, [ and ] being reserved. A JSON
+    ; payload with any of those in a textual field would silently
+    ; corrupt the saved file or merge fields across sections. The
+    ; check happens at import time (Preview → ValidateSchema) so the
+    ; user sees a clear error before disk is touched. A second
+    ; defensive check inside RunHistoryRepository._SerializeBuildResultToIni
+    ; catches the case where a bad char slips in through some other
+    ; code path (covered by run_history_repository_tests).
+
+    _BuildParsedPayload(modifyRun := "", modifyPbs := "")
+    {
+        ; Helper: returns a parsed-shape Map (i.e. what JsonFile.Parse
+        ; produces) holding one minimally valid run plus optional PBs.
+        ; Callers mutate the returned Map before passing to
+        ; ValidateSchema to assert specific rejections.
+        run := Map(
+            "runId",   "20260515_103045",
+            "totalMs", 5000,
+            "totals",  Map("mapa", 5000),
+            "details", [
+                Map("category", "mapa", "label", "Test Zone",
+                    "ms", 5000, "note", "", "timestamp", "")
+            ]
+        )
+        if IsObject(modifyRun)
+        {
+            for k, v in modifyRun
+                run[k] := v
+        }
+        payload := Map(
+            "schemaVersion", 1,
+            "runs",          [run]
+        )
+        if IsObject(modifyPbs)
+        {
+            payload["personalBests"] := modifyPbs
+        }
+        return payload
+    }
+
+    validate_rejects_run_id_with_newline()
+    {
+        ; \n in runId would split the [meta] section across two
+        ; lines, so runId=`foo\nbar` becomes `runId=foo` plus a
+        ; stray `bar` line.
+        payload := this._BuildParsedPayload(Map("runId", "20260515`n_evil"))
+        validation := RunExportFormat.ValidateSchema(payload)
+        Assert.False(validation["valid"], "newline in runId rejected")
+        Assert.True(validation["errors"].Length >= 1)
+        Assert.True(InStr(validation["errors"][1], "runId") > 0,
+            "error message names the field")
+        Assert.True(InStr(validation["errors"][1], "INI-breaking") > 0,
+            "error message identifies the cause")
+    }
+
+    validate_rejects_profile_with_bracket()
+    {
+        ; [ at the start of a value can be mistaken for a new INI
+        ; section header by some parsers, even mid-value.
+        payload := this._BuildParsedPayload(Map("profile", "Default[evil"))
+        validation := RunExportFormat.ValidateSchema(payload)
+        Assert.False(validation["valid"])
+        Assert.True(InStr(validation["errors"][1], "profile") > 0)
+    }
+
+    validate_rejects_patch_with_carriage_return()
+    {
+        ; \r alone (Mac-classic line endings) is just as dangerous
+        ; as \n for INI parsing.
+        payload := this._BuildParsedPayload(Map("patch", "0.2.0`r0.2.1"))
+        validation := RunExportFormat.ValidateSchema(payload)
+        Assert.False(validation["valid"])
+        Assert.True(InStr(validation["errors"][1], "patch") > 0)
+    }
+
+    validate_rejects_totals_key_with_close_bracket()
+    {
+        ; Zone names become INI keys under [totals]. A ] in the key
+        ; could trip strict parsers.
+        payload := this._BuildParsedPayload(Map(
+            "totals", Map("Mud Burrow]", 5000)
+        ))
+        validation := RunExportFormat.ValidateSchema(payload)
+        Assert.False(validation["valid"])
+        Assert.True(InStr(validation["errors"][1], "totals") > 0)
+    }
+
+    validate_rejects_detail_label_with_newline()
+    {
+        ; details rows are written as `N=category|label|ms|note|timestamp`
+        ; on a single line. A \n in label splits the row and the
+        ; count value becomes inconsistent on load.
+        payload := this._BuildParsedPayload(Map(
+            "details", [
+                Map("category", "mapa", "label", "Mud`nBurrow",
+                    "ms", 5000, "note", "", "timestamp", "")
+            ]
+        ))
+        validation := RunExportFormat.ValidateSchema(payload)
+        Assert.False(validation["valid"])
+        Assert.True(InStr(validation["errors"][1], "label") > 0)
+    }
+
+    validate_rejects_detail_note_with_bracket()
+    {
+        payload := this._BuildParsedPayload(Map(
+            "details", [
+                Map("category", "mapa", "label", "Mud Burrow",
+                    "ms", 5000, "note", "Act [1]", "timestamp", "")
+            ]
+        ))
+        validation := RunExportFormat.ValidateSchema(payload)
+        Assert.False(validation["valid"])
+        Assert.True(InStr(validation["errors"][1], "note") > 0)
+    }
+
+    validate_rejects_zone_pbs_key_with_newline()
+    {
+        ; Personal bests live in their own INI (data/personal_bests.ini)
+        ; but the same structural rules apply.
+        pbs := Map(
+            "runPbMs",    7100000,
+            "runPbRunId", "20260512_142345",
+            "zonePbs",    Map("Mud`nBurrow", 175000)
+        )
+        payload := this._BuildParsedPayload("", pbs)
+        validation := RunExportFormat.ValidateSchema(payload)
+        Assert.False(validation["valid"])
+        Assert.True(InStr(validation["errors"][1], "zonePbs") > 0)
+    }
+
+    validate_rejects_run_pb_run_id_with_bracket()
+    {
+        pbs := Map(
+            "runPbMs",    7100000,
+            "runPbRunId", "20260512_142345[evil"
+        )
+        payload := this._BuildParsedPayload("", pbs)
+        validation := RunExportFormat.ValidateSchema(payload)
+        Assert.False(validation["valid"])
+        Assert.True(InStr(validation["errors"][1], "runPbRunId") > 0)
+    }
+
+    validate_accepts_safe_punctuation_in_textual_fields()
+    {
+        ; Positive control: =, ;, |, parens and long strings must
+        ; NOT trigger the rejection. The INI format only cares about
+        ; \r\n[]; everything else is fair game for human-readable
+        ; profile / patch names and zone labels. Unicode coverage
+        ; lives in the round-trip tests in run_history_repository_tests.
+        longString := ""
+        loop 300
+            longString .= "a"
+        payload := this._BuildParsedPayload(Map(
+            "profile", "Default = main; (test) | branch",
+            "patch",   "0.2.0 (build #42) - hotfix",
+            "totals",  Map("Mud Burrow", 5000, "Clearfell Encampment", 3000),
+            "details", [
+                Map("category", "mapa", "label", longString,
+                    "ms", 5000, "note", "Act 1; pre-boss", "timestamp", "")
+            ]
+        ))
+        validation := RunExportFormat.ValidateSchema(payload)
+        firstError := validation["errors"].Length > 0 ? validation["errors"][1] : "<no error>"
+        Assert.True(validation["valid"], firstError)
     }
 
     ; ============================================================

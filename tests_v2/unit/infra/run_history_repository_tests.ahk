@@ -42,6 +42,18 @@ class RunHistoryRepositoryTests extends TestCase
         "save_does_not_leave_tmp_file_behind",
         "save_warns_when_atomic_writer_fails",
 
+        ; --- INI escaping: round-trip with safe punctuation (Fase 5) ---
+        "roundtrip_preserves_profile_with_equals_sign",
+        "roundtrip_preserves_profile_with_semicolon",
+        "roundtrip_preserves_zone_name_with_spaces",
+        "roundtrip_preserves_long_label_string",
+        "roundtrip_preserves_pipe_in_detail_label",
+
+        ; --- INI escaping: defensive throw on dangerous chars (Fase 5) ---
+        "save_returns_false_when_profile_contains_newline",
+        "save_returns_false_when_zone_name_contains_bracket",
+        "save_warns_when_field_has_ini_breaking_chars",
+
         ; --- ListRunIds ---
         "list_run_ids_returns_empty_when_dir_missing",
         "list_run_ids_extracts_run_id_without_extension",
@@ -308,6 +320,173 @@ class RunHistoryRepositoryTests extends TestCase
         Assert.False(result, "Save returns false when AtomicWriter throws")
         Assert.True(sink.Count() >= 1,
             "Save failure surfaces through the WarningSink")
+        Assert.True(sink.HasMessage("Save failed for runId"),
+            "Warning identifies the failed operation")
+    }
+
+    ; ============================================================
+    ; INI escaping: round-trip with safe punctuation (Fase 5)
+    ; ============================================================
+    ;
+    ; The character set the repository rejects is intentionally
+    ; minimal (\r, \n, [, ]). Everything else — including =, ;, |,
+    ; parens, long strings and Unicode — must survive a Save/Load
+    ; round-trip unchanged. = and ; in particular are common in
+    ; profile/patch names; | is the detail separator and is already
+    ; escaped to `\|` by _SerializeDetail.
+
+    roundtrip_preserves_profile_with_equals_sign()
+    {
+        ; = and ; in a profile string must survive round-trip
+        ; (`=` is the INI key/value separator but IniRead splits on
+        ; the first `=` only; `;` is sometimes treated as inline
+        ; comment but AHK's IniRead does not do that).
+        tmpDir := Fixtures.TempDir()
+        repo := RunHistoryRepository(tmpDir)
+        currentRun := this._MakeBuildResult()
+        profileText := "Default = main; A=B"
+        currentRun["profile"] := profileText
+
+        Assert.True(repo.Save(currentRun))
+        loaded := repo.Load("20260512_142345")
+        Assert.Equal(profileText, loaded["profile"])
+    }
+
+    roundtrip_preserves_profile_with_semicolon()
+    {
+        ; Bare semicolons in a value: confirm IniRead does not strip
+        ; them as inline comments.
+        tmpDir := Fixtures.TempDir()
+        repo := RunHistoryRepository(tmpDir)
+        currentRun := this._MakeBuildResult()
+        profileText := "My; profile; name"
+        currentRun["profile"] := profileText
+
+        Assert.True(repo.Save(currentRun))
+        loaded := repo.Load("20260512_142345")
+        Assert.Equal(profileText, loaded["profile"])
+    }
+
+    roundtrip_preserves_zone_name_with_spaces()
+    {
+        ; Zone names commonly contain spaces and apostrophes. Use
+        ; them as INI keys under [totals] and verify they come back
+        ; unchanged.
+        tmpDir := Fixtures.TempDir()
+        repo := RunHistoryRepository(tmpDir)
+        currentRun := this._MakeBuildResult()
+        currentRun["totals"] := Map(
+            "Clearfell Encampment", 50000,
+            "The Hunter's Approach", 30000
+        )
+
+        Assert.True(repo.Save(currentRun))
+        loaded := repo.Load("20260512_142345")
+        Assert.Equal(50000, loaded["totals"]["Clearfell Encampment"])
+        Assert.Equal(30000, loaded["totals"]["The Hunter's Approach"])
+    }
+
+    roundtrip_preserves_long_label_string()
+    {
+        ; Verify that the serialization path handles long values
+        ; without truncation. Builds a 400-char label and asserts
+        ; it survives.
+        longLabel := ""
+        loop 400
+            longLabel .= "x"
+
+        tmpDir := Fixtures.TempDir()
+        repo := RunHistoryRepository(tmpDir)
+        currentRun := this._MakeBuildResult()
+        currentRun["details"] := [
+            Map("category", "mapa", "label", longLabel,
+                "ms", 5000, "note", "", "timestamp", "")
+        ]
+
+        Assert.True(repo.Save(currentRun))
+        loaded := repo.Load("20260512_142345")
+        Assert.Equal(longLabel, loaded["details"][1]["label"],
+            "400-char label survives round-trip")
+    }
+
+    roundtrip_preserves_pipe_in_detail_label()
+    {
+        ; The detail line format uses | as the field separator and
+        ; escapes any literal | inside a value to `\|`. Confirm the
+        ; full save -> load -> _SplitEscaped path recovers the
+        ; original value.
+        tmpDir := Fixtures.TempDir()
+        repo := RunHistoryRepository(tmpDir)
+        currentRun := this._MakeBuildResult()
+        currentRun["details"] := [
+            Map("category", "mapa", "label", "Zone|With|Pipes",
+                "ms", 5000, "note", "Note|with|pipe", "timestamp", "")
+        ]
+
+        Assert.True(repo.Save(currentRun))
+        loaded := repo.Load("20260512_142345")
+        Assert.Equal("Zone|With|Pipes", loaded["details"][1]["label"])
+        Assert.Equal("Note|with|pipe",  loaded["details"][1]["note"])
+    }
+
+    ; ============================================================
+    ; INI escaping: defensive throw on dangerous chars (Fase 5)
+    ; ============================================================
+    ;
+    ; Normal save paths can't produce these characters (profile and
+    ; patch come from the user's INI, firstTs from FormatTime, zone
+    ; names from the catalog). But if some future parser regression
+    ; smuggles `\r`, `\n`, `[` or `]` into a field, the save must
+    ; fail loudly via the WarningSink instead of silently corrupting
+    ; the destination INI. The matching check at import time lives
+    ; in run_export_format_tests.
+
+    save_returns_false_when_profile_contains_newline()
+    {
+        tmpDir := Fixtures.TempDir()
+        sink := InMemoryWarningSink()
+        repo := RunHistoryRepository(tmpDir, sink)
+
+        currentRun := this._MakeBuildResult()
+        currentRun["profile"] := "Default`nMalicious"
+
+        result := repo.Save(currentRun)
+        Assert.False(result,
+            "Save returns false when profile contains \n")
+    }
+
+    save_returns_false_when_zone_name_contains_bracket()
+    {
+        tmpDir := Fixtures.TempDir()
+        sink := InMemoryWarningSink()
+        repo := RunHistoryRepository(tmpDir, sink)
+
+        currentRun := this._MakeBuildResult()
+        currentRun["totals"] := Map("Mud Burrow[evil", 5000)
+
+        result := repo.Save(currentRun)
+        Assert.False(result,
+            "Save returns false when totals key contains [")
+    }
+
+    save_warns_when_field_has_ini_breaking_chars()
+    {
+        ; Confirm the warning sink gets a useful message identifying
+        ; the dangerous field, so a future bug investigation can
+        ; trace the call back to which parser produced bad text.
+        tmpDir := Fixtures.TempDir()
+        sink := InMemoryWarningSink()
+        repo := RunHistoryRepository(tmpDir, sink)
+
+        currentRun := this._MakeBuildResult()
+        currentRun["details"] := [
+            Map("category", "mapa", "label", "Mud`nBurrow",
+                "ms", 5000, "note", "", "timestamp", "")
+        ]
+
+        repo.Save(currentRun)
+        Assert.True(sink.Count() >= 1,
+            "Bad-char save surfaces through the sink")
         Assert.True(sink.HasMessage("Save failed for runId"),
             "Warning identifies the failed operation")
     }
