@@ -32,8 +32,9 @@ class Events
                                                           ; (preserved verbatim) when the zone is unknown. sceneId:
                                                           ; raw text as it appeared in the log (engine internal id
                                                           ; for [SCENE] lines; "" for "You have entered" lines).
-                                                          ; Resolution lives in LogMonitorService — see Fase 1 notes
-                                                          ; in src_v2/app/services/log_monitor_service.ahk.
+                                                          ; Resolution lives in LogMonitorService — see the header
+                                                          ; comment of src_v2/app/services/log_monitor_service.ahk
+                                                          ; for the algorithm and the rationale.
     static AreaLevelChanged  := "Evt.AreaLevelChanged"  ; data: {areaLevel, areaCode}
     static CharacterLevelUp  := "Evt.CharacterLevelUp"  ; data: {character, class, level}
     static DeathDetected     := "Evt.DeathDetected"     ; data: {character}
@@ -42,13 +43,13 @@ class Events
     static WindowFocusChanged := "Evt.WindowFocusChanged" ; data: {state} in {"lost", "gained"}
     static LogLineRead       := "Evt.LogLineRead"       ; data: {line}
 
-    ; --- Zone tracking (Wave 3) ---
+    ; --- Zone tracking ---
     ; Published by ZoneTrackingService after ZoneChanged is enriched
     ; with metadata from ZonesCatalog (act, isTown).
     static ZoneEntered          := "Evt.ZoneEntered"          ; data: {zoneName, actIndex, isTown, enteredAt}
     static ZoneTimeAccumulated  := "Evt.ZoneTimeAccumulated"  ; data: {zoneName, durationMs, totalMs}
 
-    ; --- Loading detection (Phase 9.2) ---
+    ; --- Loading detection ---
     ; Published by LoadingDetectionService when a loading measurement
     ; (from "Generating level" to HUD reappearance) is successfully closed.
     static LoadingMeasured := "Evt.LoadingMeasured"    ; data: {durationMs, fromZone, toZone, source, score, anchor}
@@ -63,7 +64,7 @@ class Events
     static OverlayModeChanged   := "Evt.OverlayModeChanged"   ; data: {mode, prevMode, locked, heldKeys}
     static CtrlStateChanged     := "Evt.CtrlStateChanged"     ; data: {active}
 
-    ; --- Settings changes (v0.1.4) ---
+    ; --- Settings changes ---
     ; Published by SettingsDialog._OnSave when cfg.logFile is changed
     ; to a different (non-empty) value. App composition root reacts by
     ; restarting LogMonitorService against the new path — no full app
@@ -88,7 +89,7 @@ class Events
     static AppStarted  := "Evt.AppStarted"
     static AppStopping := "Evt.AppStopping"
 
-    ; --- Run export/import (v0.1.0) ---
+    ; --- Run export/import ---
     static RunsExported := "Evt.RunsExported"  ; data: {path, count}
     static RunsImported := "Evt.RunsImported"  ; data: {path, imported, renamed, skipped}
 }

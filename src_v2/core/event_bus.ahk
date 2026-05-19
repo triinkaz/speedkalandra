@@ -69,10 +69,10 @@ class EventBus
             {
                 this._subs[eventName].RemoveAt(i)
                 this._logger.Debug("Unsubscribed from '" eventName "'", "EventBus")
-                ; v17.15 (Bug #22): if there are no subscribers left, delete
-                ; the Map key. Prevents _subs from growing indefinitely in
-                ; long sessions with Stop/Start cycles (and keeps the
-                ; Publish() fast-path when nobody listens to the event).
+                ; If there are no subscribers left, delete the Map
+                ; key. Prevents _subs from growing indefinitely in
+                ; long sessions with Stop/Start cycles and keeps the
+                ; Publish() fast-path when nobody listens to the event.
                 if (this._subs[eventName].Length = 0)
                     this._subs.Delete(eventName)
                 return true

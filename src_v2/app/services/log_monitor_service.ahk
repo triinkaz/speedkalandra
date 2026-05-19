@@ -24,7 +24,7 @@
 ; subscribers (e.g. AutoStartService matching against autoStartRegex)
 ; can parse on their own.
 ;
-; ZoneChanged semantics (Fase 1):
+; ZoneChanged semantics:
 ;   The PoE2 client emits `[SCENE] Set Source [<raw>]` with <raw>
 ;   sometimes being a human-readable name ("Mud Burrow") and other
 ;   times the engine's internal id ("G1_3"). Either way must reach
@@ -516,7 +516,7 @@ class LogMonitorService
         return ""
     }
 
-    ; ---- Zone name resolution (Fase 1) ----
+    ; ---- Zone name resolution ----
 
     ; Turns a raw zone string from the log (either a human name like
     ; "Mud Burrow" or an internal id like "G1_3") into the canonical

@@ -60,7 +60,7 @@ class LogService
     _buffer     := ""  ; Array<string> of pending lines
     _warnCount  := 0   ; counter of WARNs logged since creation/ResetCounts
     _errorCount := 0   ; counter of ERRORs logged since creation/ResetCounts
-    _currentDate := "" ; v0.1.4: "YYYYMMDD" of last write — used for daily rotation
+    _currentDate := "" ; "YYYYMMDD" of last write — used for daily rotation
 
     __New(logFile, minLevel := "INFO", bufferSize := 1)
     {
@@ -72,10 +72,11 @@ class LogService
         this._buffer     := []
         this._currentDate := FormatTime(A_Now, "yyyyMMdd")
         this._EnsureLogDir()
-        ; v17.15 (Bug #32): rotate log if it has exceeded MAX_LOG_SIZE
-        ; before starting to write new lines.
+        ; Rotate if the log has exceeded MAX_LOG_SIZE since last
+        ; boot — keeps the file from growing without bound between
+        ; daily rotations.
         this._RotateIfTooBig()
-        ; v0.1.4: also rotate if the existing log was last touched on a
+        ; Also rotate if the existing log was last touched on a
         ; previous day. Keeps daily history under .log.YYYYMMDD names.
         this._RotateIfNewDay()
     }
@@ -136,9 +137,10 @@ class LogService
         if (numericLevel < this._minLevel)
             return
 
-        ; v0.1.4: check daily rotation on each write. Inexpensive
-        ; (FormatTime + string compare) and avoids depending on a
-        ; SetTimer to rotate at midnight.
+        ; Check daily rotation on each write. Inexpensive (FormatTime
+        ; + string compare on the cached date) and avoids depending on
+        ; a SetTimer to rotate at midnight, which would silently miss
+        ; the boundary if the app was closed.
         this._RotateIfNewDay()
 
         ts   := FormatTime(A_Now, "yyyy-MM-dd HH:mm:ss")
@@ -213,7 +215,7 @@ class LogService
     }
 
     ; ============================================================
-    ; _RotateIfTooBig (v17.15 - Bug #32)
+    ; _RotateIfTooBig
     ;
     ; Checks log size on boot. If it has exceeded MAX_LOG_SIZE,
     ; renames it to .log.old (overwriting any previous .old)
@@ -244,7 +246,7 @@ class LogService
     }
 
     ; ============================================================
-    ; _RotateIfNewDay (v0.1.4)
+    ; _RotateIfNewDay
     ;
     ; Rotates the active log when the date changes. Called on each
     ; write — a string compare per line is negligible compared to the
@@ -312,7 +314,7 @@ class NullLogger
     Info(msg, context := "")  => 0
     Warn(msg, context := "")  => 0
     Error(msg, context := "") => 0
-    Flush() => 0   ; no-op (R7) — symmetry with LogService
+    Flush() => 0   ; no-op — symmetry with LogService
     GetWarnCount()  => 0   ; symmetry with LogService
     GetErrorCount() => 0
     ResetCounts()   => 0
@@ -381,6 +383,6 @@ class InMemoryLogger
         ))
     }
 
-    Flush() => 0   ; no-op (R7) — InMemoryLogger has no buffer, but
-                   ; needs the method to duck-type with LogService
+    Flush() => 0   ; no-op — InMemoryLogger has no buffer, but needs
+                   ; the method to duck-type with LogService
 }
