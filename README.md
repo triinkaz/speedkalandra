@@ -18,18 +18,15 @@ A minimalist Path of Exile 2 speedrun tracker for Windows.
 - Auto-finalize on configurable regex trigger (e.g. last-boss kill line)
 - Crash recovery — re-hydrates run state on relaunch
 
-## Game language
+## Game language: English client only
 
-The auto-start and auto-finalize features rely on regex matches against lines in `Client.txt`. The default auto-start regex matches a Wounded Man line from the **English** PoE2 client. If your game is in another language, either:
+PoE2 translates `Client.txt` to the UI language, and SpeedKalandra parses English text fragments throughout: zone transitions (`[SCENE] Set Source`), deaths (`has been slain`), level-ups (`is now level`), area changes (`Generating level N area X with seed`), focus markers (`[WINDOW] Lost focus`), and the auto-start/auto-finalize regex defaults. On a non-English client these patterns never match, which means per-zone tracking, death counting, level tracking, and the auto triggers all stay silent.
 
-- Edit the regex strings in **Settings** to match the equivalent lines in your locale, **or**
-- Leave them empty and use the manual hotkeys instead (`Ctrl+Alt+N` to start, `Ctrl+Alt+F` to finalize).
-
-Everything else (zone detection, deaths, loading screens, level changes, personal bests) works regardless of client language — it relies on stable text fragments and pixel patterns that don't change with locale.
+The auto-start and auto-finalize regexes can be edited in **Settings** to match the equivalent lines in your locale; the manual hotkeys (`Ctrl+Alt+N` to start, `Ctrl+Alt+F` to finalize) also work. The pixel-based loading detector is language-agnostic — a non-English user can time runs manually with loading isolation, but the core campaign-tracking experience assumes English.
 
 ## Disclaimer
 
-SpeedKalandra is an independent personal project. It reads Path of Exile 2's `Client.txt` log file and samples pixel colors on screen for loading detection — it does not inject into the game process, modify game files, or send inputs. To the best of my knowledge this falls within typical overlay/tracker territory, but I make no guarantees; use it understanding that you are responsible for what runs on your machine while playing.
+SpeedKalandra is an independent personal project. It reads Path of Exile 2's `Client.txt` log file and samples pixel colors on screen for loading detection — it does not inject into the game process, modify game files, or send gameplay inputs. The only key-level action it issues is a defensive `{Ctrl up}{Alt up}{Shift up}{LWin up}{RWin up}` on script exit, which releases modifiers if AHK happens to terminate while you're holding a hotkey (`SpeedKalandraOnExitHandler` in `speedkalandra.ahk`). This is OS-level housekeeping, not addressed at the game. To the best of my knowledge this falls within typical overlay/tracker territory, but I make no guarantees; use it understanding that you are responsible for what runs on your machine while playing.
 
 The codebase was developed with significant AI assistance. Every change was reviewed, tested in real runs, and is covered by an automated test suite that runs on CI for every commit (see the badge above). I keep this disclaimer because AI-assisted development should be transparent — the project itself is real, maintained, and validated.
 
@@ -94,7 +91,7 @@ An automated test suite covers core primitives, domain, persistence, services, U
 
 ## Known limitations
 
-[`KNOWN_ISSUES.md`](KNOWN_ISSUES.md) lists design constraints (atomic-write window, loading detection assumes default HUD position, English-only regex defaults, no boss detection). Worth a glance before opening an issue.
+[`KNOWN_ISSUES.md`](KNOWN_ISSUES.md) lists design constraints (atomic-write window, loading detection assumes default HUD position, English-client-only parser, no boss detection). Worth a glance before opening an issue.
 
 ## Contributing
 

@@ -20,13 +20,21 @@ resolutions, or unusual aspect ratios can cause the detector to miss or
 miscount loading screens. If the widget's loading total never moves, this
 is the likely cause.
 
-## Auto-start / auto-finalize regex defaults are English-only
+## English client only
 
-The default `autoStartRegex` and `autoFinalizeRegex` match lines from the
-English PoE2 client. Other client languages need either custom regexes (set
-in Settings) or the manual hotkeys. Zone detection, deaths, level changes,
-and loading detection work regardless of client language — they rely on
-stable text fragments and pixel patterns.
+PoE2 translates `Client.txt` to match the UI language, and every parser
+in the app matches against English text. Lines the parser looks for
+include `[SCENE] Set Source [...]` (zone transitions), `has been slain`
+(deaths), `is now level` (character level-ups), `Generating level N area X
+with seed` (area level changes), and `[WINDOW] Lost focus` /
+`Gained focus` (auto-pause), plus the default auto-start and
+auto-finalize regexes. On a non-English client none of these match.
+
+The auto-start and auto-finalize regexes are user-configurable in Settings.
+Loading detection (pixel-based) is the only feature that is genuinely
+language-agnostic. A non-English user can still time runs manually with
+loading isolation, but per-zone tracking, deaths, and level tracking will
+be empty.
 
 ## No boss detection
 
