@@ -82,7 +82,7 @@ class Theme
         "accent",     "D8492F",   ; burnt orange — progress, dividers, accent stripes
         "accentSoft", "F07A3B",   ; lighter orange — buffs, XP
         "good",       "B8C7B0",   ; desaturated green — within target
-        "goodStrong", "4ADE80",   ; vibrant green (v17.13) — for highlights (PB timers)
+        "goodStrong", "4ADE80",   ; vibrant green -- for highlights (PB timers)
         "warn",       "F59E0B",   ; amber — attention
         "danger",     "F87171",   ; desaturated red — alert
         "steel",      "C8C0B4"    ; light gray — soft highlight

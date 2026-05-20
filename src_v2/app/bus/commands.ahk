@@ -32,10 +32,10 @@ class Commands
     static ToggleSteveLockRequested  := "Cmd.ToggleSteveLockRequested"
     static SetOverlayModeRequested   := "Cmd.SetOverlayModeRequested"
 
-    ; --- Personal Bests (v17.13) ---
+    ; --- Personal Bests ---
     static ResetPersonalBestsRequested := "Cmd.ResetPersonalBestsRequested"
 
-    ; --- Run export/import (v0.1.0) ---
+    ; --- Run export/import ---
     static ExportRunsRequested := "Cmd.ExportRunsRequested"
     static ImportRunsRequested := "Cmd.ImportRunsRequested"
 

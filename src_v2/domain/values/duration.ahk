@@ -17,7 +17,6 @@
 ;   Duration.FormatMs(ms)   - static, MM:SS if < 1h, H:MM:SS if >= 1h.
 ;                             "Long" version used in TrayTip, dialogs
 ;                             and overlay widgets (Compact/Micro/Plot).
-;                             Consolidated in #19 (pre-release audit).
 
 class Duration
 {
@@ -49,10 +48,10 @@ class Duration
     ; ============================================================
     ; FormatMs(ms) - static; "H:MM:SS" format if >= 1h, "MM:SS" sub-1h.
     ;
-    ; Consolidated in v0.1.2 (audit #19): previously 4 identical copies
-    ; in app.ahk, run_stats_plot_builder.ahk, compact/micro widgets.
-    ; Steve keeps _FormatMsWithMillis (different format, with hundredths
-    ; for high-frequency visual motion).
+    ; Consolidated path: previously 4 identical copies lived in
+    ; app.ahk, run_stats_plot_builder.ahk, and the compact/micro
+    ; widgets. Steve keeps _FormatMsWithMillis (different format, with
+    ; hundredths for high-frequency visual motion).
     ;
     ; Accepts any number (negatives become 0, floats truncate to int).
     ; Does not use a Duration instance because the constructor throws on
