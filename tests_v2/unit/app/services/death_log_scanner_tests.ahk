@@ -606,7 +606,7 @@ class DeathLogScannerTests extends TestCase
         Assert.Equal("", DeathLogScanner._ParseScene("[SCENE] Set Source [Act 1]"))
         Assert.Equal("", DeathLogScanner._ParseScene("[SCENE] Set Source [Act 5]"))
         Assert.Equal("", DeathLogScanner._ParseScene("[SCENE] Set Source [Interlude]"),
-            "Interlude is a cruel-transition marker, not a real zone")
+            "Interlude is a cinematic marker, not a playable zone")
         Assert.Equal("", DeathLogScanner._ParseScene("nothing to see here"))
     }
 

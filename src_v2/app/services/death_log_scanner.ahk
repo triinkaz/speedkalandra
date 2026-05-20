@@ -13,70 +13,41 @@
 ; events, no disk writes, no event-bus dependency. The result
 ; lives only in the Map returned from Scan().
 ;
-; Zone detection — three signal sources, in order of precedence
-; whenever they disagree:
+; Zone detection — three signal sources, in order of precedence:
 ;
 ;   1. `Generating level <N> area "<code>" with seed`
-;        Emitted for EVERY zone transition the engine performs,
-;        normal and cruel. Carries the internal id with an
-;        optional `C_` prefix to mark cruel difficulty:
-;          G3_3   = Jungle Ruins   (Act 3, normal)
-;          C_G3_3 = Jungle Ruins   (Act 3, Cruel)
-;        This is the only way to detect cruel — see (2) below.
+;        Emitted for every zone transition. Carries the internal
+;        id with an optional `C_` prefix marking cruel difficulty
+;        (e.g. `G3_3` = Jungle Ruins normal, `C_G3_3` = cruel).
+;        The ONLY way to detect cruel — see (2).
 ;
 ;   2. `[SCENE] Set Source [<name>]`
-;        Emitted for normal-difficulty zone transitions, AND for
-;        hideouts / endgame maps. NOT emitted for cruel — this
-;        was verified empirically against a real 115 MB Client.txt
-;        where 25 `Generating level area "C_*"` events appeared
-;        and ZERO had a corresponding SCENE in the following 100
-;        lines. The live tail (LogMonitorService) has the same
-;        blind spot; the scanner uses the area-gen signal to
-;        recover from it for the all-time view.
+;        Emitted for normal-difficulty zone transitions, hideouts,
+;        and endgame maps. NOT emitted for cruel — verified
+;        empirically against a real Client.txt where cruel
+;        area-gens had zero corresponding SCENE lines. The live
+;        tail (LogMonitorService) has the same blind spot; the
+;        scanner uses the area-gen signal to recover for the
+;        all-time view.
 ;
 ;   3. `<NAME> has been slain.`
-;        Death event. Counted against the most recent zone signal
-;        from (1) or (2). If neither has resolved a campaign zone
-;        yet (log truncated, hideout active, endgame map active),
-;        the death increments `skippedNonCampaign` and is not
-;        counted.
+;        Death event. Counted against the most recent resolved
+;        zone, or `skippedNonCampaign` if none resolved.
 ;
 ; Campaign-only policy:
-;   This view counts deaths in **campaign zones only**. Anything
-;   not in `data/zones.csv` (hideouts, atlas maps, endgame trials)
+;   Counts deaths in campaign zones only. Anything not in
+;   `data/zones.csv` (hideouts, atlas maps, endgame trials, towns)
 ;   is dropped and the count surfaces in `skippedNonCampaign` so
-;   the user can see how many deaths the filter dropped. Towns
-;   are also dropped (consistent with the live CSV view).
-;
-;   The rationale: the all-time view is meant to answer "where
-;   in the campaign do I die most" — endgame deaths have entirely
-;   different mechanics (map mods, builds at different tiers) and
-;   would noise out the campaign-relevant signal. The catalog is
-;   the source of truth for what counts as "campaign".
-;
-; Cruel resolution:
-;   The catalog only carries normal-difficulty entries (one row
-;   per zone). Cruel is resolved dynamically: strip the `C_`
-;   prefix from the area code, look up the rest via FindById, and
-;   append " (Cruel)" to the display name. So "Mud Burrow" and
-;   "Mud Burrow (Cruel)" appear as two separate rows in the
-;   result without duplicating the catalog file.
+;   the user can see what the filter dropped. Cruel is resolved
+;   dynamically — see `_ResolveAreaCode`.
 ;
 ; Parser duplication:
-;   `_ParseScene` and `_ParseDeath` duplicate the regexes that
-;   `LogMonitorService._ExtractScene` and `._ExtractDeath` own.
-;   `_ParseAreaGen` mirrors the `_ExtractAreaLevel` regex from the
-;   same file, but extracts the code (not the level) — area level
-;   is already exposed via `Evt.AreaLevelChanged` and the dialog
-;   has no use for it. Kept duplicated rather than extracted into
-;   a shared parser module because (a) only three regexes are
-;   involved, (b) the live tail carries unrelated complexity
-;   (state machine, partial-line handling, focus + level-up
-;   branches) that would weigh down a shared module, and (c) the
-;   integration with `ZonesCatalog` is identical here, so the
-;   shape is confined to one short class. Any change to the
-;   regexes in `LogMonitorService` must be reflected here; the
-;   tests pin behaviour against the same fixture lines.
+;   The three static parsers mirror regexes in `LogMonitorService`
+;   (`_ExtractScene`, `_ExtractDeath`, `_ExtractAreaLevel`). Not
+;   extracted because the live tail carries unrelated complexity
+;   (state machine, partial-line handling) that would weigh down
+;   a shared module. Any change to the live regexes must be
+;   reflected here; the tests pin both against the same fixtures.
 ;
 ; Character filter:
 ;   The PoE2 log emits "X has been slain." for the player and for
@@ -197,11 +168,8 @@ class DeathLogScanner
                 if (lineStr = "")
                     continue
 
-                ; (1) Area gen — highest priority. Emitted for every
-                ; zone transition (normal AND cruel), so a `C_*` code
-                ; here is the ONLY way to detect cruel difficulty;
-                ; the SCENE line that follows (when it follows) would
-                ; carry the same human name regardless of difficulty.
+                ; (1) Area gen — highest priority (only cruel-aware
+                ; signal). See header.
                 areaCode := DeathLogScanner._ParseAreaGen(lineStr)
                 if (areaCode != "")
                 {
@@ -209,13 +177,10 @@ class DeathLogScanner
                     continue
                 }
 
-                ; (2) Scene — fallback for live-tail compatibility
-                ; and for cases where the log starts mid-zone (the
-                ; preceding area gen may have been truncated off).
-                ; A scene that resolves to "" (unknown / hideout /
-                ; endgame / town) DOES reset currentZone so a death
-                ; in a hideout that follows a campaign zone doesn't
-                ; get mis-attributed to the campaign zone.
+                ; (2) Scene — fallback. Resolves to "" for hideouts /
+                ; endgame / town / unknown, which DOES reset
+                ; currentZone so a death after leaving a campaign
+                ; zone isn't mis-attributed to it.
                 scene := DeathLogScanner._ParseScene(lineStr)
                 if (scene != "")
                 {
@@ -386,10 +351,9 @@ class DeathLogScanner
     ;   - "(null)" / "(unknown)" : char select / loading screens
     ;   - "Act N"                : cinematic title card between acts,
     ;                              not a real zone
-    ;   - "Interlude"            : marker scene that PoE2 emits
-    ;                              alongside cruel transitions; the
-    ;                              real zones come from the
-    ;                              `Generating level` path
+    ;   - "Interlude"            : cinematic title card, same
+    ;                              family as `Act N` markers — not
+    ;                              a playable zone
     ; See LogMonitorService._ExtractScene for the live-tail twin.
     static _ParseScene(lineStr)
     {
