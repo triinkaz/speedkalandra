@@ -9,8 +9,8 @@
 ;
 ; OUT OF SCOPE (requires real OnMessage/Win32):
 ;   - _OnLButtonDown drag start
+;   - _OnDragMove / _OnDragUp drag handlers
 ;   - _OnMouseWheel resize
-;   - _DragTick movement
 ;   - _UpdateHoverState (depends on WinGetPos/MouseGetPos)
 ;
 ; Singleton: OverlayInteractionService.Instance is overwritten on
@@ -76,7 +76,7 @@ class OverlayInteractionServiceTests extends TestCase
 
         ; --- Static constants ---
         "static_poll_ms_is_50",
-        "static_drag_tick_ms_is_16",
+        "static_drag_watchdog_ms_is_100",
         "static_ws_ex_transparent_is_correct"
     ]
 
@@ -320,10 +320,10 @@ class OverlayInteractionServiceTests extends TestCase
             "Ctrl polling: ~20Hz")
     }
 
-    static_drag_tick_ms_is_16()
+    static_drag_watchdog_ms_is_100()
     {
-        Assert.Equal(16, OverlayInteractionService.DRAG_TICK_MS,
-            "Drag tick: ~60fps")
+        Assert.Equal(100, OverlayInteractionService.DRAG_WATCHDOG_MS,
+            "Watchdog interval for the lost-LBUTTONUP edge case")
     }
 
     static_ws_ex_transparent_is_correct()

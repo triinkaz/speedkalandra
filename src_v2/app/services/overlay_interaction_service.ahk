@@ -26,7 +26,13 @@
 ; PHILOSOPHY:
 ;   - Static singleton (OverlayInteractionService.Instance) so that
 ;     WidgetBase.Show()/LayoutWidgetBase.Show() can register Hwnds.
-;   - Manual drag via SetTimer 16ms (same as legacy).
+;   - Drag is event-driven: OnMessage(WM_MOUSEMOVE) moves the window
+;     while LBUTTON is held, OnMessage(WM_LBUTTONUP) finishes. A 100ms
+;     watchdog covers the rare case where WM_LBUTTONUP is lost (cross-
+;     process focus change mid-drag). A polled-tick approach (SetTimer
+;     16ms) competes with the other ~5 SetTimers on the AHK message
+;     pump and stutters under DWM load (e.g. when an AlwaysOnTop dialog
+;     is open at the same time).
 ;   - Ctrl polling (50ms) updates _ctrlDown and triggers toggling the
 ;     TRANSPARENT bit on all hwnds + publishes Evt.CtrlStateChanged.
 ;   - Wheel: OnMessage WM_MOUSEWHEEL extracts delta (signed high word
@@ -49,8 +55,9 @@ class OverlayInteractionService
     ; Ctrl polling: 50ms (~20Hz) is enough.
     static POLL_MS := 50
 
-    ; Drag tick: 16ms (~60fps) for smooth movement.
-    static DRAG_TICK_MS := 16
+    ; Watchdog for the lost-LBUTTONUP edge case (see PHILOSOPHY).
+    ; 100ms is imperceptible to humans while keeping CPU cost negligible.
+    static DRAG_WATCHDOG_MS := 100
 
     ; WS_EX_TRANSPARENT bit, used for click-through toggle.
     static WS_EX_TRANSPARENT := 0x20
@@ -79,6 +86,8 @@ class OverlayInteractionService
 
     ; Win32 message constants
     static WM_LBUTTONDOWN := 0x201
+    static WM_LBUTTONUP   := 0x202
+    static WM_MOUSEMOVE   := 0x200
     static WM_MOUSEWHEEL  := 0x20A
 
     _bus       := ""
@@ -92,12 +101,21 @@ class OverlayInteractionService
     _widgets   := ""
 
     ; Drag state
-    _dragHwnd          := 0
-    _dragStartMouseX   := 0
-    _dragStartMouseY   := 0
-    _dragStartWinX     := 0
-    _dragStartWinY     := 0
-    _dragTickFn        := ""
+    _dragHwnd        := 0
+    _dragStartMouseX := 0
+    _dragStartMouseY := 0
+    _dragStartWinX   := 0
+    _dragStartWinY   := 0
+    ; Last cursor position the drag handler reacted to. Used to skip
+    ; redundant WinMove when Windows replays a coalesced WM_MOUSEMOVE
+    ; with unchanged coords.
+    _lastMouseX      := 0
+    _lastMouseY      := 0
+    ; Stable BoundFuncs for the drag plumbing (OnMessage handlers +
+    ; watchdog timer).
+    _dragMoveFn      := ""
+    _dragUpFn        := ""
+    _dragWatchdogFn  := ""
 
     ; Ctrl polling state (stable BoundFunc)
     _pollFn := ""
@@ -114,7 +132,9 @@ class OverlayInteractionService
         this._headless := !!headless
         this._widgets  := []
 
-        this._dragTickFn      := this._DragTick.Bind(this)
+        this._dragMoveFn      := this._OnDragMove.Bind(this)
+        this._dragUpFn        := this._OnDragUp.Bind(this)
+        this._dragWatchdogFn  := this._DragWatchdog.Bind(this)
         this._pollFn          := this._Poll.Bind(this)
         this._onLButtonDownFn := this._OnLButtonDown.Bind(this)
         this._onMouseWheelFn  := this._OnMouseWheel.Bind(this)
@@ -133,6 +153,14 @@ class OverlayInteractionService
         this._enabled := true
         if this._headless
             return
+
+        ; MouseGetPos defaults to Client coords (relative to the active
+        ; window). Both _UpdateHoverState and the drag handlers compare
+        ; against WinGetPos which is always Screen — mixing referentials
+        ; would silently produce wrong deltas/hits when the active
+        ; window changes (e.g. user clicks the game mid-hover). Force
+        ; Screen for this thread.
+        CoordMode("Mouse", "Screen")
 
         ; Ctrl polling
         SetTimer(this._pollFn, OverlayInteractionService.POLL_MS)
@@ -156,9 +184,11 @@ class OverlayInteractionService
             return
         this._enabled := false
 
-        ; Stop any drag in progress
+        ; Cancel any drag in progress WITHOUT firing onDragEnd:
+        ; teardown is not a commit. The widget keeps the position it
+        ; persisted on the last completed drag.
         this._dragHwnd := 0
-        try SetTimer(this._dragTickFn, 0)
+        this._CleanupDrag()
 
         if this._headless
             return
@@ -198,10 +228,8 @@ class OverlayInteractionService
         OutputDebug("OverlayInteractionService: RegisterHwnd " hwnd " (total=" this._widgets.Length ")")
 
         ; Apply current visual state (click-through + opacity) to the
-        ; freshly registered hwnd. Previously (Item 2) it only applied
-        ; when Ctrl was already pressed; now it always applies so the
-        ; overlay is born with the correct dimmed opacity when Ctrl is
-        ; released (the default).
+        ; freshly registered hwnd so it is born with the correct dimmed
+        ; opacity even when Ctrl isn't pressed yet (the default state).
         this._ApplyVisualState(hwnd)
     }
 
@@ -211,8 +239,10 @@ class OverlayInteractionService
             return
         if (this._dragHwnd = hwnd)
         {
+            ; Drag target was unregistered mid-drag (widget hidden,
+            ; layout swap). Cancel without firing onDragEnd.
             this._dragHwnd := 0
-            try SetTimer(this._dragTickFn, 0)
+            this._CleanupDrag()
         }
         for i, w in this._widgets
         {
@@ -376,11 +406,19 @@ class OverlayInteractionService
             MouseGetPos(&mx, &my)
             this._dragStartMouseX := mx
             this._dragStartMouseY := my
+            this._lastMouseX      := mx
+            this._lastMouseY      := my
             WinGetPos(&wx, &wy, , , "ahk_id " hwnd)
             this._dragStartWinX := wx
             this._dragStartWinY := wy
         }
-        try SetTimer(this._dragTickFn, OverlayInteractionService.DRAG_TICK_MS)
+
+        ; Install drag plumbing. Handlers are torn down in _EndDrag /
+        ; _CleanupDrag, so they exist only while a drag is in progress
+        ; — no risk of duplicate handlers across multiple drags.
+        try OnMessage(OverlayInteractionService.WM_MOUSEMOVE, this._dragMoveFn)
+        try OnMessage(OverlayInteractionService.WM_LBUTTONUP,  this._dragUpFn)
+        try SetTimer(this._dragWatchdogFn, OverlayInteractionService.DRAG_WATCHDOG_MS)
 
         ; return 0 = suppress the click so buttons don't activate during drag.
         return 0
@@ -448,36 +486,78 @@ class OverlayInteractionService
     }
 
     ; ============================================================
-    ; Drag tick (16ms = ~60fps, same as legacy)
+    ; Drag handlers (event-driven; see PHILOSOPHY)
     ; ============================================================
 
-    _DragTick()
+    ; WM_MOUSEMOVE: moves the dragged window. Windows already skips
+    ; messages when the cursor didn't move; the _lastMouseX/Y guard
+    ; only catches a coalesced replay with unchanged coords (rare but
+    ; cheap to defend against).
+    _OnDragMove(wParam, lParam, msg, hwnd)
     {
         if (this._dragHwnd = 0)
-        {
-            try SetTimer(this._dragTickFn, 0)
             return
-        }
-
-        if !GetKeyState("LButton", "P")
-        {
-            finishedHwnd := this._dragHwnd
-            this._dragHwnd := 0
-            try SetTimer(this._dragTickFn, 0)
-            OutputDebug("OverlayInteractionService: drag end hwnd=" finishedHwnd)
-            this._FireOnDragEnd(finishedHwnd)
-            return
-        }
-
         try
         {
             MouseGetPos(&cx, &cy)
-            dx := cx - this._dragStartMouseX
-            dy := cy - this._dragStartMouseY
-            newX := this._dragStartWinX + dx
-            newY := this._dragStartWinY + dy
-            WinMove(newX, newY, , , "ahk_id " this._dragHwnd)
+            if (cx = this._lastMouseX && cy = this._lastMouseY)
+                return
+            this._lastMouseX := cx
+            this._lastMouseY := cy
+            WinMove(this._dragStartWinX + (cx - this._dragStartMouseX),
+                    this._dragStartWinY + (cy - this._dragStartMouseY),
+                    , ,
+                    "ahk_id " this._dragHwnd)
         }
+    }
+
+    ; WM_LBUTTONUP: normal drag completion.
+    _OnDragUp(wParam, lParam, msg, hwnd)
+    {
+        if (this._dragHwnd = 0)
+            return
+        this._EndDrag()
+    }
+
+    ; Watchdog. Fires only if WM_LBUTTONUP was lost — typically a
+    ; cross-process focus change steals mouse capture before the
+    ; release reaches us. Detection by direct key state; no WinMove
+    ; here, that lives in _OnDragMove.
+    _DragWatchdog()
+    {
+        if (this._dragHwnd = 0)
+        {
+            try SetTimer(this._dragWatchdogFn, 0)
+            return
+        }
+        if !GetKeyState("LButton", "P")
+            this._EndDrag()
+    }
+
+    ; Ends the drag normally: tears down the OnMessage handlers and
+    ; watchdog, then fires onDragEnd so the widget can persist its
+    ; new position. Idempotent — safe to call from both _OnDragUp and
+    ; _DragWatchdog if the user releases LBUTTON between watchdog ticks.
+    _EndDrag()
+    {
+        if (this._dragHwnd = 0)
+            return
+        finishedHwnd := this._dragHwnd
+        this._dragHwnd := 0
+        this._CleanupDrag()
+        OutputDebug("OverlayInteractionService: drag end hwnd=" finishedHwnd)
+        this._FireOnDragEnd(finishedHwnd)
+    }
+
+    ; Removes the drag-time OnMessage handlers and the watchdog timer.
+    ; Used by _EndDrag (normal flow) and by the cancellation paths in
+    ; Stop() and UnregisterHwnd() (which clear _dragHwnd directly and
+    ; skip the onDragEnd callback).
+    _CleanupDrag()
+    {
+        try OnMessage(OverlayInteractionService.WM_MOUSEMOVE, this._dragMoveFn, 0)
+        try OnMessage(OverlayInteractionService.WM_LBUTTONUP,  this._dragUpFn,   0)
+        try SetTimer(this._dragWatchdogFn, 0)
     }
 
     _FireOnDragEnd(hwnd)

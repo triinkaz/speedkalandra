@@ -86,7 +86,12 @@ class SettingsDialog
 
     _BuildGui()
     {
-        g := Gui("+AlwaysOnTop +Resize -MaximizeBox", "SpeedKalandra " . Version.STRING . " - Settings")
+        ; Fixed size (WINDOW_W x WINDOW_H) — +Resize would add DWM
+        ; sizing borders that repaint on every neighbour-window move
+        ; (significant cost when overlays are dragged with this dialog
+        ; visible, since both are AlwaysOnTop and Windows recomposes
+        ; the topmost stack on each WinMove).
+        g := Gui("+AlwaysOnTop -MaximizeBox", "SpeedKalandra " . Version.STRING . " - Settings")
         g.BackColor := Theme.Color("bg")
         g.MarginX := 16
         g.MarginY := 14
