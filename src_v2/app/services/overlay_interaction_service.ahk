@@ -27,12 +27,17 @@
 ;   - Static singleton (OverlayInteractionService.Instance) so that
 ;     WidgetBase.Show()/LayoutWidgetBase.Show() can register Hwnds.
 ;   - Drag is event-driven: OnMessage(WM_MOUSEMOVE) moves the window
-;     while LBUTTON is held, OnMessage(WM_LBUTTONUP) finishes. A 100ms
-;     watchdog covers the rare case where WM_LBUTTONUP is lost (cross-
-;     process focus change mid-drag). A polled-tick approach (SetTimer
-;     16ms) competes with the other ~5 SetTimers on the AHK message
-;     pump and stutters under DWM load (e.g. when an AlwaysOnTop dialog
-;     is open at the same time).
+;     while LBUTTON is held, OnMessage(WM_LBUTTONUP) finishes. The
+;     LBUTTONDOWN handler calls SetCapture(hwnd) explicitly so mouse
+;     messages keep arriving even when the cursor overshoots the
+;     overlay on a fast drag. Windows would do this in DefWindowProc,
+;     but we return 0 from LBUTTONDOWN to suppress the click on child
+;     buttons (V1/V2/V3) — which also suppresses the default capture.
+;     A 100ms watchdog covers the rare case where WM_LBUTTONUP is
+;     lost (cross-process focus change mid-drag). A polled-tick
+;     approach (SetTimer 16ms) competes with the other ~5 SetTimers
+;     on the AHK message pump and stutters under DWM load (e.g. when
+;     an AlwaysOnTop dialog is open at the same time).
 ;   - Ctrl polling (50ms) updates _ctrlDown and triggers toggling the
 ;     TRANSPARENT bit on all hwnds + publishes Evt.CtrlStateChanged.
 ;   - Wheel: OnMessage WM_MOUSEWHEEL extracts delta (signed high word
@@ -413,6 +418,15 @@ class OverlayInteractionService
             this._dragStartWinY := wy
         }
 
+        ; Take mouse capture explicitly. Windows normally does this
+        ; in DefWindowProc on LBUTTONDOWN, but we return 0 below to
+        ; suppress the click on child buttons (V1/V2/V3), which also
+        ; suppresses the default capture. Without explicit capture,
+        ; WM_MOUSEMOVE stops arriving the moment the cursor leaves
+        ; the overlay window — even by a single pixel — and the drag
+        ; freezes until the cursor moves back over it.
+        try DllCall("user32\SetCapture", "Ptr", hwnd, "Ptr")
+
         ; Install drag plumbing. Handlers are torn down in _EndDrag /
         ; _CleanupDrag, so they exist only while a drag is in progress
         ; — no risk of duplicate handlers across multiple drags.
@@ -549,15 +563,18 @@ class OverlayInteractionService
         this._FireOnDragEnd(finishedHwnd)
     }
 
-    ; Removes the drag-time OnMessage handlers and the watchdog timer.
-    ; Used by _EndDrag (normal flow) and by the cancellation paths in
-    ; Stop() and UnregisterHwnd() (which clear _dragHwnd directly and
-    ; skip the onDragEnd callback).
+    ; Removes the drag-time OnMessage handlers, the watchdog timer
+    ; and releases mouse capture. Used by _EndDrag (normal flow) and
+    ; by the cancellation paths in Stop() and UnregisterHwnd() (which
+    ; clear _dragHwnd directly and skip the onDragEnd callback).
+    ; ReleaseCapture is a no-op if we don't currently hold capture
+    ; (or if WM_LBUTTONUP already released it via DefWindowProc).
     _CleanupDrag()
     {
         try OnMessage(OverlayInteractionService.WM_MOUSEMOVE, this._dragMoveFn, 0)
         try OnMessage(OverlayInteractionService.WM_LBUTTONUP,  this._dragUpFn,   0)
         try SetTimer(this._dragWatchdogFn, 0)
+        try DllCall("user32\ReleaseCapture")
     }
 
     _FireOnDragEnd(hwnd)
