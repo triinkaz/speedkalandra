@@ -20,6 +20,10 @@ Each release section is short and user-facing; engineering rationale lives next 
 
 - **Test-suite count refreshed in `tests_v2/README.md` and `src_v2/README.md` ("over 1800 tests" instead of "over 1500").** The coverage table also gains `RunImportService (size gate)` under stateful services.
 
+### Removed
+
+- **Debug helpers `SpeedKalandraRunExportSelfTest()` and `SpeedKalandraRunImportDebug()` removed from `speedkalandra.ahk`.** Both were interactive `MsgBox`-based helpers from early iteration of the export/import feature, kept as global functions for ad-hoc invocation via the AHK console after the tray menu items were removed. The regression coverage they were preserved for is now exercised end-to-end by the automated suite (`run_export_format_tests.ahk`, `run_history_repository_tests.ahk`, `run_import_service_tests.ahk`), which is faster, repeatable, headless, and runs in CI on every commit. ~95 lines of dead code dropped from the entry point.
+
 ### Documentation
 
 - **`ARCHITECTURE.md` §6 documents the terminal lifecycle and the Dispose-vs-Stop policy explicitly.** Adds a paragraph stating that `Stop()` is terminal (`Start` after `Stop` throws, `Stop` itself is idempotent, reload is a new process via the tray menu's Reload item, the `OnExit` handler in `speedkalandra.ahk` sends defensive modifier key-ups before invoking `Stop`), and a paragraph documenting the audit conclusion that `Stop()` already releases every service with an external resource (AHK SetTimers, AHK `Hotkey()` registrations, file-tail state, the bus interceptor, the three widget Gui handles) — services that only subscribe to the bus expose `Dispose()` for symmetry but are not invoked from `Stop()`, because the bus itself is dropped when the process exits or a new instance is constructed. Calling those Dispose()s would be ceremony with no observable effect.
