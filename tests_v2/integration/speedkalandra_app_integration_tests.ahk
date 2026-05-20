@@ -119,7 +119,7 @@ class SpeedKalandraAppIntegrationTests extends TestCase
         "start_after_stop_throws",
         "start_after_stop_throws_even_when_never_started",
 
-        ; --- v0.1.4: Undo last save rebuilds PBs (consistency with Delete) ---
+        ; --- Undo last save rebuilds PBs (consistency with Delete) ---
         "undo_last_save_rebuilds_pbs_from_history",
 
         ; --- _AssertWired (boot-time wiring check) ---
@@ -130,27 +130,30 @@ class SpeedKalandraAppIntegrationTests extends TestCase
         ; --- End-to-end run flow ---
         "complete_run_flow_from_start_to_finalize_to_undo",
 
-        ; --- Zone semantics (Fase 1, GSG §14 anti-regression) ---
+        ; --- Zone semantics (anti-regression: catalog-id resolution) ---
         "log_monitor_with_catalog_resolves_internal_id_in_zone_tracker",
 
-        ; --- Cancel save flow (GSG §14 anti-regression: FIFO race fix) ---
+        ; --- Cancel save flow (anti-regression: bus-subscription FIFO race) ---
         "cancelled_long_run_saves_to_history_with_zone_totals_intact",
 
         ; --- Zone-PB exclusion (interrupted-by-hotkey visit) ---
         "interrupted_visit_does_not_create_artificial_zone_pb",
         "interrupted_visit_after_complete_visit_preserves_complete_visit_pb",
 
-        ; --- Wave 9: regression tests for cataloged bugs without direct coverage ---
-        ; Bug #9 (AUDIT): Riverbank resets level on every entry. Fix:
-        ; exact match "The Riverbank" + _riverbankSeenInRun flag that
-        ; resets on RunStarted/RunReset/RunCancelled.
+        ; --- Riverbank single-reset (level rolls back on re-entry) ---
+        ; First entry into "The Riverbank" resets the cached character
+        ; level to 1 (fresh-character zone). Re-entries (death respawn,
+        ; portal, party invite) must NOT reset, or the cached level
+        ; rolls back until the next CharacterLevelUp line. Exact-match
+        ; on "The Riverbank" + _riverbankSeenInRun flag (cleared on
+        ; RunStarted / RunReset / RunCancelled).
         "bug9_first_riverbank_entry_resets_level_to_1",
         "bug9_second_riverbank_entry_does_not_reset_level",
         "bug9_non_exact_match_does_not_trigger_reset",
         "bug9_new_run_clears_riverbank_flag",
         "bug9_run_reset_clears_riverbank_flag",
 
-        ; --- v0.1.3: Death penalty on the real-time timer ---
+        ; --- Death penalty on the real-time timer ---
         ; _OnDeathApplyTimerPenalty handler subscribed to Evt.DeathDetected.
         ; Checks cfg.deathPenaltyEnabled + timer.IsActive() before
         ; calling timer.AddPenaltyMs. Covers all 4 guard paths.
@@ -243,11 +246,11 @@ class SpeedKalandraAppIntegrationTests extends TestCase
 
     constructor_event_tracer_not_enabled_by_default()
     {
-        ; v0.1.4: EventTraceLogger is opt-in. Even though the
-        ; interceptor object is instantiated during __New (so the
-        ; cost of the constructor is paid once and Start can later
-        ; flip it on without re-wiring), it must NOT be enabled until
-        ; Start() runs AND cfg.eventTracingEnabled is true.
+        ; EventTraceLogger is opt-in. The interceptor object is
+        ; instantiated during __New (so the cost of the constructor
+        ; is paid once and Start can later flip it on without
+        ; re-wiring), but it must NOT be enabled until Start() runs
+        ; AND cfg.eventTracingEnabled is true.
         ;
         ; This test covers the construction half: defaults give
         ; eventTracingEnabled=false and the interceptor reports
@@ -498,21 +501,22 @@ class SpeedKalandraAppIntegrationTests extends TestCase
     }
 
     ; ============================================================
-    ; v0.1.4: Hydration ordering fix (event subscriber sequencing)
+    ; Hydration ordering: deferred Hydrate at end of __New
     ; ============================================================
     ;
-    ; Before v0.1.4 SpeedKalandraApp.__New called
-    ; runService.Hydrate(hydratedState) in the MIDDLE of construction
-    ; — right after the run service itself was built, well before
-    ; RunStatsRecorder, the app's own _OnRunStartedForXp wiring, etc.
+    ; Anti-pattern: a previous version of SpeedKalandraApp.__New
+    ; called runService.Hydrate(hydratedState) in the MIDDLE of
+    ; construction -- right after the run service itself was built,
+    ; well before RunStatsRecorder, the app's own _OnRunStartedForXp
+    ; wiring, etc.
     ;
     ; When the loaded state had an active run, Hydrate published
-    ; Evt.RunStarted{hydrated:true}. The interceptors that hadn't been
-    ; constructed yet missed the event entirely. The most visible
-    ; consequence: RunStatsRecorder._runId stayed "", so finalizing
-    ; the hydrated run produced a snapshot with runId="" which
-    ; RunHistoryRepository.Save silently rejected (`if currentRunId =
-    ; "" return false`). The user lost the run.
+    ; Evt.RunStarted{hydrated:true}. The interceptors that hadn't
+    ; been constructed yet missed the event entirely. The most
+    ; visible consequence: RunStatsRecorder._runId stayed "", so
+    ; finalizing the hydrated run produced a snapshot with runId=""
+    ; which RunHistoryRepository.Save silently rejected (`if
+    ; currentRunId = "" return false`). The user lost the run.
     ;
     ; Fix: defer runService.Hydrate to the very end of __New, after
     ; _WireEventHandlers(). All subscribers are then in place when
@@ -543,10 +547,10 @@ class SpeedKalandraAppIntegrationTests extends TestCase
             "clock",            secondClock
         ))
 
-        ; Before v0.1.4 this returned "" because RunStatsRecorder
+        ; Pre-fix this returned "" because RunStatsRecorder
         ; was constructed after Hydrate fired.
         Assert.Equal(firstRunId, app2.statsRecorder.GetRunId(),
-            "RunStatsRecorder receives runId from hydrated RunStarted (v0.1.4 fix)")
+            "RunStatsRecorder receives runId from hydrated RunStarted")
 
         try app2.Stop()
     }
@@ -594,13 +598,13 @@ class SpeedKalandraAppIntegrationTests extends TestCase
         app2.bus.Publish(Commands.FinalizeRunRequested, Map())
 
         ; A history file should now exist with the original runId.
-        ; Before v0.1.4 the save silently failed because the snapshot
-        ; had runId="".
+        ; Pre-fix the save silently failed because the snapshot had
+        ; runId="".
         files := []
         Loop Files, this.runHistoryDir "\*.ini"
             files.Push(A_LoopFileName)
         Assert.Equal(1, files.Length,
-            "Hydrated run finalize saved to history (pre-v0.1.4 silently failed)")
+            "Hydrated run finalize saved to history (pre-fix silently failed)")
         Assert.Equal(firstRunId ".ini", files[1],
             "Saved file has the hydrated runId")
 
@@ -666,20 +670,19 @@ class SpeedKalandraAppIntegrationTests extends TestCase
     }
 
     ; ============================================================
-    ; v0.1.4: Undo last save rebuilds PBs from remaining history
+    ; Undo last save rebuilds PBs from remaining history
     ; ============================================================
     ;
-    ; Pre-v0.1.4 behavior:
-    ;   UndoLastSave deleted the run file but left PersonalBests
-    ;   pointing at the deleted run. The user had to manually click
-    ;   "Reset PBs" to fix the stale state — inconsistent with the
-    ;   "Delete" button in RunHistoryDialog, which DID rebuild PBs.
+    ; Anti-pattern: a previous version of UndoLastSave deleted the
+    ; run file but left PersonalBests pointing at the deleted run.
+    ; The user had to manually click "Reset PBs" to fix the stale
+    ; state -- inconsistent with the "Delete" button in
+    ; RunHistoryDialog, which DID rebuild PBs.
     ;
-    ; Fix (v0.1.4):
-    ;   UndoLastSave now calls PersonalBestService.RebuildFromHistory
-    ;   after a successful delete (mirrors RunHistoryDialog). The new
-    ;   _RebuildPbsFromHistory helper on the app loads every surviving
-    ;   run and re-derives PBs from them.
+    ; Fix: UndoLastSave calls PersonalBestService.RebuildFromHistory
+    ; after a successful delete (mirrors RunHistoryDialog). The
+    ; _RebuildPbsFromHistory helper on the app loads every surviving
+    ; run and re-derives PBs from them.
 
     undo_last_save_rebuilds_pbs_from_history()
     {
@@ -710,8 +713,8 @@ class SpeedKalandraAppIntegrationTests extends TestCase
         ; PB rebuilt from the (now empty) history: the undone run no
         ; longer contributes, and with no surviving runs the PB is
         ; cleared. This is the assertion that would have FAILED before
-        ; the v0.1.4 fix — the PB used to be left pointing at the
-        ; deleted run.
+        ; the fix -- the PB used to be left pointing at the deleted
+        ; run.
         Assert.False(this.app.personalBest.HasRunPb(),
             "PB rebuilt from history: no surviving runs => no PB")
         Assert.Equal(0,  this.app.personalBest.GetRunPbMs())
@@ -811,8 +814,7 @@ class SpeedKalandraAppIntegrationTests extends TestCase
 
     cancelled_long_run_saves_to_history_with_zone_totals_intact()
     {
-        ; Guardrail (Fase 2; GSG §14 anti-regression item "FIFO da
-        ; bus como sutil dependência de ordem de wiring"):
+        ; Anti-regression (bus-subscription FIFO race):
         ;
         ; A run that is cancelled after the 3-minute threshold must
         ; still be persisted to history, AND the saved snapshot must
@@ -971,8 +973,7 @@ class SpeedKalandraAppIntegrationTests extends TestCase
 
     log_monitor_with_catalog_resolves_internal_id_in_zone_tracker()
     {
-        ; Guardrail (Fase 1; GSG §14 anti-regression item "ID interno
-        ; de zona vazando como nome humano"):
+        ; Anti-regression (zone internal id leaking as human name):
         ;
         ; Prove end-to-end that when LogMonitor parses a [SCENE]
         ; line carrying an engine internal id, the zone tracker
@@ -1121,23 +1122,20 @@ class SpeedKalandraAppIntegrationTests extends TestCase
     }
 
     ; ============================================================
-    ; Wave 9 — Regression: Bug #9 (Riverbank single-reset)
+    ; Riverbank single-reset (Bug #9)
     ; ============================================================
     ;
-    ; AUDIT #9: "Riverbank resets level on every entry".
-    ;
-    ; PRE-fix behavior:
-    ;   InStr(zone, "Riverbank") + unconditional reset.
+    ; Anti-pattern: a previous version of _OnZoneEnteredForLevel
+    ; matched "Riverbank" as a substring and reset unconditionally.
     ;   Problem 1: substring match (any zone with "Riverbank" in the
     ;              name would match).
     ;   Problem 2: re-entry (death respawn, portal, party invite) reset
     ;              the cached level to 1, causing wrong XP display
     ;              until the next CharacterLevelUp.
     ;
-    ; Fix (v17.15):
-    ;   Exact match "The Riverbank" + _riverbankSeenInRun flag. Flag
-    ;   reset on RunStarted (new run unlocks new reset) and on
-    ;   RunReset/RunCancelled.
+    ; Fix: exact match "The Riverbank" + _riverbankSeenInRun flag.
+    ; Flag reset on RunStarted (new run unlocks new reset) and on
+    ; RunReset/RunCancelled.
     ;
     ; The tests call `_OnZoneEnteredForLevel` directly on the instance
     ; (handler is subscribed in app.Start() which we don't call here).
@@ -1236,15 +1234,15 @@ class SpeedKalandraAppIntegrationTests extends TestCase
     }
 
     ; ============================================================
-    ; v0.1.3 — Death penalty on the real-time timer
+    ; Death penalty on the real-time timer
     ; ============================================================
     ;
-    ; Before v0.1.3, the death penalty (cfg.deathPenaltyMs) only
-    ; appeared in the post-finalize plot ("Deaths" category in
-    ; RunStatsPlotBuilder). The real-time run timer didn't reflect
-    ; the penalty, creating a visual inconsistency: the user would
-    ; see 1:05:00 in the overlay but 1:07:30 in the plot after
-    ; finalize.
+    ; Anti-pattern: a previous version of the death-handling path
+    ; only fed cfg.deathPenaltyMs into the post-finalize plot
+    ; ("Deaths" category in RunStatsPlotBuilder). The real-time run
+    ; timer didn't reflect the penalty, creating a visual
+    ; inconsistency: the user would see 1:05:00 in the overlay but
+    ; 1:07:30 in the plot after finalize.
     ;
     ; Fix: _OnDeathApplyTimerPenalty handler subscribed to
     ; Evt.DeathDetected. When it fires and cfg.deathPenaltyEnabled +

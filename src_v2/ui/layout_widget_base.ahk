@@ -110,11 +110,13 @@ class LayoutWidgetBase extends WidgetBase
         try WinSetTransparent(255, "ahk_id " wg.Hwnd)
         try WinSetExStyle("+0x20", "ahk_id " wg.Hwnd)
 
-        ; Smoke fix Turn 5 (Bug A): registers Hwnd with
-        ; OverlayInteractionService so that Ctrl+drag (move) and
-        ; Ctrl+wheel (resize) work on LayoutWidgets. Replicates the
-        ; block in WidgetBase.Show, since this Show() override does
-        ; not call super.
+        ; Register Hwnd with OverlayInteractionService so that
+        ; Ctrl+drag (move) and Ctrl+wheel (resize) work on layout
+        ; widgets. This Show() override does NOT call super, so the
+        ; equivalent block from WidgetBase.Show has to be replicated
+        ; here -- without it, the overlay becomes uninteractable
+        ; (silent failure: the widget renders but ignores Ctrl-based
+        ; input).
         if (OverlayInteractionService.Instance != "")
             OverlayInteractionService.Instance.RegisterHwnd(
                 this._gui.Hwnd,

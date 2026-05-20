@@ -120,7 +120,7 @@ class XpService
     GetCurrentAreaCode()  => this._currentAreaCode
 
     ; ============================================================
-    ; Calculations (delegate to Phase 2's XpRules)
+    ; Calculations (delegate to XpRules)
     ; ============================================================
 
     ; GetXpPenaltyInfo() -> XpPenaltyInfo

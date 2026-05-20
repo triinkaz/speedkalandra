@@ -22,7 +22,7 @@
 ;     GetTownTotalsByAct, GetTotalTownMs, GetTotalRunMs
 ;   - Lifecycle: RunStarted/Reset/Cancelled/Completed
 ;   - Timer: Paused/Resumed/Stopped (incl. Bug Lechtansi and
-;     Bug #1 v17.15)
+;     the TimerStopped flush-before-zero anti-pattern)
 ;   - Hydrate / SetRunActive / Reset
 ;   - Published events: ZoneEntered, ZoneTimeAccumulated
 
@@ -162,7 +162,7 @@ class ZoneTrackingServiceTests extends TestCase
         "timer_resumed_does_nothing_without_run_active",
         "timer_paused_then_zone_changed_does_not_restart_timer",
 
-        ; --- TimerStopped (Bug #1 v17.15) ---
+        ; --- TimerStopped (flush before zeroing _startMs) ---
         "timer_stopped_flushes_active_zone_before_zeroing",
         "timer_stopped_keeps_active_zone",
 
@@ -412,7 +412,7 @@ class ZoneTrackingServiceTests extends TestCase
     }
 
     ; ============================================================
-    ; ZoneChanged during pause (Bug Lechtansi - v0.1.1)
+    ; ZoneChanged during pause (Bug Lechtansi)
     ; ============================================================
 
     zone_changed_during_pause_sets_active_zone()
@@ -738,10 +738,10 @@ class ZoneTrackingServiceTests extends TestCase
 
     run_started_with_hydrated_flag_preserves_totals()
     {
-        ; v0.1.4 regression: SpeedKalandraApp.__New now defers
-        ; runService.Hydrate to the very end so that subscribers
-        ; constructed downstream (RunStatsRecorder, etc.) receive
-        ; the RunStarted event. By the time the event fires,
+        ; Anti-regression: SpeedKalandraApp.__New defers
+        ; runService.Hydrate to the very end of construction so that
+        ; subscribers constructed downstream (RunStatsRecorder, etc.)
+        ; receive the RunStarted event. By the time the event fires,
         ; ZoneTrackingService has already been hydrated from disk
         ; (Hydrate(map) + SetRunActive(true)). If _OnRunStarted wiped
         ; _totals here, every ms tracked before the previous shutdown
@@ -919,8 +919,15 @@ class ZoneTrackingServiceTests extends TestCase
     }
 
     ; ============================================================
-    ; TimerStopped (Bug #1 v17.15)
+    ; TimerStopped (flush before zeroing _startMs)
     ; ============================================================
+    ;
+    ; Anti-pattern: a previous version of _OnTimerStopped zeroed
+    ; _startMs without flushing first. FinalizeRun -> timer.Stop ->
+    ; TimerStopped then ran ahead of RunCompleted's flush attempt,
+    ; and the time since the last ZoneChanged was lost in every
+    ; finalized run. The handler now calls _FlushActive(true) BEFORE
+    ; zeroing.
 
     timer_stopped_flushes_active_zone_before_zeroing()
     {
@@ -929,7 +936,7 @@ class ZoneTrackingServiceTests extends TestCase
         this.stubClock.AdvanceMs(3500)
         this.bus.Publish(Events.TimerStopped, Map())
         Assert.Equal(3500, this.svc.GetZoneTotal("Mud Burrow"),
-            "Bug #1 v17.15: flush BEFORE zeroing _startMs")
+            "flush BEFORE zeroing _startMs (anti-regression)")
     }
 
     timer_stopped_keeps_active_zone()
