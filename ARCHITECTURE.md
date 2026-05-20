@@ -68,6 +68,7 @@ SpeedKalandra/
 │   ├── speedkalandra.log       App log (rotated at 5 MB).
 │   ├── personal_bests.ini      Run PB, per-act PBs, per-zone PBs.
 │   ├── speedkalandra_zones.txt Zone totals of the in-progress run (txt for write speed).
+│   ├── deaths.csv              Append-only log of every detected death (zone, patch, build).
 │   └── runs/                   One INI file per finished run.
 ├── exports/                    Default destination for JSON exports.
 ├── assets/                     Static images (whale icon, etc).
@@ -91,6 +92,7 @@ SpeedKalandra/
     │   ├── run_state_repository.ahk
     │   ├── run_history_repository.ahk
     │   ├── personal_best_repository.ahk
+    │   ├── death_log_repository.ahk
     │   └── zones_catalog.ahk
     ├── app/
     │   ├── bus/
@@ -108,6 +110,7 @@ SpeedKalandra/
         ├── settings_dialog.ahk
         ├── run_stats_plot_dialog.ahk
         ├── run_history_dialog.ahk
+        ├── death_stats_dialog.ahk
         ├── export_options_dialog.ahk
         ├── import_preview_dialog.ahk
         ├── line_chart_renderer.ahk
@@ -198,6 +201,8 @@ All services are constructed by the composition root and receive their dependenc
 | **PersonalBestService** | Loads PBs at construction. Pull-based: the composition root calls `UpdateFromRun(runMs, runId, zoneTotals, actCheckpoints)` after a successful save of a completed run. PBs are kept in three buckets: legacy global run PB, per-act run PB (Map<actNum, ms>), and per-zone PB. `RebuildFromHistory` exists for rebuilding PBs after a run deletion. |
 | **RunExportService** | Loads runs from `RunHistoryRepository`, optionally bundles PBs and anonymizes character data, and writes JSON via `RunExportFormat.Serialize` + atomic write. Publishes `Evt.RunsExported`. |
 | **RunImportService** | Two phases: `Preview(path)` parses + validates the JSON file and returns a summary (new / identical / rename-on-conflict) without writing. `Execute(preview, pbStrategy)` then persists. Conflict resolution is by content signature (`runId + totalMs + deathCount + maxActReached + details.Length`). PB strategy is one of `keep` / `rebuild` / `replace`. Publishes `Evt.RunsImported`. Refuses imports above `RunImportService.MAX_FILE_BYTES` (10 MB) before `FileRead`. `RunExportFormat.ValidateSchema` enforces per-payload caps from the same source of truth (`MAX_RUNS_PER_FILE=5000`, `MAX_STRING_LEN=500`, `MAX_DETAILS_PER_RUN=1000`, `MAX_TOTALS_PER_RUN=200`, `MAX_ZONE_PBS=200`, `MAX_ACT_CHECKPOINTS=20`) and runs `RunId.IsValid` on `runId` and `runPbRunId`. |
+| **DeathStatsService** | Aggregates `data/deaths.csv` (written by `DeathLogRepository`) for the `DeathStatsDialog`. Pure read service: `Aggregate(filter := "")` returns `{totalDeaths, perZone, availablePatches, availableProfiles}` in one pass over the in-memory CSV. No cache — every call re-reads the file, which is fine because the dataset is small (one row per death across all play sessions) and the dialog is opened on demand. Town zones are dropped via `ZonesCatalog.IsTownName` when a catalog is wired (defensive against unknown zones — a zone the catalog doesn't recognize passes through to the chart). `availablePatches` / `availableProfiles` are extracted from the **whole** dataset, not the filtered subset, so the dialog's two dropdowns stay populated as the user cycles through filters. The `perZone` array is sorted by count desc via a stable insertion sort; the available lists are sorted case-insensitively via `StrCompare(..., 1)` so the dropdown order is predictable across locales. |
+| **DeathLogScanner** | Alternative read path for the `DeathStatsDialog`'s "All-time (from log)" view. One-shot streaming scan of Client.txt that bypasses `data/deaths.csv` entirely — reads the raw log, resolves zones via the catalog, applies a **campaign-only filter** (anything not in `data/zones.csv` is dropped — hideouts, atlas maps, endgame trials, towns), and returns the same `perZone` shape `DeathStatsService` produces. Cruel difficulty is detected via the **`C_` prefix** on the internal area code (`C_G3_3` = Jungle Ruins in Cruel) and surfaces as a separate row with a `" (Cruel)"` suffix; the catalog is not duplicated for cruel — the suffix is dynamic. Zone detection has **three signals** in precedence order: `Generating level X area "<code>"` (highest — the only way to detect cruel since PoE2 does NOT emit `[SCENE] Set Source` for cruel zones, verified empirically), `[SCENE] Set Source [<name>]` (fallback for normal-difficulty and when the area-gen line is truncated), and `<NAME> has been slain.` (counted against the most recent resolved zone, or to `skippedNonCampaign` if none resolved). Pure: no event bus, no disk writes, no shared state with `DeathLogRepository`. Duplicates three regexes from `LogMonitorService` by design — a shared parser module for three patterns would be more plumbing than the duplication itself, and the live tail carries unrelated complexity (state machine, partial-line handling, focus/level-up branches) that would weigh down a shared module. Headless-safe; the dialog calls it synchronously, briefly freezing the UI on large logs. |
 
 ---
 
@@ -369,8 +374,9 @@ The app has two flavors of dialogs:
 | Dialog | Opened by | Purpose |
 |---|---|---|
 | **SettingsDialog** | `Cmd.OpenSettingsRequested` (tray menu, hotkey) | Edit all `AppSettings` fields. Hotkey section uses `HotkeyFormatter` for human-readable display and a Capture button (InputHook-based combo recording) plus Clear; the underlying Edit is read-only. |
-| **RunStatsPlotDialog** | `Cmd.OpenRunStatsPlotRequested` | Stacked-bar / line-chart visualization of the latest (or a selected historical) run. Uses `LineChartRenderer` for the time-distribution plot. |
+| **RunStatsPlotDialog** | `Cmd.OpenRunStatsPlotRequested` | Stacked-bar / line-chart visualization of the latest (or a selected historical) run. Uses `LineChartRenderer` for the time-distribution plot. Bottom-bar buttons: Details... / History... / Death Stats (publishes `Cmd.OpenDeathStatsRequested`, opening the death aggregate over `data/deaths.csv`). |
 | **RunHistoryDialog** | `Cmd.OpenRunHistoryRequested` | Sortable list of past runs. Opens a run in the plot dialog. Buttons: Export selected / Export all / Import. |
+| **DeathStatsDialog** | `Cmd.OpenDeathStatsRequested` (RunStatsPlotDialog button) | Aggregates `data/deaths.csv` via `DeathStatsService`. Two filter dropdowns (`Patch`, `Build`) with `"(All)"` sentinel for no-filter; ListView with three columns (Zone / Count / Bar). The Bar column is an ASCII proportion (`█` repeated, max 30 chars) because AHK v2's ListView has no per-cell custom-draw hook short of subclassing via `WM_NOTIFY` — ASCII bars stay readable in the default font, copy-paste cleanly, and survive HiDPI scaling without code. Dropdown contents are stable across filter changes (the `availablePatches` / `availableProfiles` arrays come from the unfiltered dataset), so only the ListView redraws on dropdown change. Has two modes: `live` (default — reads `data/deaths.csv` via `DeathStatsService`) and `alltime` (one-shot scan of Client.txt via `DeathLogScanner`, no filters, ephemeral; the cache is cleared on next toggle or on dialog close). The alltime view is **campaign-only** — deaths in hideouts / atlas maps / endgame trials / towns are dropped and the count surfaces in the header as `(skipped: N outside campaign zones)`. **Cruel difficulty** is detected via the `C_` prefix on the area code and surfaces as a separate row with a `" (Cruel)"` suffix (e.g. "Mud Burrow" and "Mud Burrow (Cruel)" counted independently). In alltime mode an `Export...` button appears between the toggle and Close, letting the user save the current view as CSV to a path of their choice (default folder: Downloads). The export never touches the app's data directory; the alltime view itself never persists. |
 | **ExportOptionsDialog** | `Cmd.ExportRunsRequested` (with runIds in payload) | Picks output path and toggles (`Anonymize`, `Include PBs`). Calls `RunExportService.Export`. |
 | **ImportPreviewDialog** | `Cmd.ImportRunsRequested` (with path in payload) | Shows summary of `RunImportService.Preview` (new / identical / rename) and lets the user pick a PB strategy before calling `Execute`. |
 
@@ -386,7 +392,7 @@ Two namespaces, both implemented as classes with `static` string constants to ma
 
 - Run lifecycle: `NewRunRequested`, `ResetRunRequested`, `FinalizeRunRequested`, `CancelRunRequested`
 - Timer: `TimerToggleRequested`
-- UI: `OpenSettingsRequested`, `OpenRunStatsPlotRequested`, `OpenRunHistoryRequested`, `ToggleOverlayRequested`, `ToggleMicroLockRequested`, `ToggleSteveLockRequested`, `SetOverlayModeRequested`
+- UI: `OpenSettingsRequested`, `OpenRunStatsPlotRequested`, `OpenRunHistoryRequested`, `OpenDeathStatsRequested`, `ToggleOverlayRequested`, `ToggleMicroLockRequested`, `ToggleSteveLockRequested`, `SetOverlayModeRequested`
 - PBs: `ResetPersonalBestsRequested`
 - Export/Import: `ExportRunsRequested`, `ImportRunsRequested`
 

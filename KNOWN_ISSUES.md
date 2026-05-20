@@ -80,3 +80,76 @@ Decision: not persisted by design. Crash plus same-zone hotkey plus no
 intervening transition is a rare combination, and persisting per-visit
 elapsed adds an INI write on every flush. The user can simply finalize on
 a different zone or rerun for a clean PB.
+
+## Death log is decoupled from run history
+
+Every detected death is appended to `data/deaths.csv` by
+`DeathLogRepository` at the moment `Evt.DeathDetected` fires —
+independent of run lifecycle. Deleting a run from
+`RunHistoryDialog` (the trash icon) removes the run's `.ini` file
+and rebuilds personal bests, but it does **not** retract the rows
+that run's deaths contributed to `deaths.csv`. The Death Stats
+dialog will still show those deaths in the per-zone counts.
+
+The split is deliberate. `deaths.csv` answers "where does the
+player die across all play sessions, ever", which is the question
+the per-zone aggregate exists to answer. Coupling it to run
+history would make the aggregate jump around every time the user
+prunes test aborts or short runs from the history list, which is
+the noisy end of the same dataset the user is trying to learn
+from. The dialog's filters (`Patch`, `Build`) cover the
+legitimate "narrow to a specific build/season" use case without
+requiring history-level deletion.
+
+Decision: a user who really wants to retract specific deaths can
+edit `data/deaths.csv` directly (semicolon-delimited, UTF-8,
+double-quoted fields per `CsvFile`). There is no UI for it because
+the edit is a one-shot per league and the file format is stable.
+
+## All-time scan briefly freezes the dialog on large logs
+
+The `"All-time (from log)"` toggle in `DeathStatsDialog` runs
+`DeathLogScanner.Scan` synchronously — a streaming `FileOpen +
+ReadLine` over the entire `Client.txt`. For an active player who
+has not rotated the log, the file can reach hundreds of MB; the
+scan then takes a few seconds to complete and the dialog (and the
+rest of the overlay) is unresponsive during that time.
+
+Decision: synchronous by design. The user clicked an explicit
+"from log" button so a brief pause is expected; making the scan
+asynchronous would require a `SetTimer`-driven chunked reader with
+cancelation + partial-result rendering, which is a lot of moving
+parts for a feature that the user invokes at most a few times per
+session. Restarting the toggle re-scans from scratch — nothing is
+cached across toggles, so the time cost repeats per click. The
+live view (CSV-backed) has no such freeze; it reads the small
+append-only `deaths.csv` instead.
+
+## Live tracking has a cruel-difficulty blind spot
+
+PoE2 does NOT emit `[SCENE] Set Source [<name>]` for cruel
+difficulty zones (the Acts 1–3 replay before endgame). Only
+`Generating level X area "C_<id>"` is emitted, with the `C_`
+prefix marking cruel. Verified empirically against a real 115 MB
+Client.txt: 25 cruel area-gen events appeared with zero
+corresponding SCENE lines.
+
+This affects the **live tracking path** (`LogMonitorService` and
+`ZoneTrackingService`), which currently only watches the SCENE
+signal. During a cruel run, zone transitions are not detected,
+zone time accumulates against the last normal zone seen before
+crossing the cruel threshold, and deaths recorded into
+`data/deaths.csv` are attributed to that stale zone.
+
+The **all-time view** (`DeathLogScanner` + `DeathStatsDialog`)
+was extended to use the `Generating level` signal as well, so
+cruel deaths in the all-time view DO surface correctly with a
+`" (Cruel)"` suffix (e.g. `"Mud Burrow (Cruel)"`). The all-time
+view is the recommended way to inspect cruel deaths.
+
+Decision: the live tail's parser duplication-by-design (see
+`LogMonitorService` header) makes extending it a separate piece
+of work. For now, runs that cross into cruel will show partially
+degraded live data and recover full fidelity in the all-time
+view. Out of scope for the all-time feature; tracked here so a
+player who notices the discrepancy doesn't think it's a bug.
