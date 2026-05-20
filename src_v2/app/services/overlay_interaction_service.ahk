@@ -52,10 +52,10 @@ class OverlayInteractionService
     ; Drag tick: 16ms (~60fps) for smooth movement.
     static DRAG_TICK_MS := 16
 
-    ; WS_EX_TRANSPARENT bit, used for click-through toggle (Item 2).
+    ; WS_EX_TRANSPARENT bit, used for click-through toggle.
     static WS_EX_TRANSPARENT := 0x20
 
-    ; Dynamic opacity tied to mouse HOVER (v17.14):
+    ; Dynamic opacity tied to mouse HOVER:
     ;   - Default (no hover, no Ctrl):       overlay 100% visible
     ;   - Mouse hovers over the overlay:     overlay ~10% (reveals game beneath)
     ;     -> lets the user see/click on game items hidden by the
@@ -87,7 +87,7 @@ class OverlayInteractionService
 
     ; State
     _ctrlDown    := false
-    _hoveredHwnd := 0      ; hwnd currently under the cursor (0 = none). v17.14
+    _hoveredHwnd := 0      ; hwnd currently under the cursor (0 = none).
     ; Array<Map<"hwnd"|"onDragEnd"|"onResize">>
     _widgets   := ""
 
@@ -236,7 +236,7 @@ class OverlayInteractionService
     }
 
     ; ============================================================
-    ; _UpdateHoverState (v17.14)
+    ; _UpdateHoverState
     ;
     ; Detects which widget (if any) is under the cursor and updates
     ; _hoveredHwnd. Fired on every poll (50ms).
@@ -312,8 +312,8 @@ class OverlayInteractionService
         this._ctrlDown := newVal
         OutputDebug("OverlayInteractionService: ctrlDown=" (newVal ? "true" : "false"))
 
-        ; Item 2 + v17.14: toggle WS_EX_TRANSPARENT AND opacity on all
-        ; registered hwnds (synced with Ctrl state).
+        ; Toggle WS_EX_TRANSPARENT AND opacity on all registered
+        ; hwnds (synced with Ctrl state).
         this._ApplyVisualStateToAll()
 
         try this._bus.Publish(Events.CtrlStateChanged, Map("active", newVal))
@@ -321,8 +321,8 @@ class OverlayInteractionService
     }
 
     ; ============================================================
-    ; Visual state: click-through (WS_EX_TRANSPARENT) + opacity
-    ; (v17.14) — computes state combining Ctrl + hover:
+    ; Visual state: click-through (WS_EX_TRANSPARENT) + opacity.
+    ; Computes state combining Ctrl + hover:
     ;
     ;   Ctrl=on:                          click-through OFF, opacity FULL
     ;     -> interactive widget (drag/wheel/V1V2V3), full visibility

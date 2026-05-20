@@ -245,7 +245,7 @@ class SettingsRepositoryTests extends TestCase
 
     save_load_preserves_diagnostics_event_tracing()
     {
-        ; v0.1.4: opt-in event tracing flag.
+        ; Opt-in event tracing flag.
         ; Default is false (privacy-preserving), but the user can flip
         ; it on for diagnosing event-order bugs and we must round-trip
         ; the choice across app restarts.

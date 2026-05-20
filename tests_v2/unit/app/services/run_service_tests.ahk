@@ -304,7 +304,7 @@ class RunServiceTests extends TestCase
 
     new_run_with_active_run_resets_first()
     {
-        ; v17.14: NewRun with an active run calls ResetRun (discards
+        ; NewRun with an active run calls ResetRun (discards
         ; without saving). Before that, CancelRun was called and saved
         ; if runMs >= 3min.
         this.svc.NewRun()

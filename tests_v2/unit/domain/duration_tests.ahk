@@ -34,7 +34,7 @@ class DurationTests extends TestCase
         "formatted_pads_with_zeros",
         "formatted_above_one_hour_uses_long_minutes",
 
-        ; --- FormatMs static (v0.1.2 - audit #19 consolidation) ---
+        ; --- FormatMs static (consolidation of duplicated helpers) ---
         "format_ms_zero_is_00_00",
         "format_ms_below_one_second_is_00_00",
         "format_ms_one_second_is_00_01",
@@ -152,7 +152,7 @@ class DurationTests extends TestCase
     }
 
     ; ============================================================
-    ; FormatMs static (v0.1.2 - audit #19)
+    ; FormatMs static
     ; ============================================================
     ;
     ; Unlike Formatted() (always MM:SS), FormatMs alternates between

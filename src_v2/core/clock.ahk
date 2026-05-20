@@ -92,15 +92,3 @@ class FakeClock
         this._now := baseTime
     }
 }
-
-; ------------------------------------------------------------
-; v17.15 (Bug #18): ReplayClock removed.
-;
-; It was a simulated clock for replay mode (CampaignReplayCore +
-; CampaignReplayService). Those services were demolished in Wave 1
-; and now live in _LIXEIRA/. With no callers in live code, the class
-; was 100+ lines of dead code.
-;
-; If replay is needed again in the future, recover from git history
-; or from _LIXEIRA/.
-; ------------------------------------------------------------

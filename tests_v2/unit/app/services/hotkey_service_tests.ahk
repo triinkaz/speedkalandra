@@ -19,7 +19,7 @@
 ;   PlotRunStats     -> Cmd.OpenRunStatsPlotRequested
 ;
 ; FocusChangingActions (Settings, PlotRunStats) have modifier cleanup
-; before publishing (Bug v17.14: stuck Ctrl/Alt after opening dialog).
+; before publishing (anti-regression: stuck Ctrl/Alt after opening dialog).
 
 
 class HotkeyServiceTests extends TestCase

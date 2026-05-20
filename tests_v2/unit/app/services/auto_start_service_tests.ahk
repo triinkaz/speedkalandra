@@ -131,7 +131,7 @@ class AutoStartServiceTests extends TestCase
         stubRunSvc := { IsActive: (self) => true }
         svc2 := AutoStartService(this.bus, this.cfg, stubRunSvc)
         Assert.True(svc2.IsRunActive(),
-            "Bug #4 v17.15: query runService at boot to prevent dispatch after hydrate")
+            "Bug #4: query runService at boot to prevent dispatch after hydrate")
         svc2.Dispose()
     }
 

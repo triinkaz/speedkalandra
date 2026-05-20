@@ -135,7 +135,7 @@ class AppTickEmitterTests extends TestCase
         this.bus.Subscribe(Events.Tick, (data) => out.Push(data))
         emitter := AppTickEmitter(this.bus, 300)
         emitter.Pulse()
-        ; EventBus.Publish without data passes "" as the default (see Wave 1)
+        ; EventBus.Publish without data passes "" as the default
         Assert.Equal([""], out)
     }
 

@@ -8,8 +8,8 @@
 ;   - CurrentArea (level, code)
 ;   - LoadingVisual (enabled, pollMs, minMs, maxMs)
 ;   - autoPauseOnFocus
-;   - deathPenaltyEnabled, deathPenaltyMs (v17.15.1 re-added)
-;   - disclaimerAcknowledged (v17.15.2)
+;   - deathPenaltyEnabled, deathPenaltyMs
+;   - disclaimerAcknowledged
 ;   - autoFinalizeRegex (strict: "" reverts to default)
 ;   - autoStartRegex (allow empty: "" accepted explicitly)
 ;   - vendorRegexes (NOT read by FromMap; repository handles it)
@@ -151,7 +151,7 @@ class AppSettingsTests extends TestCase
 
     defaults_event_tracing_disabled_by_default()
     {
-        ; v0.1.4: EventTraceLogger is opt-in. A fresh install never
+        ; EventTraceLogger is opt-in. A fresh install never
         ; starts the interceptor unless the user explicitly enables
         ; it under [Diagnostics] in speedkalandra.ini.
         Assert.False(AppSettings.Defaults().eventTracingEnabled)

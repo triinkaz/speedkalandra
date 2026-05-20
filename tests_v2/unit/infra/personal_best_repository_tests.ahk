@@ -78,7 +78,7 @@ class PersonalBestRepositoryTests extends TestCase
     ; Regression: encoding for IniRead key-lookup
     ; ============================================================
     ;
-    ; PITFALL (Wave 4 - 5 diags reduced to this single regression):
+    ; PITFALL (single regression for an AHK encoding pitfall):
     ; IniRead key-lookup (`IniRead(path, section, key, default)`) in
     ; AHK v2 ONLY works on UTF-16 LE BOM files. On UTF-8 BOM it
     ; always returns the default, regardless of line endings.

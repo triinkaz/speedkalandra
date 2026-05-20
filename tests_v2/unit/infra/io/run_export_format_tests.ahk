@@ -56,7 +56,7 @@ class RunExportFormatTests extends TestCase
         "validate_returns_invalid_when_run_missing_run_id",
         "validate_returns_invalid_when_run_total_ms_not_positive",
 
-        ; --- ValidateSchema: non-negative numeric fields (Fase 4) ---
+        ; --- ValidateSchema: non-negative numeric fields ---
         "validate_rejects_negative_death_count",
         "validate_rejects_non_numeric_death_count",
         "validate_rejects_negative_max_act_reached",
@@ -66,7 +66,7 @@ class RunExportFormatTests extends TestCase
         "validate_accepts_zero_in_optional_numeric_fields",
         "validate_accepts_absent_optional_numeric_fields",
 
-        ; --- ValidateSchema: INI-breaking characters (Fase 5) ---
+        ; --- ValidateSchema: INI-breaking characters ---
         "validate_rejects_run_id_with_newline",
         "validate_rejects_profile_with_bracket",
         "validate_rejects_patch_with_carriage_return",
@@ -346,7 +346,7 @@ class RunExportFormatTests extends TestCase
     }
 
     ; ============================================================
-    ; ValidateSchema: non-negative numeric fields (Fase 4)
+    ; ValidateSchema: non-negative numeric fields
     ; ============================================================
     ;
     ; Imported JSON can carry negative or non-numeric values in fields
@@ -483,7 +483,7 @@ class RunExportFormatTests extends TestCase
     }
 
     ; ============================================================
-    ; ValidateSchema: INI-breaking characters (Fase 5)
+    ; ValidateSchema: INI-breaking characters
     ; ============================================================
     ;
     ; Imported runs are persisted to data/runs/{runId}.ini, whose

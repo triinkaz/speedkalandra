@@ -42,14 +42,14 @@ class RunHistoryRepositoryTests extends TestCase
         "save_does_not_leave_tmp_file_behind",
         "save_warns_when_atomic_writer_fails",
 
-        ; --- INI escaping: round-trip with safe punctuation (Fase 5) ---
+        ; --- INI escaping: round-trip with safe punctuation ---
         "roundtrip_preserves_profile_with_equals_sign",
         "roundtrip_preserves_profile_with_semicolon",
         "roundtrip_preserves_zone_name_with_spaces",
         "roundtrip_preserves_long_label_string",
         "roundtrip_preserves_pipe_in_detail_label",
 
-        ; --- INI escaping: defensive throw on dangerous chars (Fase 5) ---
+        ; --- INI escaping: defensive throw on dangerous chars ---
         "save_returns_false_when_profile_contains_newline",
         "save_returns_false_when_zone_name_contains_bracket",
         "save_warns_when_field_has_ini_breaking_chars",
@@ -333,7 +333,7 @@ class RunHistoryRepositoryTests extends TestCase
     }
 
     ; ============================================================
-    ; INI escaping: round-trip with safe punctuation (Fase 5)
+    ; INI escaping: round-trip with safe punctuation
     ; ============================================================
     ;
     ; The character set the repository rejects is intentionally
@@ -438,7 +438,7 @@ class RunHistoryRepositoryTests extends TestCase
     }
 
     ; ============================================================
-    ; INI escaping: defensive throw on dangerous chars (Fase 5)
+    ; INI escaping: defensive throw on dangerous chars
     ; ============================================================
     ;
     ; Normal save paths can't produce these characters (profile and
@@ -655,7 +655,7 @@ class RunHistoryRepositoryTests extends TestCase
 
         ids := repo.ListRunIds()
         Assert.Equal(2, ids.Length)
-        ; Bug #12 fix: runIds must not have ".ini" appended.
+        ; Anti-regression: runIds must not have ".ini" appended.
         ; `runId` collides with the `RunId` class -> we use `currentRunId`.
         for _, currentRunId in ids
         {

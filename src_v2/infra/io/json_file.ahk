@@ -98,7 +98,7 @@ class JsonFile
     }
 
     ; ============================================================
-    ; Parse(jsonStr) — reads JSON string and returns an AHK structure (v0.1.0)
+    ; Parse(jsonStr) — reads JSON string and returns an AHK structure
     ; ============================================================
     ;
     ; JSON type -> AHK type mapping:
@@ -519,8 +519,9 @@ class JsonFile
             }
             break
         }
-        ; v0.1.0: renamed from `isFloat` to `numIsFloat` (case-insensitive
-        ; collision with the builtin function `IsFloat` was triggering #Warn).
+        ; Local name is `numIsFloat` (not `isFloat`) to avoid a
+        ; case-insensitive collision with the builtin function
+        ; `IsFloat` which triggers #Warn.
         numIsFloat := false
         if (pos <= len && SubStr(text, pos, 1) = ".")
         {

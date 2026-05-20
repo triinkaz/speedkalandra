@@ -117,7 +117,7 @@ class TimerServiceTests extends TestCase
         "hydrate_with_non_number_uses_zero",
         "hydrate_does_not_publish_any_event",
 
-        ; --- AddPenaltyMs (v0.1.3 - death penalty in real-time timer) ---
+        ; --- AddPenaltyMs (death penalty in real-time timer) ---
         "add_penalty_ms_returns_true_with_positive_value",
         "add_penalty_ms_returns_false_with_zero",
         "add_penalty_ms_returns_false_with_negative",
@@ -584,7 +584,7 @@ class TimerServiceTests extends TestCase
     }
 
     ; ============================================================
-    ; AddPenaltyMs (v0.1.3 — death penalty in real-time timer)
+    ; AddPenaltyMs (death penalty in real-time timer)
     ; ============================================================
     ;
     ; Contract:

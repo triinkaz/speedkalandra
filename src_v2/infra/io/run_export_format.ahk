@@ -153,8 +153,8 @@ class RunExportFormat
         )
 
         serializedRuns := []
-        ; v0.1.0: renamed from `run` to `runItem` (case-insensitive
-        ; collision with the builtin function `Run` was triggering #Warn).
+        ; Local name is `runItem` (not `run`) to avoid a case-insensitive
+        ; collision with the builtin function `Run` which triggers #Warn.
         for _, runItem in runs
         {
             if !IsObject(runItem)
@@ -1053,11 +1053,10 @@ class RunExportFormat
     ; Replicates the RunStatsPlotBuilder.CategoryLabel logic but defensively
     ; (if the builder changes the mapping, update here too).
     ;
-    ; v0.1.0: dynamic lookup via %"..."% to avoid #Warn when the
-    ; builder is not in scope (e.g. isolated RunExportFormat tests
-    ; without including the builder). The outer try/catch covers the
-    ; case where the lookup fails (UnsetError) or the builder changed
-    ; its signature.
+    ; Dynamic lookup via %"..."% so #Warn doesn't fire in isolated tests
+    ; where the builder isn't on the #Include path. The outer try/catch
+    ; covers the case where the lookup fails (UnsetError) or the builder
+    ; changed its signature.
     static _SafeCategoryLabel(cat)
     {
         try

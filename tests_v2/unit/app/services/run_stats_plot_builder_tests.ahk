@@ -523,8 +523,8 @@ class RunStatsPlotBuilderTests extends TestCase
 
     max_act_extracts_from_ato_note_for_legacy_runs()
     {
-        ; The regex also accepts "Ato N" (old PT-BR - runs saved in
-        ; v17.13-). We simulate by passing a snapshot whose detail
+        ; The regex also accepts "Ato N" (legacy PT-BR runs).
+        ; We simulate by passing a snapshot whose detail
         ; already contains "Ato N" in the note. We can't force that
         ; via zone (which generates "Act N"); we need to test
         ; _DeriveMaxAct directly.

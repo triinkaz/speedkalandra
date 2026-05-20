@@ -541,7 +541,7 @@ class LogMonitorService
     ;      catalog.
     ;
     ; No catalog → every input passes through unchanged, preserving
-    ; the pre-Fase-1 behaviour for tests/headless setups that don't
+    ; the legacy no-resolution behaviour for tests/headless setups that don't
     ; wire one in.
     _ResolveZoneToHumanName(rawZone)
     {

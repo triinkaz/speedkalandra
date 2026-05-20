@@ -271,7 +271,7 @@ class OverlayModeService
         else
             this._heldKeys[key] := true
 
-        ; Any active lock (micro or steve, v17.14) ignores auto-mode
+        ; Any active lock (micro or steve) ignores auto-mode
         if (this._microLocked || this._steveLocked)
             return false
 
@@ -304,7 +304,7 @@ class OverlayModeService
         if (this._heldKeys.Count = 0)
             return false
         this._heldKeys := Map()
-        ; v17.14: auto-mode only returns to compact if there is no lock
+        ; Auto-mode only returns to compact if there is no lock
         if (!this._microLocked && !this._steveLocked && this.IsMicroAuto())
         {
             prev := this._mode

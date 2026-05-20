@@ -11,7 +11,7 @@
 ;   - "Generating level N area X"    -> AreaLevelChanged
 ;   - "[SCENE] Set Source [name]"    -> SceneEntered + ZoneChanged (Bug #21)
 ;   - "You have entered X"           -> ZoneChanged
-;   - "<Name> has been slain."       -> DeathDetected (with v17.15 filter)
+;   - "<Name> has been slain."       -> DeathDetected (filtered by _characterName)
 ;   - "[WINDOW] Lost/Gained focus"   -> WindowFocusChanged
 ;
 ; Also publishes LogLineRead for EVERY line (broadcast for
@@ -19,14 +19,15 @@
 ;
 ; Filters:
 ;   - Scene: filters "(null)", "(unknown)", "Act N" (transition marker)
-;   - Death: requires _characterName set + exact match (Bug #2 v17.15)
+;   - Death: requires _characterName set + exact match (Bug #2: bosses
+;     would otherwise inflate deathCount)
 ;
 ; Parsing details:
 ;   - Partial line: chunks not ending with `n are buffered
 ;   - CRLF/CR: normalized to LF
 ;
 ; Lifecycle (Start/Stop/Tick) NOT tested here — depends on FileOpen,
-; will be tested in integration in Wave 8.
+; left for integration tests.
 
 
 class LogMonitorServiceTests extends TestCase
@@ -90,7 +91,7 @@ class LogMonitorServiceTests extends TestCase
         "scene_with_empty_name_is_filtered",
         "scene_zone_changed_includes_scene_id",
 
-        ; --- Zone resolution via catalog (Fase 1) ---
+        ; --- Zone resolution via catalog ---
         "scene_resolves_internal_id_to_human_name_when_catalog_present",
         "scene_resolves_human_name_to_canonical_when_catalog_present",
         "scene_falls_back_to_raw_when_unknown_zone_and_catalog_present",
@@ -104,7 +105,7 @@ class LogMonitorServiceTests extends TestCase
         "zone_entered_zone_name_trimmed",
         "zone_entered_scene_id_empty",
 
-        ; --- DeathDetected (Bug #2 v17.15 filter) ---
+        ; --- DeathDetected (Bug #2) ---
         "death_not_published_when_character_name_empty",
         "death_published_when_matches_character_name",
         "death_not_published_when_does_not_match_character",
@@ -174,7 +175,7 @@ class LogMonitorServiceTests extends TestCase
     constructor_accepts_optional_catalog()
     {
         ; The catalog is optional — omitting it preserves the
-        ; pre-Fase-1 behaviour (raw zone strings pass through).
+        ; legacy behaviour (raw zone strings pass through).
         ; Passing one wires it in for _ResolveZoneToHumanName.
         clk := this.stubClock
         b := this.bus
@@ -322,7 +323,7 @@ class LogMonitorServiceTests extends TestCase
     }
 
     ; ============================================================
-    ; SceneEntered + ZoneChanged double (Bug #21 v17.15)
+    ; SceneEntered + ZoneChanged double (Bug #21)
     ; ============================================================
 
     extracts_scene_simple_case()
@@ -387,10 +388,10 @@ class LogMonitorServiceTests extends TestCase
     scene_zone_changed_includes_scene_id()
     {
         ; Without a catalog (default setup), ZoneChanged via [SCENE]
-        ; preserves the raw text in both fields — pre-Fase-1
-        ; behaviour that callers without a catalog still get.
-        ; Resolution to canonical human name when a catalog IS wired
-        ; is covered by the "Zone resolution via catalog" group.
+        ; preserves the raw text in both fields — legacy behaviour
+        ; that callers without a catalog still get. Resolution to
+        ; canonical human name when a catalog IS wired is covered by
+        ; the "Zone resolution via catalog" group.
         capturedEvents := this._CaptureEvents(Events.ZoneChanged)
         this.svc.ProcessText("[SCENE] Set Source [G1_2]`n")
         Assert.Equal("G1_2", capturedEvents[1]["sceneId"])
@@ -398,7 +399,7 @@ class LogMonitorServiceTests extends TestCase
     }
 
     ; ============================================================
-    ; Zone resolution via catalog (Fase 1)
+    ; Zone resolution via catalog
     ; ============================================================
     ;
     ; The PoE2 client emits `[SCENE] Set Source [<raw>]` with <raw>
@@ -494,8 +495,8 @@ class LogMonitorServiceTests extends TestCase
     no_catalog_preserves_raw_for_scene()
     {
         ; Backward-compat: services without a catalog (legacy tests,
-        ; headless scenarios) keep the pre-Fase-1 behaviour. This is
-        ; effectively the same scenario as `scene_zone_changed_includes_scene_id`,
+        ; headless scenarios) keep the no-resolution behaviour. This
+        ; is effectively the same scenario as `scene_zone_changed_includes_scene_id`,
         ; tagged separately so the intent of the guarantee shows up
         ; in the failure log if regression hits it.
         capturedEvents := this._CaptureEvents(Events.ZoneChanged)
@@ -546,7 +547,7 @@ class LogMonitorServiceTests extends TestCase
     }
 
     ; ============================================================
-    ; DeathDetected (Bug #2 v17.15)
+    ; DeathDetected (Bug #2)
     ; ============================================================
 
     death_not_published_when_character_name_empty()

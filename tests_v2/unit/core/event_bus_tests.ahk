@@ -241,7 +241,7 @@ class EventBusTests extends TestCase
         Assert.Equal(1, this.bus.Subscribers("foo"))
     }
 
-    ; Bug #22 (v17.15): at the end of each Stop/Start cycle, _subs could
+    ; Bug #22: at the end of each Stop/Start cycle, _subs could
     ; not grow indefinitely accumulating keys with an empty array.
     unsubscribing_last_handler_removes_key_from_internal_map()
     {

@@ -348,7 +348,7 @@ class FocusAutoPauseServiceTests extends TestCase
     }
 
     ; ============================================================
-    ; Tick polling (backup, v0.1.1)
+    ; Tick polling (backup)
     ; ============================================================
 
     tick_detects_focus_loss_via_polling()
@@ -418,7 +418,7 @@ class FocusAutoPauseServiceTests extends TestCase
 
     log_and_polling_combined_idempotent_for_loss()
     {
-        ; v0.1.1: both paths call the same handler.
+        ; Both paths call the same handler.
         ; Log fires first -> Polling detects same transition -> no-op
         this.timerSvc.Start()
         this.svc.SetStubGameActive(true)

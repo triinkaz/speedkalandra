@@ -24,9 +24,9 @@ Bug IDs are stable and referenced by test names — e.g. `bug21_*` in the suite 
 | #   | Symptom                                                | Fix in                                       | Regression test                                                                                                  |
 | --- | ------------------------------------------------------ | -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
 | #3  | runId collision in the same second                     | `run_service.ahk::_GenerateRunId` (+ms)      | `RunServiceTests::new_run_generates_run_id_in_yyyyMMdd_HHmmss_nnn_format`                                         |
-| #5  | Blocking prompt without pausing the timer              | `app.ahk::_PromptHydratedRun`                | Headless skip — not directly tested. Functionality skipped in `SpeedKalandraAppIntegrationTests` (headless=true). Same skip pattern applied to the Client.txt setup dialog in v0.1.3. |
+| #5  | Blocking prompt without pausing the timer              | `app.ahk::_PromptHydratedRun`                | Headless skip — not directly tested. Functionality skipped in `SpeedKalandraAppIntegrationTests` (headless=true). Same skip pattern applied to the Client.txt setup dialog. |
 | #8  | `try` without `catch` (multiple)                       | Several services                             | No direct test (code pattern). Covered by the absence of silenced logs in existing tests.                         |
-| #9  | Riverbank resets level on every entry                  | `app.ahk::_OnZoneEnteredForLevel` + flag     | `SpeedKalandraAppIntegrationTests::bug9_*` (Wave 9)                                                                |
+| #9  | Riverbank resets level on every entry                  | `app.ahk::_OnZoneEnteredForLevel` + flag     | `SpeedKalandraAppIntegrationTests::bug9_*`                                                                         |
 | #11 | autoStartRegex default in English                      | `app_settings.ahk`                           | `AppSettingsTests::defaults_auto_start_regex_is_wounded_man_line` + `defaults_auto_finalize_regex_empty`. Default reverted to the Wounded Man line (`i)Wounded Man: By the First Ones!` — case-insensitive via PCRE flag) with caveat documented: non-EN players edit via the Settings dialog. |
 | #12 | Obsolete test suite                                    | Moved to `_LIXEIRA/`                         | N/A (cleanup)                                                                                                      |
 | #27 | Misleading atomicity doc                               | `atomic_write.ahk` (comment-only)            | N/A (comment-only)                                                                                                 |
@@ -42,18 +42,18 @@ Bug IDs are stable and referenced by test names — e.g. `bug21_*` in the suite 
 | #16 | Hotkey `^!g` + `GamePauseHotkeyHelpers` class      | `speedkalandra.ahk` removed                     | N/A (cleanup)                                                                                          |
 | #17 | `#Warn All, Off`                                   | `speedkalandra.ahk` `#Warn VarUnset`            | N/A (config)                                                                                           |
 | #18 | `ReplayClock` dead code                            | `core/clock.ahk` removed                        | N/A (cleanup)                                                                                          |
-| #19 | Duplicated `_FormatMs`                             | `Duration.FormatMs(ms)` static (v0.1.2)         | `DurationTests::format_ms_*` (9 tests covering the contract). 4 callers refactored to delegate. |
+| #19 | Duplicated `_FormatMs`                             | `Duration.FormatMs(ms)` static                  | `DurationTests::format_ms_*` (9 tests covering the contract). 4 callers refactored to delegate. |
 | #20 | "Smoke fix Turno N" comments                       | `log_monitor_service.ahk` rewritten             | N/A (comment-only)                                                                                     |
 | #21 | SCENE for ZoneChanged (PoE2 does not emit "entered")| `log_monitor_service.ahk`                       | `LogMonitorServiceTests::scene_also_publishes_zone_changed_event_bug_21`, `…::scene_with_*_is_filtered` |
 | #22 | EventBus leaves empty keys on Unsubscribe          | `event_bus.ahk::Unsubscribe`                    | `EventBusTests::unsubscribing_last_handler_removes_key_from_internal_map`                              |
 | #24 | `_ComputeTotalsHash` Map order                     | Discarded (Map preserves order)                 | N/A                                                                                                    |
 | #29 | `README-DIST.txt` wrong hotkey/color               | `build-dist.ps1`                                | N/A (build script)                                                                                     |
-| #30 | Build does not embed version                       | `src_v2/version.ahk::Version.STRING` (v0.1.2)   | N/A (display-only). Propagated to tray IconTip, Settings dialog title, Plot subheader. |
+| #30 | Build does not embed version                       | `src_v2/version.ahk::Version.STRING`            | N/A (display-only). Propagated to tray IconTip, Settings dialog title, Plot subheader. |
 | #31 | OverlayModeService subscribes to dead commands     | `overlay_mode_service.ahk` removed subs         | `OverlayModeServiceTests::constructor_subscribes_to_3_commands` (validates count)                       |
 
 ---
 
-## v0.1.3 features (UX improvements)
+## UX feature additions
 
 Not bugs — they are new behaviors covered by tests to shield against future regressions. Catalogued here so refactors preserve the 4 intentional invariants.
 
@@ -98,13 +98,13 @@ Catalogued to avoid reintroducing them:
 | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
 | `IniRead` key-lookup only works on UTF-16 LE BOM (UTF-8 BOM silently returns default)         | `PersonalBestRepositoryTests::iniread_key_lookup_works_in_utf16_le_bom_but_not_utf8_bom`     |
 | Local variables named after a builtin (`Run`, `File`, `Edit`, `Buffer`) trigger `#Warn All`   | Pitfall #4 in the project README. Convention: `run` → `runItem`, `file` → `selectedFile`, `edit` → `editCtrl` |
-| Local variables with class names (case-insensitive!) — `runId` vs class `RunId`              | Convention: `runId` → `currentRunId`. Applied to ~10 files during Wave 8.                    |
+| Local variables with class names (case-insensitive!) — `runId` vs class `RunId`              | Convention: `runId` → `currentRunId`. Applied across ~10 files during the case-collision sweep.                    |
 | `throw` does not fit inside an arrow function (AHK v2 parser)                                | Pitfall #1 in the README                                                                     |
 | Closure-in-loop captures by reference (not value)                                            | `CompactLayoutWidget::_BindVendorButton` uses a helper method to create a fresh scope         |
 | Object-literal with method: arrow `() => …` must receive `this` as the first param          | Pitfall #11 in the README                                                                    |
 | `IniWrite` creates UTF-16 LE BOM by default on new files                                      | Documented in `IniFile.__New` and `text_encoding.ahk`                                         |
 | Single-line `if` without braces with `:=` may confuse the parser                              | Convention: always use multi-line braces. Pitfall #12 in the README                          |
-| `\"` is not a valid escape in AHK v2 — use `""` (doubled) or single quotes `'...'` as outer delimiter | Discovered in Wave 9 when trying `"text \"The Riverbank\""`. Adopted convention: single quotes inside a string between double quotes |
+| `\"` is not a valid escape in AHK v2 — use `""` (doubled) or single quotes `'...'` as outer delimiter | Discovered when trying `"text \"The Riverbank\""`. Adopted convention: single quotes inside a string between double quotes |
 
 ---
 

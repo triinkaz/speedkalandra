@@ -24,7 +24,7 @@
 ;       "gridColor",  "RRGGBB" (horizontal lines)
 ;   )
 ;
-;   Points may have `present: false` (v17.13) to indicate that the
+;   Points may have `present: false` to indicate that the
 ;   series has no data at that run — the line BREAKS at that point
 ;   and resumes at the next present point. Without `present`, default
 ;   is true (compat with previous calls).
@@ -166,7 +166,7 @@ class LineChartRenderer
     ; Also draws small circles at the vertices to highlight individual
     ; points (4px diameter).
     ;
-    ; v17.13: Points with `present: false` are SKIPPED — the line
+    ; Points with `present: false` are SKIPPED — the line
     ; breaks before them and resumes at the next present point. This
     ; lets "Per act" series show a gap in runs that didn't reach the
     ; relevant act, instead of falsely dropping to y=0.

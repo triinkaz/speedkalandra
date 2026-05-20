@@ -168,7 +168,7 @@ class LoadingDetectionServiceTests extends TestCase
         "tick_no_op_during_ignore_until_period",
 
     ; --- Tick: timeout ---
-        ; v0.1.2 (Bug #5 fix): timeout NOW publishes LoadingMeasured
+        ; Bug #5 fix: timeout publishes LoadingMeasured
         ; with real durationMs (>= maxMs by construction). Before it
         ; was silently discarded by the `> maxMs` filter in _End,
         ; causing underestimated loading time on slow PCs.
@@ -580,7 +580,7 @@ class LoadingDetectionServiceTests extends TestCase
     }
 
     ; ============================================================
-    ; Tick: timeout (v0.1.2 - Bug #5 fix)
+    ; Tick: timeout (Bug #5 fix)
     ; ============================================================
 
     tick_timeout_publishes_loading_measured()

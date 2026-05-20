@@ -120,8 +120,9 @@ class CsvFile
         }
 
         ; Build buffer: header (no-quote format, parity with EnsureHeader)
-        ; v0.1.0: renamed from `buffer` to `outBuffer` (case-insensitive
-        ; collision with the builtin class `Buffer` was triggering #Warn).
+        ; Local name is `outBuffer` (not `buffer`) to avoid a
+        ; case-insensitive collision with the builtin class `Buffer`
+        ; which triggers #Warn.
         outBuffer := ""
         for i, col in headerArray
             outBuffer .= (i > 1 ? ";" : "") . col

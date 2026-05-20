@@ -329,7 +329,7 @@ class RunStatsPlotDialogTests extends TestCase
 
     segs_by_act_accepts_legacy_ato_notes()
     {
-        ; Pre-v0.1.0 saves used Portuguese "Ato N" instead of "Act N".
+        ; Legacy saves used Portuguese "Ato N" instead of "Act N".
         ; The regex accepts both so older runs still plot correctly
         ; under "by act" granularity. Without this, every legacy run
         ; would show an empty by-act chart.

@@ -89,8 +89,8 @@ class LayoutWidgetBase extends WidgetBase
         ; to dimension things internally.
         this._BuildGui()
 
-        ; Item 1: creates the highlight border (hidden) that appears
-        ; when Ctrl is held. Uses the same helper from WidgetBase.
+        ; Creates the highlight border (hidden) that appears when
+        ; Ctrl is held. Uses the same helper from WidgetBase.
         this._BuildCtrlHighlight()
 
         ; Calculate position on screen (same logic as WidgetBase, but
@@ -105,8 +105,8 @@ class LayoutWidgetBase extends WidgetBase
 
         wg.Show("NoActivate X" posX " Y" posY " W" this._w " H" this._h)
 
-        ; Item 2 (after Show): adds LAYERED + alpha=255 + TRANSPARENT.
-        ; Details in WidgetBase.Show.
+        ; After Show: enable click-through. Sets LAYERED + alpha=255 +
+        ; TRANSPARENT. Details in WidgetBase.Show.
         try WinSetTransparent(255, "ahk_id " wg.Hwnd)
         try WinSetExStyle("+0x20", "ahk_id " wg.Hwnd)
 
