@@ -607,6 +607,15 @@ class RunStatsPlotDialog
             btnHist.OnEvent("Click", (*) => this._bus.Publish(Commands.OpenRunHistoryRequested, Map()))
         }
 
+        ; "Death Stats" lives here (the run-statistics dialog) rather
+        ; than in RunHistoryDialog because the aggregate spans every
+        ; recorded death across all play sessions, not just the runs
+        ; currently in history — see DeathLogRepository header for
+        ; the run-lifecycle decoupling, and KNOWN_ISSUES.md ("Death log
+        ; is decoupled from run history") for the user-facing note.
+        btnDeathStats := g.Add("Button", "x246 y" btnY " w110 h28", "Death Stats")
+        btnDeathStats.OnEvent("Click", (*) => this._bus.Publish(Commands.OpenDeathStatsRequested, Map()))
+
         btnClose := g.Add("Button", "x" (RunStatsPlotDialog.WINDOW_W - 120) " y" btnY " w100 h28", "Close")
         btnClose.OnEvent("Click", (*) => this.Close())
 

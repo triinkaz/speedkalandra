@@ -31,6 +31,7 @@ class SpeedKalandraAppIntegrationTests extends TestCase
     logPath       := ""
     runHistoryDir := ""
     pbPath        := ""
+    deathLogPath  := ""
     stubClock     := ""
     app           := ""
 
@@ -42,6 +43,7 @@ class SpeedKalandraAppIntegrationTests extends TestCase
         this.logPath       := this.tmpDir "\app.log"
         this.runHistoryDir := this.tmpDir "\runs"
         this.pbPath        := this.tmpDir "\pb.ini"
+        this.deathLogPath  := this.tmpDir "\deaths.csv"
 
         ; Create a minimal valid zones.csv (real project format)
         FileAppend(
@@ -55,6 +57,7 @@ class SpeedKalandraAppIntegrationTests extends TestCase
         Fixtures.RegisterTempPath(this.iniPath)
         Fixtures.RegisterTempPath(this.logPath)
         Fixtures.RegisterTempPath(this.pbPath)
+        Fixtures.RegisterTempPath(this.deathLogPath)
 
         ; Create runs dir (RunHistoryRepository doesn't create it automatically)
         try DirCreate(this.runHistoryDir)
@@ -69,6 +72,7 @@ class SpeedKalandraAppIntegrationTests extends TestCase
             "logPath",          this.logPath,
             "runHistoryDir",    this.runHistoryDir,
             "personalBestPath", this.pbPath,
+            "deathLogPath",     this.deathLogPath,
             "headless",         true,
             "clock",            this.stubClock
         ))
@@ -162,7 +166,19 @@ class SpeedKalandraAppIntegrationTests extends TestCase
         "death_penalty_does_not_apply_when_no_run_active",
         "death_penalty_accumulates_with_multiple_deaths",
         "death_penalty_uses_configured_ms_value",
-        "death_penalty_does_not_apply_when_configured_ms_is_zero"
+        "death_penalty_does_not_apply_when_configured_ms_is_zero",
+
+        ; --- Death log (independent of run lifecycle, see DeathLogRepository) ---
+        ; The DeathDetected handler captures the active zone via
+        ; ZoneTrackingService.GetActiveZone() and appends a row to
+        ; data/deaths.csv with the configured patch and profile. The
+        ; log is independent of run lifecycle: a death recorded during
+        ; a run that is later cancelled remains in the log (and
+        ; survives Run history deletion).
+        "constructor_creates_death_log_components",
+        "death_detected_appends_row_with_active_zone_patch_and_profile",
+        "death_detected_with_no_active_zone_silently_skips_append",
+        "death_detected_aggregation_via_service_returns_zone_counts"
     ]
 
     ; ============================================================
@@ -1346,6 +1362,85 @@ class SpeedKalandraAppIntegrationTests extends TestCase
 
         Assert.Equal(before, this.app.timer.GetRunMs(),
             "deathPenaltyMs=0 doesn't move the timer")
+    }
+
+    ; ============================================================
+    ; Death log (independent of run lifecycle)
+    ; ============================================================
+
+    constructor_creates_death_log_components()
+    {
+        Assert.True(this.app.deathLog is DeathLogRepository,
+            "DeathLogRepository wired on the app")
+        Assert.True(this.app.deathStatsService is DeathStatsService,
+            "DeathStatsService wired on the app")
+        Assert.True(this.app.deathLogScanner is DeathLogScanner,
+            "DeathLogScanner wired on the app (drives the dialog's "
+            . "All-time view; independent of deathLog)")
+    }
+
+    death_detected_appends_row_with_active_zone_patch_and_profile()
+    {
+        ; A run is active, the player just entered Mud Burrow. Patch
+        ; and profile are configured to recognizable test values so
+        ; the round-trip is unambiguous.
+        this.app.bus.Publish(Commands.NewRunRequested, Map())
+        this._EnterZoneAndAdvance("Mud Burrow", 10000)
+
+        this.app._cfg.gamePatch   := "0.4-test"
+        this.app._cfg.profileName := "IntegrationBuild"
+
+        this.app.bus.Publish(Events.DeathDetected, Map("character", "Olaf"))
+
+        rows := this.app.deathLog.LoadAll()
+        Assert.Equal(1, rows.Length, "One row written per DeathDetected")
+        Assert.Equal("Mud Burrow",       rows[1]["zoneName"],
+            "Active zone captured from ZoneTrackingService")
+        Assert.Equal("0.4-test",         rows[1]["patch"],
+            "cfg.gamePatch captured")
+        Assert.Equal("IntegrationBuild", rows[1]["profile"],
+            "cfg.profileName captured")
+    }
+
+    death_detected_with_no_active_zone_silently_skips_append()
+    {
+        ; Legitimate gap: a death line can arrive before any
+        ; ZoneChanged seeded the active zone (e.g. log seed on boot
+        ; before the player moves). The handler must early-return
+        ; and the log file must stay absent.
+        Assert.Equal("", this.app.zoneTracker.GetActiveZone(),
+            "sanity: no active zone before any ZoneChanged")
+
+        this.app.bus.Publish(Events.DeathDetected, Map("character", "Olaf"))
+
+        Assert.Equal(0, this.app.deathLog.LoadAll().Length,
+            "No append when active zone is empty")
+        Assert.False(FileExist(this.deathLogPath) != "",
+            "deaths.csv not created when nothing was appended")
+    }
+
+    death_detected_aggregation_via_service_returns_zone_counts()
+    {
+        ; End-to-end via the production service the dialog will
+        ; consume: 3 deaths across 2 zones, in the order the player
+        ; would experience them. Aggregate must reflect both the
+        ; total and the per-zone breakdown sorted by count desc.
+        this.app.bus.Publish(Commands.NewRunRequested, Map())
+
+        this._EnterZoneAndAdvance("Mud Burrow", 5000)
+        this.app.bus.Publish(Events.DeathDetected, Map("character", "Olaf"))
+        this.app.bus.Publish(Events.DeathDetected, Map("character", "Olaf"))
+
+        this._EnterZoneAndAdvance("The Riverbank", 5000)
+        this.app.bus.Publish(Events.DeathDetected, Map("character", "Olaf"))
+
+        result := this.app.deathStatsService.Aggregate()
+        Assert.Equal(3, result["totalDeaths"])
+        Assert.Equal(2, result["perZone"].Length)
+        Assert.Equal("Mud Burrow",    result["perZone"][1]["zoneName"])
+        Assert.Equal(2,               result["perZone"][1]["count"])
+        Assert.Equal("The Riverbank", result["perZone"][2]["zoneName"])
+        Assert.Equal(1,               result["perZone"][2]["count"])
     }
 }
 

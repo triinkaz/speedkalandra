@@ -108,7 +108,13 @@ class SettingsDialog
         this._SectionHeader(g, y, "GENERAL")
         y += 22
 
-        this._Label(g, y, "Profile name")
+        ; UI label is "Build": the persisted field in AppSettings is
+        ; still `profileName` (and the ctrl key stays "profileName" so
+        ; _OnSave keeps writing to cfg.profileName). The rename is a
+        ; vocabulary shift towards the PoE-player audience — a "build"
+        ; is the recognizable label for what they pick. AppSettings
+        ; / SettingsRepository / DeathLogRepository are unaffected.
+        this._Label(g, y, "Build")
         this._ctrls["profileName"] := this._AddEdit(g, 180, y, 360, this._cfg.profileName)
         y += 26
 

@@ -86,6 +86,7 @@ $mustFilter = @{
     "data\speedkalandra.log"           = "2026-05-18 12:00:00 INFO sensitive log line"
     "data\run_state.ini"               = "[RunState]`nRunId=in-progress"
     "data\runs\fake_run.ini"           = "[meta]`nrunId=fake_run"
+    "data\deaths.csv"                  = "ts;zoneName;patch;profile`n`"2026-05-20 14:32:11`";`"Mud Burrow`";`"0.4`";`"PersonalBuild`""
     "Client.txt"                       = "[INFO Client 1234] sensitive game log copy"
     "Client - alt.txt"                 = "another copy"
     "debug\diag.log"                   = "internal debug"

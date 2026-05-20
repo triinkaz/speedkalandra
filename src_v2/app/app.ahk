@@ -70,6 +70,20 @@ class SpeedKalandraApp
 
     runHistory      := ""
 
+    ; Death log + aggregation service. Independent of run lifecycle
+    ; (see DeathLogRepository class header) — appends every detected
+    ; death to data/deaths.csv even when the run is later cancelled
+    ; or reset. Consumed by DeathStatsDialog via DeathStatsService.
+    ;
+    ; deathLogScanner is the alternative read path for the dialog's
+    ; "All-time (from log)" view: a one-shot scan of the raw
+    ; Client.txt that bypasses the CSV entirely. Independent of
+    ; deathLog — the two never share state, and the scanner has no
+    ; side effects (no writes, no event publishing).
+    deathLog          := ""
+    deathStatsService := ""
+    deathLogScanner   := ""
+
     overlayMode     := ""
     overlayApplier  := ""
     focusAutoPause  := ""
@@ -87,6 +101,7 @@ class SpeedKalandraApp
     settingsDialog     := ""
     plotDialog         := ""
     runHistoryDialog   := ""
+    deathStatsDialog   := ""
     exportDialog       := ""
     importPreviewDialog := ""
 
@@ -147,6 +162,8 @@ class SpeedKalandraApp
                                                       : (scriptDir "\data\runs")
         pbPath := cfgMap.Has("personalBestPath") ? cfgMap["personalBestPath"]
                                                   : (scriptDir "\data\personal_bests.ini")
+        deathLogPath := cfgMap.Has("deathLogPath") ? cfgMap["deathLogPath"]
+                                                    : (scriptDir "\data\deaths.csv")
 
         headless := cfgMap.Has("headless") ? !!cfgMap["headless"] : false
         this._headless := headless
@@ -174,6 +191,7 @@ class SpeedKalandraApp
         pbSink         := LogServiceWarningSink(this.log, "PB")
         runStateSink   := LogServiceWarningSink(this.log, "RunState")
         runHistorySink := LogServiceWarningSink(this.log, "RunHistory")
+        deathLogSink   := LogServiceWarningSink(this.log, "DeathLog")
 
         ini := IniFile(iniPath)
         this._settingsRepo := SettingsRepository(ini)
@@ -184,6 +202,11 @@ class SpeedKalandraApp
 
         ; Run history
         this.runHistory := RunHistoryRepository(runHistoryDir, runHistorySink)
+
+        ; Death log: append-only CSV of every detected death. The file
+        ; is created lazily on the first Append (see DeathLogRepository),
+        ; so a fresh install does not carry an empty deaths.csv.
+        this.deathLog := DeathLogRepository(deathLogPath, deathLogSink)
 
         ; Personal bests are loaded by the repository inside
         ; PersonalBestService.__New, then updated by RunSnapshotSaver
@@ -314,6 +337,17 @@ class SpeedKalandraApp
         this.statsRecorder := RunStatsRecorder(this.bus, this.clock)
         this.plotBuilder   := RunStatsPlotBuilder(this.zonesCatalog, this._cfg)
 
+        ; Aggregation over deathLog for the DeathStatsDialog. Pure
+        ; read service: no cache, re-reads the CSV on every Aggregate
+        ; call. Catalog used to drop town zones from the stats.
+        this.deathStatsService := DeathStatsService(this.deathLog, this.zonesCatalog)
+
+        ; One-shot Client.txt scanner for the dialog's "All-time
+        ; (from log)" view. Catalog used to resolve internal ids to
+        ; canonical names and to drop towns — same convention as the
+        ; CSV path. No event bus, no I/O outside the read.
+        this.deathLogScanner := DeathLogScanner(this.zonesCatalog)
+
         this.autoFinalize := AutoFinalizeService(this.bus, this._cfg)
         ; AutoStartService receives runService so it can read the
         ; hydrated active-run state at construction. Without it, an
@@ -371,6 +405,14 @@ class SpeedKalandraApp
             this.zoneTracker, this.timer, this.runHistory, headless
         )
         this.runHistoryDialog := RunHistoryDialog(this.bus, this.runHistory, this.plotDialog, this.personalBest, headless)
+
+        ; Death stats dialog: aggregation surface over deathLog,
+        ; opened by Cmd.OpenDeathStatsRequested (button in
+        ; RunStatsPlotDialog). The scanner is also injected so the
+        ; dialog can offer the "All-time (from log)" view that reads
+        ; Client.txt directly; cfg is read at toggle time for the
+        ; log path and character name.
+        this.deathStatsDialog := DeathStatsDialog(this.bus, this.deathStatsService, this.deathLogScanner, this._cfg, headless)
 
         this.runExportService := RunExportService(this.bus, this.runHistory, this.personalBest)
         this.runImportService := RunImportService(this.bus, this.runHistory, this.personalBest)
@@ -695,6 +737,14 @@ class SpeedKalandraApp
         this.bus.Subscribe(Events.DeathDetected,
             (data) => this._reconfig.ApplyDeathPenaltyToTimer(data))
 
+        ; Death log: persist a row to data/deaths.csv. Independent
+        ; subscriber from the death-penalty one above — different
+        ; concerns (live-timer adjustment vs append-only history).
+        ; Keeping them split makes each handler trivial to read and
+        ; lets a future change to one path not risk the other.
+        this.bus.Subscribe(Events.DeathDetected,
+            (data) => this._OnDeathDetectedForLog(data))
+
         ; Hot-reload paths: the Settings dialog publishes these so
         ; the user doesn't have to reload the whole app on common
         ; config changes (Client.txt path, hotkey bindings).
@@ -906,6 +956,32 @@ class SpeedKalandraApp
         this._riverbankSeenInRun := false
     }
 
+    ; Persists the death to data/deaths.csv with the run's context
+    ; (active zone, configured patch, configured profile). Independent
+    ; of run lifecycle — see DeathLogRepository class header for why
+    ; this is decoupled from RunStatsRecorder's per-run deathCount.
+    ;
+    ; `data` is the Evt.DeathDetected payload ({character}). We don't
+    ; use it: the upstream filter in LogMonitorService already
+    ; validated `character` against cfg.characterName, so by the time
+    ; this fires we already implicitly own the run that died.
+    ;
+    ; Empty active zone is silently dropped (legitimate gap: a death
+    ; line can arrive before any ZoneChanged seeded the active zone).
+    ; The early return saves a bus dispatch and keeps the Append's
+    ; warn-on-CR/LF path reachable for real upstream bugs.
+    _OnDeathDetectedForLog(data)
+    {
+        if !IsObject(this.deathLog) || !IsObject(this.zoneTracker)
+            return
+        zoneName := this.zoneTracker.GetActiveZone()
+        if (Trim(String(zoneName)) = "")
+            return
+        patch   := IsObject(this._cfg) ? String(this._cfg.gamePatch)   : ""
+        profile := IsObject(this._cfg) ? String(this._cfg.profileName) : ""
+        try this.deathLog.Append(zoneName, patch, profile)
+    }
+
     _OnRunEndedClearZones(data)
     {
         try
@@ -990,6 +1066,7 @@ class SpeedKalandraApp
             "xpService", "logMonitor", "zoneTracker",
             "loadingDetection", "loadingTotals",
             "personalBest", "runHistory",
+            "deathLog", "deathStatsService", "deathLogScanner",
             "statsRecorder", "plotBuilder",
             "autoFinalize", "autoStart",
             ; Input + presentation
@@ -1000,6 +1077,7 @@ class SpeedKalandraApp
             "compactWidget", "microWidget", "steveWidget", "widgets",
             ; Dialogs
             "settingsDialog", "plotDialog", "runHistoryDialog",
+            "deathStatsDialog",
             "exportDialog", "importPreviewDialog",
             ; Import / export
             "runExportService", "runImportService",

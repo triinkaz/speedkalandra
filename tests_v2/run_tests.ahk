@@ -166,6 +166,7 @@ SkTestOnError(err, mode) {
 #Include ..\src_v2\infra\personal_best_repository.ahk
 #Include ..\src_v2\infra\run_state_repository.ahk
 #Include ..\src_v2\infra\run_history_repository.ahk
+#Include ..\src_v2\infra\death_log_repository.ahk
 #Include ..\src_v2\infra\settings_repository.ahk
 
 ; ------------------------------------------------------------
@@ -188,6 +189,8 @@ SkTestOnError(err, mode) {
 #Include ..\src_v2\app\services\run_stats_recorder.ahk
 #Include ..\src_v2\app\services\personal_best_service.ahk
 #Include ..\src_v2\app\services\run_stats_plot_builder.ahk
+#Include ..\src_v2\app\services\death_stats_service.ahk
+#Include ..\src_v2\app\services\death_log_scanner.ahk
 #Include ..\src_v2\app\services\zone_tracking_service.ahk
 #Include ..\src_v2\app\services\log_monitor_service.ahk
 #Include ..\src_v2\app\services\loading_detection_service.ahk
@@ -218,6 +221,7 @@ SkTestOnError(err, mode) {
 #Include ..\src_v2\ui\settings_dialog.ahk
 #Include ..\src_v2\ui\run_stats_plot_dialog.ahk
 #Include ..\src_v2\ui\run_history_dialog.ahk
+#Include ..\src_v2\ui\death_stats_dialog.ahk
 #Include ..\src_v2\ui\export_options_dialog.ahk
 #Include ..\src_v2\ui\import_preview_dialog.ahk
 
@@ -287,6 +291,7 @@ SpeedKalandraMsgBox(text, title := "", options := "") {
 #Include unit\infra\run_state_repository_tests.ahk
 #Include unit\infra\run_state_repository_warning_sink_tests.ahk
 #Include unit\infra\run_history_repository_tests.ahk
+#Include unit\infra\death_log_repository_tests.ahk
 #Include unit\infra\settings_repository_tests.ahk
 
 ; ------------------------------------------------------------
@@ -302,6 +307,8 @@ SpeedKalandraMsgBox(text, title := "", options := "") {
 #Include unit\app\services\personal_best_service_tests.ahk
 #Include unit\app\services\personal_best_service_warning_sink_tests.ahk
 #Include unit\app\services\run_stats_plot_builder_tests.ahk
+#Include unit\app\services\death_stats_service_tests.ahk
+#Include unit\app\services\death_log_scanner_tests.ahk
 #Include unit\app\services\zone_tracking_service_tests.ahk
 #Include unit\app\services\log_monitor_service_tests.ahk
 #Include unit\app\services\loading_detection_service_tests.ahk
@@ -333,6 +340,7 @@ SpeedKalandraMsgBox(text, title := "", options := "") {
 #Include unit\ui\layout_widget_base_tests.ahk
 #Include unit\ui\compact_layout_widget_tests.ahk
 #Include unit\ui\run_stats_plot_dialog_tests.ahk
+#Include unit\ui\death_stats_dialog_tests.ahk
 
 ; ------------------------------------------------------------
 ; Suites - integration (end-to-end)

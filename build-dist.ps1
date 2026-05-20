@@ -9,6 +9,7 @@
       - data/speedkalandra.log    (runtime log)
       - data/runs/                (run history - new format)
       - data/run_state.ini        (in-progress run state, if any)
+      - data/deaths.csv           (append-only death log)
       - runs/                     (legacy CSV history at the root)
       - debug/                    (Client.txt and diagnostic dumps)
       - BKP/, _LIXEIRA/           (backups and removed files)
@@ -353,6 +354,7 @@ $ExcludeFiles = @(
     "data\personal_bests.ini.bak",
     "data\speedkalandra.log",
     "data\run_state.ini",
+    "data\deaths.csv",   # append-only death log; personal play data, not template
     "speedkalandra_zones.txt",
     "build-dist.ps1",       # this script itself
     "build-dist.bat",       # the wrapper

@@ -27,6 +27,7 @@ class Commands
     static OpenSettingsRequested     := "Cmd.OpenSettingsRequested"
     static OpenRunStatsPlotRequested := "Cmd.OpenRunStatsPlotRequested"
     static OpenRunHistoryRequested   := "Cmd.OpenRunHistoryRequested"
+    static OpenDeathStatsRequested   := "Cmd.OpenDeathStatsRequested"
     static ToggleOverlayRequested    := "Cmd.ToggleOverlayRequested"
     static ToggleMicroLockRequested  := "Cmd.ToggleMicroLockRequested"
     static ToggleSteveLockRequested  := "Cmd.ToggleSteveLockRequested"

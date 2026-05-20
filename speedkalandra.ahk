@@ -106,6 +106,7 @@ SpeedKalandraMsgBox(text, title := "", options := "")
 #Include "src_v2\infra\settings_repository.ahk"
 #Include "src_v2\infra\run_state_repository.ahk"
 #Include "src_v2\infra\run_history_repository.ahk"
+#Include "src_v2\infra\death_log_repository.ahk"
 #Include "src_v2\infra\personal_best_repository.ahk"
 
 #Include "src_v2\app\bus\events.ahk"
@@ -125,6 +126,8 @@ SpeedKalandraMsgBox(text, title := "", options := "")
 #Include "src_v2\app\services\act_checkpoint_tracker.ahk"
 #Include "src_v2\app\services\run_stats_recorder.ahk"
 #Include "src_v2\app\services\run_stats_plot_builder.ahk"
+#Include "src_v2\app\services\death_stats_service.ahk"
+#Include "src_v2\app\services\death_log_scanner.ahk"
 #Include "src_v2\app\services\auto_finalize_service.ahk"
 #Include "src_v2\app\services\auto_start_service.ahk"
 #Include "src_v2\app\services\overlay_mode_service.ahk"
@@ -146,6 +149,7 @@ SpeedKalandraMsgBox(text, title := "", options := "")
 #Include "src_v2\ui\line_chart_renderer.ahk"
 #Include "src_v2\ui\run_stats_plot_dialog.ahk"
 #Include "src_v2\ui\run_history_dialog.ahk"
+#Include "src_v2\ui\death_stats_dialog.ahk"
 #Include "src_v2\ui\export_options_dialog.ahk"
 #Include "src_v2\ui\import_preview_dialog.ahk"
 
