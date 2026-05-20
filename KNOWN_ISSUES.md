@@ -46,11 +46,12 @@ does not.
 
 `LineChartRenderer` uses `DllCall` into Gdi32/User32 and needs a real
 display — not testable without a desktop session. A few interactive paths
-in `OverlayInteractionService` (`_OnLButtonDown`, `_OnMouseWheel`,
-`_DragTick`, `_UpdateHoverState`) need real `OnMessage`/Win32 events and
-are only partially covered via lifecycle and state-machine tests.
-Everything else (layered architecture, services, persistence, run
-lifecycle) has unit and integration coverage.
+in `OverlayInteractionService` (`_OnLButtonDown`, `_OnMouseWheel`, the
+drag handlers `_OnDragMove`/`_OnDragUp`/`_DragWatchdog`, and
+`_UpdateHoverState`) need real `OnMessage`/Win32 events and are only
+partially covered via lifecycle and state-machine tests. Everything else
+(layered architecture, services, persistence, run lifecycle) has unit
+and integration coverage.
 
 ## Zones catalog is hand-edited
 
