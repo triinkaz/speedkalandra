@@ -13,6 +13,8 @@
 ;   compactLayout.scale=1
 ;   compactLayout.visible=1
 ;   compactLayout.centered=0
+;   compactLayout.width=480       ; optional; 0 / missing = use widget's FIXED_W
+;   compactLayout.height=120      ; optional; 0 / missing = use widget's FIXED_H
 ;   microLayout.left=80
 ;   microLayout.top=90
 ;   ...
@@ -24,10 +26,14 @@
 ;       .hoverHide  : bool (global, inherited)
 ;
 ;   OverlayPosition (value object, with clamps in property setters)
-;       .left, .top : float [0..95]    (percent of resolution, MAX_PCT_SAFE=95)
-;       .scale      : float [0.5..3.0]
-;       .visible    : bool
-;       .centered   : bool
+;       .left, .top   : float [0..95]    (percent of resolution, MAX_PCT_SAFE=95)
+;       .scale        : float [0.5..3.0]
+;       .visible      : bool
+;       .centered     : bool
+;       .width,.height: float >= 0      (pixels at scale 1.0; 0 = sentinel
+;                                        for "use widget's FIXED_W/FIXED_H".
+;                                        Set by the resize-by-border
+;                                        interaction — see PLUS_LAYOUTS_SPEC.md §7.)
 
 
 ; ------------------------------------------------------------
@@ -37,6 +43,8 @@ class OverlayPosition
 {
     _left    := 0.0
     _top     := 0.0
+    _width   := 0.0
+    _height  := 0.0
     scale    := 1.0
     visible  := true
     centered := false
@@ -59,6 +67,23 @@ class OverlayPosition
         set => this._top := OverlayPosition._ClampSafePercent(value)
     }
 
+    ; width / height: pixels at scale=1.0. 0 means "not configured”
+    ; — widgets fall back to their own FIXED_W / FIXED_H. Negative
+    ; values clamp to 0; non-numeric input lands on 0 too. Max is
+    ; unbounded (a user can expand a widget to fill the screen via
+    ; the resize-by-border interaction).
+    width
+    {
+        get => this._width
+        set => this._width := OverlayPosition._ClampNonNeg(value)
+    }
+
+    height
+    {
+        get => this._height
+        set => this._height := OverlayPosition._ClampNonNeg(value)
+    }
+
     static Defaults() => OverlayPosition()
 
     static FromMap(data)
@@ -72,6 +97,8 @@ class OverlayPosition
         op.scale    := OverlayPosition._GetScale(data, "scale",   op.scale)
         op.visible  := OverlayPosition._GetBool(data, "visible",  op.visible)
         op.centered := OverlayPosition._GetBool(data, "centered", op.centered)
+        op.width    := OverlayPosition._GetNonNeg(data, "width",  op.width)
+        op.height   := OverlayPosition._GetNonNeg(data, "height", op.height)
         return op
     }
 
@@ -82,7 +109,9 @@ class OverlayPosition
             "top",      this.top,
             "scale",    this.scale,
             "visible",  this.visible,
-            "centered", this.centered
+            "centered", this.centered,
+            "width",    this.width,
+            "height",   this.height
         )
     }
 
@@ -98,6 +127,14 @@ class OverlayPosition
         return n
     }
 
+    static _ClampNonNeg(v)
+    {
+        if (v = "" || !IsNumber(v))
+            return 0.0
+        n := v + 0.0
+        return n < 0 ? 0.0 : n
+    }
+
     static _GetPercent(data, key, default)
     {
         if !data.Has(key)
@@ -106,6 +143,17 @@ class OverlayPosition
         if (v = "" || !IsNumber(v))
             return default
         return v + 0.0
+    }
+
+    static _GetNonNeg(data, key, default)
+    {
+        if !data.Has(key)
+            return default
+        v := data[key]
+        if (v = "" || !IsNumber(v))
+            return default
+        n := v + 0.0
+        return n < 0 ? 0.0 : n
     }
 
     static _GetScale(data, key, default)
