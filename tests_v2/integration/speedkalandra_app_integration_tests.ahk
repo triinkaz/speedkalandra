@@ -178,7 +178,16 @@ class SpeedKalandraAppIntegrationTests extends TestCase
         "constructor_creates_death_log_components",
         "death_detected_appends_row_with_active_zone_patch_and_profile",
         "death_detected_with_no_active_zone_silently_skips_append",
-        "death_detected_aggregation_via_service_returns_zone_counts"
+        "death_detected_aggregation_via_service_returns_zone_counts",
+
+        ; --- Layout variant branching (Plus opt-in) ---
+        ; cfg.layoutVariant flips which Steve widget class the
+        ; composition root instantiates. Default ("classic") and
+        ; opt-in ("plus") both go through the same WIDGET_ID slot
+        ; in OverlayLayout, so the user's position survives the
+        ; toggle. PLUS_LAYOUTS_SPEC.md §1.
+        "default_layout_variant_constructs_classic_steve_widget",
+        "layout_variant_plus_in_ini_constructs_plus_steve_widget"
     ]
 
     ; ============================================================
@@ -1453,6 +1462,74 @@ class SpeedKalandraAppIntegrationTests extends TestCase
         Assert.Equal(2,               result["perZone"][1]["count"])
         Assert.Equal("The Riverbank", result["perZone"][2]["zoneName"])
         Assert.Equal(1,               result["perZone"][2]["count"])
+    }
+
+    ; ============================================================
+    ; Layout variant branching (Plus opt-in)
+    ; ============================================================
+
+    default_layout_variant_constructs_classic_steve_widget()
+    {
+        ; Setup() built the app without writing [Layouts] to the INI,
+        ; so AppSettings.layoutVariant defaults to "classic" and the
+        ; composition root picks SteveLayoutWidget (not Plus). Pinning
+        ; the default keeps a future change of the default opt-in from
+        ; flipping every existing user's overlay without warning.
+        Assert.True(this.app.steveWidget is SteveLayoutWidget,
+            "default cfg.layoutVariant=classic constructs Classic Steve")
+        Assert.False(this.app.steveWidget is SteveLayoutPlusWidget,
+            "and not Plus")
+        Assert.Equal("classic", this.app._cfg.layoutVariant,
+            "sanity: default cfg.layoutVariant is classic")
+    }
+
+    layout_variant_plus_in_ini_constructs_plus_steve_widget()
+    {
+        ; Stop the default-variant app, then write [Layouts]
+        ; Variant=plus into the same INI and construct a second
+        ; instance. Verifies the entire load path: SettingsRepository
+        ; reads the [Layouts] section, AppSettings normalizes the
+        ; string, and SpeedKalandraApp.__New branches on it.
+        ;
+        ; Both Plus and Classic share WIDGET_ID, so the user's
+        ; position carries across — also pinned here.
+        try this.app.Stop()
+        this.app := ""
+
+        ; Write the opt-in to the INI we'll point the new instance at.
+        ; Other sections are untouched, so this exercises the merge
+        ; path (AppSettings.FromMap fills defaults around the one
+        ; field we set).
+        ini := IniFile(this.iniPath)
+        ini.Write("plus", "Layouts", "Variant")
+
+        secondClock := Fixtures.MakeFakeClock(2000000)
+        app2 := SpeedKalandraApp(Map(
+            "iniPath",          this.iniPath,
+            "zonesCsvPath",     this.zonesCsvPath,
+            "logPath",          this.logPath,
+            "runHistoryDir",    this.runHistoryDir,
+            "personalBestPath", this.pbPath,
+            "deathLogPath",     this.deathLogPath,
+            "headless",         true,
+            "clock",            secondClock
+        ))
+
+        Assert.Equal("plus", app2._cfg.layoutVariant,
+            "AppSettings read layoutVariant=plus from INI")
+        Assert.True(app2.steveWidget is SteveLayoutPlusWidget,
+            "cfg.layoutVariant=plus constructs Plus Steve")
+        Assert.True(app2.steveWidget is LayoutWidgetBase,
+            "Plus extends LayoutWidgetBase — sanity check on the"
+            . " class hierarchy (the OverlayModeApplier dispatches"
+            . " on LayoutWidgetBase methods like Show/Hide)")
+        Assert.False(app2.steveWidget is SteveLayoutWidget,
+            "Plus does NOT extend SteveLayoutWidget (sibling classes,"
+            . " both under LayoutWidgetBase); a regression that made"
+            . " Plus inherit from Classic would silently double-subscribe"
+            . " every bus handler.")
+
+        try app2.Stop()
     }
 }
 

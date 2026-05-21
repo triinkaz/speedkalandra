@@ -385,11 +385,29 @@ class SpeedKalandraApp
             this.timer, this.xpService
         )
 
-        this.steveWidget := SteveLayoutWidget(
-            this.bus, stevePos, this._persistFn,
-            this.timer, this.zoneTracker, this.xpService,
-            this.zonesCatalog, this.personalBest
-        )
+        ; Steve widget: Classic vs Plus chosen by cfg.layoutVariant.
+        ; Both classes share WIDGET_ID ("steveLayout") so the user's
+        ; persisted position carries across a toggle. Plus re-injects
+        ; loadingTotals + cfg — dependencies Classic doesn't need.
+        ; The flag is read once at boot; SettingsDialog surfaces a
+        ; MsgBox prompting the user to restart when they flip it.
+        if (this._cfg.layoutVariant = "plus")
+        {
+            this.steveWidget := SteveLayoutPlusWidget(
+                this.bus, stevePos, this._persistFn,
+                this.timer, this.zoneTracker, this.xpService,
+                this.zonesCatalog, this.personalBest,
+                this.loadingTotals, this._cfg
+            )
+        }
+        else
+        {
+            this.steveWidget := SteveLayoutWidget(
+                this.bus, stevePos, this._persistFn,
+                this.timer, this.zoneTracker, this.xpService,
+                this.zonesCatalog, this.personalBest
+            )
+        }
 
         this.widgets := Map()
         this.widgets["compactLayout"] := this.compactWidget

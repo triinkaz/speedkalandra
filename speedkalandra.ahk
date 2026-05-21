@@ -145,6 +145,7 @@ SpeedKalandraMsgBox(text, title := "", options := "")
 #Include "src_v2\ui\compact_layout_widget.ahk"
 #Include "src_v2\ui\micro_layout_widget.ahk"
 #Include "src_v2\ui\steve_layout_widget.ahk"
+#Include "src_v2\ui\steve_layout_plus_widget.ahk"
 #Include "src_v2\ui\hotkey_formatter.ahk"
 #Include "src_v2\ui\settings_dialog.ahk"
 #Include "src_v2\ui\line_chart_renderer.ahk"
