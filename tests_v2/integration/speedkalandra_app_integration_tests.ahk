@@ -187,7 +187,9 @@ class SpeedKalandraAppIntegrationTests extends TestCase
         ; in OverlayLayout, so the user's position survives the
         ; toggle. PLUS_LAYOUTS_SPEC.md §1.
         "default_layout_variant_constructs_classic_steve_widget",
-        "layout_variant_plus_in_ini_constructs_plus_steve_widget"
+        "layout_variant_plus_in_ini_constructs_plus_steve_widget",
+        "default_layout_variant_constructs_classic_compact_widget",
+        "layout_variant_plus_in_ini_constructs_plus_compact_widget"
     ]
 
     ; ============================================================
@@ -1528,6 +1530,54 @@ class SpeedKalandraAppIntegrationTests extends TestCase
             . " both under LayoutWidgetBase); a regression that made"
             . " Plus inherit from Classic would silently double-subscribe"
             . " every bus handler.")
+
+        try app2.Stop()
+    }
+
+    default_layout_variant_constructs_classic_compact_widget()
+    {
+        ; Companion to the Steve test: default cfg.layoutVariant
+        ; means Compact also picks Classic. Both branches in
+        ; app.ahk read the same flag, so a future change that
+        ; flipped the default would affect both widgets together —
+        ; this test would catch the drift before users do.
+        Assert.True(this.app.compactWidget is CompactLayoutWidget,
+            "default cfg.layoutVariant=classic constructs Classic Compact")
+        Assert.False(this.app.compactWidget is CompactLayoutPlusWidget,
+            "and not Plus")
+    }
+
+    layout_variant_plus_in_ini_constructs_plus_compact_widget()
+    {
+        ; Same scaffold as the Steve Plus test — separate test
+        ; because each widget is its own composition path in
+        ; app.ahk and a regression in one shouldn't be masked by
+        ; the other passing.
+        try this.app.Stop()
+        this.app := ""
+
+        ini := IniFile(this.iniPath)
+        ini.Write("plus", "Layouts", "Variant")
+
+        secondClock := Fixtures.MakeFakeClock(2000000)
+        app2 := SpeedKalandraApp(Map(
+            "iniPath",          this.iniPath,
+            "zonesCsvPath",     this.zonesCsvPath,
+            "logPath",          this.logPath,
+            "runHistoryDir",    this.runHistoryDir,
+            "personalBestPath", this.pbPath,
+            "deathLogPath",     this.deathLogPath,
+            "headless",         true,
+            "clock",            secondClock
+        ))
+
+        Assert.True(app2.compactWidget is CompactLayoutPlusWidget,
+            "cfg.layoutVariant=plus constructs Plus Compact")
+        Assert.True(app2.compactWidget is LayoutWidgetBase,
+            "Plus extends LayoutWidgetBase — dispatched by OverlayModeApplier")
+        Assert.False(app2.compactWidget is CompactLayoutWidget,
+            "Plus does NOT extend Classic (siblings under LayoutWidgetBase);"
+            . " inheritance from Classic would double-subscribe handlers.")
 
         try app2.Stop()
     }

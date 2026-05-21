@@ -373,12 +373,29 @@ class SpeedKalandraApp
 
         this._persistFn := () => this._persister.PersistSettings()
 
-        this.compactWidget := CompactLayoutWidget(
-            this.bus, compactPos, this._persistFn,
-            this.timer, this.zoneTracker, this.xpService,
-            this.zonesCatalog, this.loadingTotals, this._cfg,
-            this.personalBest
-        )
+        ; Compact widget: Classic vs Plus chosen by cfg.layoutVariant.
+        ; Same WIDGET_ID slot in [Overlay] across both variants so
+        ; the user's persisted position carries through a toggle.
+        ; Constructor signatures are identical — Plus is a drop-in
+        ; replacement at the composition root.
+        if (this._cfg.layoutVariant = "plus")
+        {
+            this.compactWidget := CompactLayoutPlusWidget(
+                this.bus, compactPos, this._persistFn,
+                this.timer, this.zoneTracker, this.xpService,
+                this.zonesCatalog, this.loadingTotals, this._cfg,
+                this.personalBest
+            )
+        }
+        else
+        {
+            this.compactWidget := CompactLayoutWidget(
+                this.bus, compactPos, this._persistFn,
+                this.timer, this.zoneTracker, this.xpService,
+                this.zonesCatalog, this.loadingTotals, this._cfg,
+                this.personalBest
+            )
+        }
 
         this.microWidget := MicroLayoutWidget(
             this.bus, microPos, this._persistFn,
