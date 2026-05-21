@@ -14,6 +14,7 @@
 ; INI MAPPING:
 ;   [Window]
 ;   MicroLocked=0|1
+;   SteveLocked=0|1
 
 class WindowState
 {

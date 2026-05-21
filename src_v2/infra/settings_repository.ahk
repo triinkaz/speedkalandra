@@ -14,7 +14,7 @@
 ;   [Disclaimer]     Acknowledged
 ;   [Diagnostics]    EventTracingEnabled (opt-in; off by default)
 ;   [Hotkeys]        <action> -> keyBind
-;   [Window]         MicroLocked
+;   [Window]         MicroLocked, SteveLocked
 ;   [Overlay]        <widgetId>.{left,top,scale,visible,centered} + hoverHide
 ;
 ; Orphan keys in old INIs (PanelOverlayKeys, GamePauseDetectionEnabled)
@@ -302,12 +302,18 @@ class SettingsRepository
 
     ; ============================================================
     ; [Window]
+    ;
+    ; Two independent locks, one per layout that can be locked
+    ; (Compact has no lock — it's the default mode). Defaults to
+    ; "0" for both so a fresh install boots into Compact mode
+    ; regardless of which key the WindowState class defaults to.
     ; ============================================================
     _LoadWindow()
     {
         ini := this._ini
         return WindowState.FromMap(Map(
-            "microLocked", ini.Read("Window", "MicroLocked", "0") = "1"
+            "microLocked", ini.Read("Window", "MicroLocked", "0") = "1",
+            "steveLocked", ini.Read("Window", "SteveLocked", "0") = "1"
         ))
     }
 
@@ -316,6 +322,7 @@ class SettingsRepository
         if !(ws is WindowState)
             throw TypeError("SettingsRepository._SaveWindow: 'ws' must be WindowState")
         this._ini.Write(ws.microLocked ? 1 : 0, "Window", "MicroLocked")
+        this._ini.Write(ws.steveLocked ? 1 : 0, "Window", "SteveLocked")
     }
 
     ; ============================================================

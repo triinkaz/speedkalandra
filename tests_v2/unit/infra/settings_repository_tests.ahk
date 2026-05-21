@@ -41,6 +41,8 @@ class SettingsRepositoryTests extends TestCase
         "save_load_preserves_diagnostics_event_tracing",
         "save_load_preserves_hotkeys",
         "save_load_preserves_window_micro_locked",
+        "save_load_preserves_window_steve_locked",
+        "save_load_preserves_window_both_locks_independently",
         "save_load_preserves_overlay_hover_hide",
         "save_load_preserves_overlay_positions",
 
@@ -296,6 +298,45 @@ class SettingsRepositoryTests extends TestCase
 
         loaded := repo.Load()
         Assert.True(loaded.window.microLocked)
+    }
+
+    save_load_preserves_window_steve_locked()
+    {
+        ; Anti-regression: SteveLocked used to be silently dropped on
+        ; Save (only MicroLocked was written to [Window]), so a Ctrl+F8
+        ; lock survived the in-memory toggle but never the next boot.
+        ; This test pins SteveLocked through the full roundtrip.
+        mainIni := IniFile(Fixtures.TempPath("ini"))
+        repo := SettingsRepository(mainIni)
+
+        cfg := AppSettings.Defaults()
+        cfg.window := WindowState.FromMap(Map("steveLocked", true))
+        repo.Save(cfg)
+
+        loaded := repo.Load()
+        Assert.True(loaded.window.steveLocked, "SteveLocked must survive Save/Load")
+    }
+
+    save_load_preserves_window_both_locks_independently()
+    {
+        ; The two locks are mutually exclusive at runtime (handled by
+        ; OverlayModeService.ToggleMicroLock / ToggleSteveLock), but at
+        ; the persistence layer they are independent flags. A manually
+        ; hand-edited INI with both = 1 must round-trip both as true;
+        ; the runtime is the only place that enforces exclusion.
+        mainIni := IniFile(Fixtures.TempPath("ini"))
+        repo := SettingsRepository(mainIni)
+
+        cfg := AppSettings.Defaults()
+        cfg.window := WindowState.FromMap(Map(
+            "microLocked", true,
+            "steveLocked", true
+        ))
+        repo.Save(cfg)
+
+        loaded := repo.Load()
+        Assert.True(loaded.window.microLocked, "MicroLocked round-trips independently")
+        Assert.True(loaded.window.steveLocked, "SteveLocked round-trips independently")
     }
 
     save_load_preserves_overlay_hover_hide()
