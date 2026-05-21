@@ -148,7 +148,15 @@ class OverlayLayout
     static Defaults()
     {
         ol := OverlayLayout()
-        ; Defaults for the 2 layout widgets
+        ; Defaults for the two layouts whose position the user is
+        ; most likely to want pre-positioned out of the box. The
+        ; third layout (steveLayout) is intentionally omitted here
+        ; and falls back to OverlayPosition() defaults (top-left,
+        ; scale 1.0) the first time the widget is constructed; the
+        ; user-tweaked position is then persisted to [Overlay] like
+        ; any other widget. Adding it here would only override that
+        ; first-visit fallback with a hardcoded preset, which has
+        ; no clear right answer.
         compact := OverlayPosition()
         compact.left    := 10.0
         compact.top     := 1.5

@@ -10,7 +10,12 @@
 ;   Settings         -> Cmd.OpenSettingsRequested
 ;   ToggleOverlay    -> Cmd.ToggleOverlayRequested
 ;   ToggleMicroLock  -> Cmd.ToggleMicroLockRequested
+;   ToggleSteveLock  -> Cmd.ToggleSteveLockRequested
 ;   PlotRunStats     -> Cmd.OpenRunStatsPlotRequested
+;
+; The authoritative list is `HotkeyService.ActionToCommand` below —
+; this comment block is a quick reference for readers, not a
+; contract. If the static Map changes, update this block too.
 ;
 ; LIFECYCLE:
 ;   service := HotkeyService(bus, headless := false)
