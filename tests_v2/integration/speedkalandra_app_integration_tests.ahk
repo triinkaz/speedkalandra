@@ -1266,9 +1266,13 @@ class SpeedKalandraAppIntegrationTests extends TestCase
     ; The user sees the pointer jump forward in the overlay the
     ; moment they die.
     ;
-    ; Relevant AppSettings defaults:
-    ;   cfg.deathPenaltyEnabled = true
-    ;   cfg.deathPenaltyMs      = 150000  (2min30s)
+    ; AppSettings.deathPenaltyEnabled is opt-in (default false) and
+    ; AppSettings.deathPenaltyMs defaults to 150_000 (2:30). Tests
+    ; that exercise the enabled path flip the flag explicitly so the
+    ; assertion below is robust to future default changes; tests that
+    ; exercise a downstream guard (no-run-active, ms<=0, etc.) also
+    ; flip enabled=true so they reach the guard they promise to test
+    ; rather than short-circuiting on the enabled gate.
     ;
     ; These tests publish Evt.DeathDetected directly on the bus to
     ; simulate the event that normally comes from LogMonitorService
@@ -1278,6 +1282,7 @@ class SpeedKalandraAppIntegrationTests extends TestCase
     {
         ; Start run, advance 1min, fire DeathDetected
         ; -> timer must jump to 1min + 150s (default penalty) = 3min30s
+        this.app._cfg.deathPenaltyEnabled := true
         this.app.bus.Publish(Commands.NewRunRequested, Map())
         this.stubClock.AdvanceMs(60000)   ; 1min
         Assert.Equal(60000, this.app.timer.GetRunMs())
@@ -1307,7 +1312,10 @@ class SpeedKalandraAppIntegrationTests extends TestCase
 
     death_penalty_does_not_apply_when_no_run_active()
     {
-        ; Without NewRun, timer.IsActive() = false. Handler returns early.
+        ; Without NewRun, timer.IsActive() = false. Handler returns early
+        ; on the IsActive guard (NOT on the enabled gate — we flip enabled
+        ; on so the test reaches the guard it promises to cover).
+        this.app._cfg.deathPenaltyEnabled := true
         Assert.False(this.app.timer.IsActive())
         before := this.app.timer.GetRunMs()   ; 0
 
@@ -1322,6 +1330,7 @@ class SpeedKalandraAppIntegrationTests extends TestCase
     death_penalty_accumulates_with_multiple_deaths()
     {
         ; 3 deaths in the same run -> timer gains 3 * penalty
+        this.app._cfg.deathPenaltyEnabled := true
         this.app.bus.Publish(Commands.NewRunRequested, Map())
         this.stubClock.AdvanceMs(60000)   ; 1min
 
@@ -1337,6 +1346,7 @@ class SpeedKalandraAppIntegrationTests extends TestCase
     death_penalty_uses_configured_ms_value()
     {
         ; Custom cfg.deathPenaltyMs (90s) must be respected.
+        this.app._cfg.deathPenaltyEnabled := true
         this.app._cfg.deathPenaltyMs := 90000
 
         this.app.bus.Publish(Commands.NewRunRequested, Map())
@@ -1351,7 +1361,9 @@ class SpeedKalandraAppIntegrationTests extends TestCase
     {
         ; Defensive edge case: if cfg.deathPenaltyMs = 0 (the user
         ; explicitly configured "no penalty"), handler returns early
-        ; without touching the timer. Covers the handler's last guard.
+        ; on the ms<=0 guard. Flip enabled=true so the test reaches
+        ; that guard rather than short-circuiting on the enabled gate.
+        this.app._cfg.deathPenaltyEnabled := true
         this.app._cfg.deathPenaltyMs := 0
 
         this.app.bus.Publish(Commands.NewRunRequested, Map())

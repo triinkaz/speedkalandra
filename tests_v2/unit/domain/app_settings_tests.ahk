@@ -140,8 +140,10 @@ class AppSettingsTests extends TestCase
     defaults_death_penalty_settings()
     {
         cfg := AppSettings.Defaults()
-        Assert.True(cfg.deathPenaltyEnabled)
-        Assert.Equal(150000, cfg.deathPenaltyMs, "Default 2m30s")
+        Assert.False(cfg.deathPenaltyEnabled,
+            "Disabled by default — opt-in via Settings")
+        Assert.Equal(150000, cfg.deathPenaltyMs,
+            "ms kept at 150_000 (2:30) so the value is sane when the user enables it")
     }
 
     defaults_disclaimer_not_acknowledged()

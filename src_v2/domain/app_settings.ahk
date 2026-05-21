@@ -42,12 +42,18 @@ class AppSettings
     ; --- Auto-pause (focus) ---
     autoPauseOnFocus := true
 
-    ; --- Death Penalty (plot) ---
-    ; Consumed by RunStatsPlotBuilder._AddDeathDetails to render the
-    ; "Deaths" bar as (deathCount * deathPenaltyMs). 150_000 ms =
-    ; 2:30, a rough PoE2 average for waypoint + traversal back to
-    ; the death point. Adjustable in the Settings dialog.
-    deathPenaltyEnabled := true
+    ; --- Death Penalty (plot + live timer) ---
+    ; Optional extra bar in the run plot via
+    ; RunStatsPlotBuilder._AddDeathDetails, rendered as
+    ; (deathCount * deathPenaltyMs). Also gates the live timer
+    ; penalty that LiveReconfigurationHandlers applies on each
+    ; DeathDetected. Default false — the per-death overhead varies
+    ; a lot by player (waypoint vs portal vs nearest checkpoint),
+    ; so the estimate stays opt-in. 150_000 ms (2:30) is a rough
+    ; PoE2 average for waypoint + traversal back to the death
+    ; point; kept in the default so the value is sane the moment
+    ; the user enables the flag in the Settings dialog.
+    deathPenaltyEnabled := false
     deathPenaltyMs      := 150000
 
     ; --- Disclaimer ---

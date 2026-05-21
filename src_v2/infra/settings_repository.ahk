@@ -140,7 +140,10 @@ class SettingsRepository
     {
         ini := this._ini
         cfg.autoPauseOnFocus    := ini.Read("Rules", "AutoPauseOnFocus", "1") = "1"
-        cfg.deathPenaltyEnabled := ini.Read("Rules", "DeathPenaltyEnabled", "1") = "1"
+        ; Death penalty default mirrors AppSettings.deathPenaltyEnabled (false).
+        ; Both defaults must stay in sync — changing only one creates a
+        ; silent split between Defaults() and a freshly-loaded INI.
+        cfg.deathPenaltyEnabled := ini.Read("Rules", "DeathPenaltyEnabled", "0") = "1"
         cfg.deathPenaltyMs      := SettingsRepository._ReadInt(ini, "Rules", "DeathPenaltyMs", cfg.deathPenaltyMs)
     }
 

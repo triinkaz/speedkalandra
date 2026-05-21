@@ -463,8 +463,13 @@ class RunStatsPlotBuilderTests extends TestCase
 
     death_count_with_penalty_enabled_adds_detail()
     {
-        ; Defaults: deathPenaltyEnabled=true, deathPenaltyMs=some default
-        data := this.builder.Build(Map("deathCount", 2))
+        ; Builder defaults have deathPenaltyEnabled=false (opt-in flag);
+        ; this test exercises the enabled path explicitly so the
+        ; assertion below is meaningful regardless of the default.
+        cfg := AppSettings.Defaults()
+        cfg.deathPenaltyEnabled := true
+        builder := RunStatsPlotBuilder(this.catalog, cfg)
+        data := builder.Build(Map("deathCount", 2))
         Assert.True(data["totals"]["morte"] > 0,
             "With penalty enabled and deathCount=2, total morte must be > 0")
     }
@@ -491,7 +496,13 @@ class RunStatsPlotBuilderTests extends TestCase
 
     death_detail_label_includes_count()
     {
-        data := this.builder.Build(Map("deathCount", 5))
+        ; Builder defaults have deathPenaltyEnabled=false; flip on
+        ; explicitly so the death detail is emitted and the label
+        ; assertion below has something to match against.
+        cfg := AppSettings.Defaults()
+        cfg.deathPenaltyEnabled := true
+        builder := RunStatsPlotBuilder(this.catalog, cfg)
+        data := builder.Build(Map("deathCount", 5))
         ; Find the death detail
         for _, d in data["details"]
         {
