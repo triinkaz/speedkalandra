@@ -105,6 +105,11 @@ $mustFilter = @{
     "scratch.tmp"                      = "temp"
     ".vscode\settings.json"            = "{}"
     ".git\config"                      = "[core]"
+    ".github\workflows\test.yml"       = "name: tests`non: push"
+    ".github\ISSUE_TEMPLATE\bug.md"    = "# Bug report template"
+    "tests_v2\run_tests.ahk"           = "; AHK test runner"
+    "tests_v2\unit\domain\dummy.ahk"   = "; nested test file"
+    "tests_v2\build\test_build_dist.ps1" = "# self-test of this very script"
 }
 
 function New-Sentinel {

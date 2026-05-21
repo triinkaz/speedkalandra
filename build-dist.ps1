@@ -13,7 +13,8 @@
       - runs/                     (legacy CSV history at the root)
       - debug/                    (Client.txt and diagnostic dumps)
       - BKP/, _LIXEIRA/           (backups and removed files)
-      - .git/, .vscode/, etc      (dev metadata)
+      - .git/, .github/, .vscode/ (dev metadata and CI workflows)
+      - tests_v2/                 (AHK test suite + build self-test)
       - *.bak, *.tmp, *.swp, *~   (temp files)
       - this script + build-dist.bat themselves
 
@@ -341,9 +342,11 @@ $ExcludeDirs = @(
     "runs",                 # legacy CSV history at the root
     "data\runs",            # new history written by RunHistoryRepository
     ".git",
+    ".github",              # CI workflows, issue templates: dev-only
     ".vscode",
     ".idea",
     "node_modules",
+    "tests_v2",             # AHK test suite + build self-test: dev-only
     "SpeedKalandra-dist"    # in case the user runs this from inside it
 )
 
@@ -520,10 +523,18 @@ OVERLAY INTERACTION:
    buttons). Without Ctrl, clicks pass through to the game.
 
 PERSISTED DATA (created on first run):
-   speedkalandra.ini             configuration
+   speedkalandra.ini             configuration + in-progress run state
    data/personal_bests.ini       PBs per zone + full run
    data/runs/{runId}.ini         history of finalized runs
-   data/speedkalandra.log        execution log
+   data/deaths.csv               append-only log of every death detected
+   data/speedkalandra.log        execution log (rotated at 5 MB)
+   data/speedkalandra_zones.txt  zone totals of the in-progress run
+
+UPGRADING:
+   Extract the new release over the existing folder. The release
+   ZIP does NOT contain any of the files above — they survive the
+   upgrade. If you extract into a new folder instead, copy the
+   files above from the old install to preserve your data.
 
 Enjoy!
 "@
