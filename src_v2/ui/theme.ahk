@@ -85,7 +85,18 @@ class Theme
         "goodStrong", "4ADE80",   ; vibrant green -- for highlights (PB timers)
         "warn",       "F59E0B",   ; amber — attention
         "danger",     "F87171",   ; desaturated red — alert
-        "steel",      "C8C0B4"    ; light gray — soft highlight
+        "steel",      "C8C0B4",   ; light gray — soft highlight
+
+        ; --- Plus layouts: PB chip + distribution bar ---
+        ; pb is its own color (teal) so the chip is distinguishable
+        ; from the good/goodStrong timers that mark under-PB state.
+        ; town shares the hex with the legacy `purple` by design —
+        ; the two names are kept independent so a future restyle of
+        ; one doesn't drag the other.
+        "pb",         "2DD4BF",   ; teal — PB chips and PB sub-labels
+        "map",        "38BDF8",   ; distribution bar: map time
+        "loading",    "FACC15",   ; distribution bar: loading time
+        "town",       "A78BFA"    ; distribution bar: town time
     )
 
     ; ============================================================

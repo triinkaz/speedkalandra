@@ -21,6 +21,7 @@ class ThemeTests extends TestCase
         ; --- Color ---
         "color_returns_hex_for_known_kalandra_palette",
         "color_returns_hex_for_legacy_aliases",
+        "color_returns_hex_for_plus_distribution_aliases",
         "color_throws_on_unknown_name",
         "color_throws_on_empty_string",
         "color_returns_hex_without_hash",
@@ -71,6 +72,15 @@ class ThemeTests extends TestCase
         Assert.Equal("E8E2D6", Theme.Color("text"))
         Assert.Equal("15181B", Theme.Color("headerBg"))
         Assert.Equal("60A5FA", Theme.Color("blue"))
+    }
+
+    color_returns_hex_for_plus_distribution_aliases()
+    {
+        ; Added for the Plus layouts. See PLUS_LAYOUTS_SPEC.md §3.
+        Assert.Equal("2DD4BF", Theme.Color("pb"))
+        Assert.Equal("38BDF8", Theme.Color("map"))
+        Assert.Equal("FACC15", Theme.Color("loading"))
+        Assert.Equal("A78BFA", Theme.Color("town"))
     }
 
     color_throws_on_unknown_name()
