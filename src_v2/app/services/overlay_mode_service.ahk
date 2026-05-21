@@ -2,40 +2,32 @@
 ; OverlayModeService - state machine for which layout is active
 ; ============================================================
 ;
-; Two modes:
+; Three modes (mutually exclusive):
 ;
 ;   COMPACT - reduced layout with essential info. Default.
-;   MICRO   - minimal bar, two sub-modes:
-;             - LOCKED : always micro (toggle via Cmd.ToggleMicroLockRequested)
-;             - AUTO   : active while at least one "panel key" is held
-;                        (i/v/c/g/p/u/m = PoE panels). Disappears when
-;                        all keys are released.
+;   MICRO   - minimal bar. Toggle via Cmd.ToggleMicroLockRequested.
+;   STEVE   - SteveTheHappyWhale layout. Toggle via
+;             Cmd.ToggleSteveLockRequested.
 ;
 ; PHILOSOPHY:
 ;   - Service does NOT touch the GUI. It only changes state and
 ;     publishes Evt.OverlayModeChanged.
 ;   - Pure state machine: testable without a GUI.
-;   - MICRO auto-mode is a temporary entry over COMPACT — leaves and
-;     returns to COMPACT when all panels close.
+;   - Toggle methods are mutually exclusive: turning one lock on
+;     turns the other off, so the user can never end up in an
+;     inconsistent "both locked" state from the UI.
 ;
 ; SUBSCRIPTIONS:
 ;   Cmd.ToggleMicroLockRequested -> ToggleMicroLock()
 ;   Cmd.ToggleSteveLockRequested -> ToggleSteveLock()
 ;   Cmd.SetOverlayModeRequested  -> SetMode(mode)
 ;
-;   The bus-based panel-key flow (Cmd.PanelKeyPressed/Released) is
-;   currently disconnected — PanelKeyService has no publisher. The
-;   OnPanelKeyDown/Up + ClearHeldKeys methods remain in the code
-;   (still callable externally if needed) but the automatic
-;   bus-based flow is officially dead. _heldKeys stays permanently
-;   empty.
-;
 ; PUBLISHES:
-;   Evt.OverlayModeChanged { mode, prevMode, locked, heldKeys }
+;   Evt.OverlayModeChanged { mode, prevMode, locked, steveLocked }
 ;
 ; CONSTRUCTION:
 ;   svc := OverlayModeService(bus, cfg)
-;   svc.Hydrate()    ; reads window.microLocked from cfg
+;   svc.Hydrate()    ; reads window.{microLocked,steveLocked} from cfg
 
 class OverlayModes
 {
@@ -53,7 +45,6 @@ class OverlayModeService
     _mode         := ""
     _microLocked  := false
     _steveLocked  := false
-    _heldKeys     := ""    ; Map<keyName, true>
 
     _handlerToggleMicroLock   := ""
     _handlerToggleSteveLock   := ""
@@ -69,7 +60,6 @@ class OverlayModeService
         this._bus      := bus
         this._settings := cfg
         this._mode     := OverlayModes.COMPACT
-        this._heldKeys := Map()
 
         this._handlerToggleMicroLock   := (data) => this.ToggleMicroLock()
         this._handlerToggleSteveLock   := (data) => this.ToggleSteveLock()
@@ -136,9 +126,6 @@ class OverlayModeService
     IsSteve()         => (this._mode = OverlayModes.STEVE)
     IsMicroLocked()   => this._microLocked
     IsSteveLocked()   => this._steveLocked
-    IsMicroAuto()     => (this.IsMicro() && !this._microLocked)
-    GetHeldKeyCount() => this._heldKeys.Count
-    HasHeldKey(key)   => this._heldKeys.Has(OverlayModeService._NormKey(key))
 
     ; ============================================================
     ; ToggleMicroLock - alternates COMPACT <-> MICRO LOCKED
@@ -249,72 +236,6 @@ class OverlayModeService
     }
 
     ; ============================================================
-    ; OnPanelKeyDown - TOGGLE semantics
-    ;
-    ; Each DOWN toggles the panel state:
-    ;   - key NOT in _heldKeys: panel "opened" -> add
-    ;   - key ALREADY in _heldKeys: panel "closed" -> remove
-    ;
-    ; Recomputes mode: Count > 0 -> MICRO AUTO; Count = 0 -> back to COMPACT.
-    ; LOCKED: panel keys do not change mode (but register the held set).
-    ; Esc/focus loss clear everything via ClearHeldKeys.
-    ; ============================================================
-    OnPanelKeyDown(keyName)
-    {
-        key := OverlayModeService._NormKey(keyName)
-        if (key = "")
-            return false
-
-        wasOpen := this._heldKeys.Has(key)
-        if wasOpen
-            this._heldKeys.Delete(key)
-        else
-            this._heldKeys[key] := true
-
-        ; Any active lock (micro or steve) ignores auto-mode
-        if (this._microLocked || this._steveLocked)
-            return false
-
-        wantMicro := this._heldKeys.Count > 0
-        prev      := this._mode
-
-        if (wantMicro && !this.IsMicro())
-        {
-            this._mode := OverlayModes.MICRO
-            this._PublishChange(prev)
-            return true
-        }
-        else if (!wantMicro && this.IsMicroAuto())
-        {
-            this._mode := OverlayModes.COMPACT
-            this._PublishChange(prev)
-            return true
-        }
-        return false
-    }
-
-    OnPanelKeyUp(keyName)
-    {
-        ; TOGGLE semantics: UP is a no-op. Toggle happens on DOWN.
-        return false
-    }
-
-    ClearHeldKeys()
-    {
-        if (this._heldKeys.Count = 0)
-            return false
-        this._heldKeys := Map()
-        ; Auto-mode only returns to compact if there is no lock
-        if (!this._microLocked && !this._steveLocked && this.IsMicroAuto())
-        {
-            prev := this._mode
-            this._mode := OverlayModes.COMPACT
-            this._PublishChange(prev)
-        }
-        return true
-    }
-
-    ; ============================================================
     ; Publishing
     ; ============================================================
     _PublishChange(prevMode)
@@ -323,27 +244,8 @@ class OverlayModeService
             "mode",        this._mode,
             "prevMode",    prevMode,
             "locked",      this._microLocked,
-            "steveLocked", this._steveLocked,
-            "heldKeys",    this._heldKeysArray()
+            "steveLocked", this._steveLocked
         ))
-    }
-
-    _heldKeysArray()
-    {
-        out := []
-        for k, _ in this._heldKeys
-            out.Push(k)
-        return out
-    }
-
-    _OnPanelKeyData(data, isDown)
-    {
-        if !IsObject(data)
-            return
-        keyName := data.Has("key") ? data["key"] : ""
-        if (keyName = "")
-            return
-        isDown ? this.OnPanelKeyDown(keyName) : this.OnPanelKeyUp(keyName)
     }
 
     _OnSetModeRequested(data)
@@ -364,12 +266,5 @@ class OverlayModeService
                 try TrayTip("SpeedKalandra", "Mode: " label, "Mute")
             }
         }
-    }
-
-    static _NormKey(keyName)
-    {
-        if (keyName = "")
-            return ""
-        return StrLower(Trim(String(keyName)))
     }
 }

@@ -39,8 +39,4 @@ class Commands
     ; --- Run export/import ---
     static ExportRunsRequested := "Cmd.ExportRunsRequested"
     static ImportRunsRequested := "Cmd.ImportRunsRequested"
-
-    ; --- Overlay panel keys (auto-MICRO mode) ---
-    static PanelKeyPressed  := "Cmd.PanelKeyPressed"
-    static PanelKeyReleased := "Cmd.PanelKeyReleased"
 }

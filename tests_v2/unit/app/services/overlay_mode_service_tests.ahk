@@ -4,11 +4,6 @@
 ;
 ; State machine with 3 modes: COMPACT (default), MICRO, STEVE.
 ; Locked modes (microLocked/steveLocked) are mutually exclusive.
-; AUTO MICRO mode is a temporary entry via panel keys
-; (i/v/c/g/p/u/m), but the publisher is currently disconnected
-; — _heldKeys is always empty in real use. The OnPanelKeyDown/Up +
-; ClearHeldKeys methods are still externally callable (covered by
-; the tests).
 ;
 ; Subscribes to 3 Commands. Publishes OverlayModeChanged on
 ; transitions. Hydrate reads window.{microLocked,steveLocked} from
@@ -41,7 +36,6 @@ class OverlayModeServiceTests extends TestCase
         "constructor_subscribes_to_3_commands",
         "constructor_default_mode_is_compact",
         "constructor_no_locks_active",
-        "constructor_held_keys_empty",
 
         ; --- Hydrate ---
         "hydrate_with_micro_locked_in_settings_sets_micro_mode",
@@ -75,22 +69,6 @@ class OverlayModeServiceTests extends TestCase
         "set_mode_publishes_when_changed",
         "set_mode_does_not_publish_when_idempotent",
 
-        ; --- OnPanelKeyDown (toggle semantics) ---
-        "panel_key_down_first_press_activates_auto_micro",
-        "panel_key_down_second_press_same_key_closes_panel",
-        "panel_key_down_with_micro_locked_does_not_change_mode",
-        "panel_key_down_with_steve_locked_does_not_change_mode",
-        "panel_key_down_normalizes_key_case",
-        "panel_key_down_empty_key_returns_false",
-        "panel_key_down_publishes_when_mode_changes",
-        "panel_key_up_is_no_op",
-
-        ; --- ClearHeldKeys ---
-        "clear_held_keys_removes_all_keys",
-        "clear_held_keys_returns_to_compact_when_auto_micro",
-        "clear_held_keys_no_op_when_already_empty",
-        "clear_held_keys_does_not_change_mode_when_locked",
-
         ; --- Commands subscribers ---
         "toggle_micro_lock_requested_triggers_toggle",
         "toggle_steve_lock_requested_triggers_toggle",
@@ -100,8 +78,7 @@ class OverlayModeServiceTests extends TestCase
 
         ; --- Event payload ---
         "mode_changed_event_includes_prev_mode",
-        "mode_changed_event_includes_locked_flag",
-        "mode_changed_event_includes_held_keys_array",
+        "mode_changed_event_includes_locked_flags",
 
         ; --- Dispose ---
         "dispose_unsubscribes_all_commands",
@@ -152,11 +129,6 @@ class OverlayModeServiceTests extends TestCase
     {
         Assert.False(this.svc.IsMicroLocked())
         Assert.False(this.svc.IsSteveLocked())
-    }
-
-    constructor_held_keys_empty()
-    {
-        Assert.Equal(0, this.svc.GetHeldKeyCount())
     }
 
     ; ============================================================
@@ -355,104 +327,6 @@ class OverlayModeServiceTests extends TestCase
     }
 
     ; ============================================================
-    ; OnPanelKeyDown (TOGGLE semantics)
-    ; ============================================================
-
-    panel_key_down_first_press_activates_auto_micro()
-    {
-        this.svc.OnPanelKeyDown("i")
-        Assert.Equal(OverlayModes.MICRO, this.svc.GetMode())
-        Assert.True(this.svc.IsMicroAuto(), "MICRO but not locked = auto")
-    }
-
-    panel_key_down_second_press_same_key_closes_panel()
-    {
-        this.svc.OnPanelKeyDown("i")
-        this.svc.OnPanelKeyDown("i")   ; toggle closes
-        Assert.Equal(0, this.svc.GetHeldKeyCount())
-        Assert.Equal(OverlayModes.COMPACT, this.svc.GetMode())
-    }
-
-    panel_key_down_with_micro_locked_does_not_change_mode()
-    {
-        this.svc.ToggleMicroLock()
-        capturedEvents := this._CaptureEvents(Events.OverlayModeChanged)
-        this.svc.OnPanelKeyDown("i")
-        ; Mode stays MICRO (locked), but keys were registered
-        Assert.Equal(OverlayModes.MICRO, this.svc.GetMode())
-        Assert.Equal(1, this.svc.GetHeldKeyCount())
-        Assert.Equal(0, capturedEvents.Length, "Locked: doesn't publish")
-    }
-
-    panel_key_down_with_steve_locked_does_not_change_mode()
-    {
-        this.svc.ToggleSteveLock()
-        this.svc.OnPanelKeyDown("i")
-        Assert.Equal(OverlayModes.STEVE, this.svc.GetMode())
-    }
-
-    panel_key_down_normalizes_key_case()
-    {
-        this.svc.OnPanelKeyDown("I")
-        Assert.True(this.svc.HasHeldKey("i"), "Key normalized to lowercase")
-        Assert.True(this.svc.HasHeldKey("I"), "Lookup also normalizes")
-    }
-
-    panel_key_down_empty_key_returns_false()
-    {
-        Assert.False(this.svc.OnPanelKeyDown(""))
-        Assert.Equal(0, this.svc.GetHeldKeyCount())
-    }
-
-    panel_key_down_publishes_when_mode_changes()
-    {
-        capturedEvents := this._CaptureEvents(Events.OverlayModeChanged)
-        this.svc.OnPanelKeyDown("i")
-        Assert.Equal(1, capturedEvents.Length)
-    }
-
-    panel_key_up_is_no_op()
-    {
-        this.svc.OnPanelKeyDown("i")
-        Assert.False(this.svc.OnPanelKeyUp("i"),
-            "Toggle semantics: UP is no-op, returns false")
-        Assert.Equal(1, this.svc.GetHeldKeyCount(), "Key stays held")
-    }
-
-    ; ============================================================
-    ; ClearHeldKeys
-    ; ============================================================
-
-    clear_held_keys_removes_all_keys()
-    {
-        this.svc.OnPanelKeyDown("i")
-        this.svc.OnPanelKeyDown("v")
-        this.svc.ClearHeldKeys()
-        Assert.Equal(0, this.svc.GetHeldKeyCount())
-    }
-
-    clear_held_keys_returns_to_compact_when_auto_micro()
-    {
-        this.svc.OnPanelKeyDown("i")   ; auto MICRO
-        this.svc.ClearHeldKeys()
-        Assert.Equal(OverlayModes.COMPACT, this.svc.GetMode())
-    }
-
-    clear_held_keys_no_op_when_already_empty()
-    {
-        Assert.False(this.svc.ClearHeldKeys())
-    }
-
-    clear_held_keys_does_not_change_mode_when_locked()
-    {
-        this.svc.ToggleMicroLock()
-        this.svc.OnPanelKeyDown("i")
-        this.svc.ClearHeldKeys()
-        Assert.Equal(OverlayModes.MICRO, this.svc.GetMode(),
-            "Locked: ClearHeldKeys doesn't pull out of MICRO")
-    }
-
-    ; ============================================================
     ; Commands subscribers
     ; ============================================================
 
@@ -498,20 +372,12 @@ class OverlayModeServiceTests extends TestCase
         Assert.Equal(OverlayModes.MICRO,   capturedEvents[1]["mode"])
     }
 
-    mode_changed_event_includes_locked_flag()
+    mode_changed_event_includes_locked_flags()
     {
         capturedEvents := this._CaptureEvents(Events.OverlayModeChanged)
         this.svc.ToggleMicroLock()
-        Assert.True(capturedEvents[1]["locked"])
-        Assert.False(capturedEvents[1]["steveLocked"])
-    }
-
-    mode_changed_event_includes_held_keys_array()
-    {
-        capturedEvents := this._CaptureEvents(Events.OverlayModeChanged)
-        this.svc.OnPanelKeyDown("i")
-        Assert.True(capturedEvents[1]["heldKeys"] is Array)
-        Assert.Equal(1, capturedEvents[1]["heldKeys"].Length)
+        Assert.True(capturedEvents[1]["locked"], "micro lock flag in payload")
+        Assert.False(capturedEvents[1]["steveLocked"], "steve lock flag in payload")
     }
 
     ; ============================================================
