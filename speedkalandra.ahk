@@ -132,6 +132,7 @@ SpeedKalandraMsgBox(text, title := "", options := "")
 #Include "src_v2\app\services\auto_start_service.ahk"
 #Include "src_v2\app\services\overlay_mode_service.ahk"
 #Include "src_v2\app\services\overlay_mode_applier.ahk"
+#Include "src_v2\app\services\overlay_resize_geometry.ahk"
 #Include "src_v2\app\services\overlay_interaction_service.ahk"
 #Include "src_v2\app\services\focus_auto_pause_service.ahk"
 #Include "src_v2\app\services\event_trace_logger.ahk"

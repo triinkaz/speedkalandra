@@ -201,6 +201,7 @@ SkTestOnError(err, mode) {
 #Include ..\src_v2\app\services\overlay_mode_applier.ahk
 #Include ..\src_v2\app\services\hotkey_service.ahk
 #Include ..\src_v2\app\services\focus_auto_pause_service.ahk
+#Include ..\src_v2\app\services\overlay_resize_geometry.ahk
 #Include ..\src_v2\app\services\overlay_interaction_service.ahk
 #Include ..\src_v2\app\services\event_trace_logger.ahk
 #Include ..\src_v2\app\services\run_export_service.ahk
@@ -319,6 +320,7 @@ SpeedKalandraMsgBox(text, title := "", options := "") {
 #Include unit\app\services\overlay_mode_applier_tests.ahk
 #Include unit\app\services\hotkey_service_tests.ahk
 #Include unit\app\services\focus_auto_pause_service_tests.ahk
+#Include unit\app\services\overlay_resize_geometry_tests.ahk
 #Include unit\app\services\overlay_interaction_service_tests.ahk
 #Include unit\app\services\event_trace_logger_tests.ahk
 #Include unit\app\services\run_import_service_tests.ahk
