@@ -149,7 +149,7 @@ Each release section is short and user-facing; engineering rationale lives next 
 ### Added
 
 - **Client.txt setup dialog on first boot.** When `cfg.logFile` is empty or points to a missing file, a modal dialog appears with a pre-filled Steam path and a Browse button. Cancel calls `ExitApp()` — the app refuses to run without a valid log path.
-- **Death penalty applied to the live timer.** `TimerService.AddPenaltyMs(ms)` and an `_OnDeathApplyTimerPenalty` handler subscribed to `Evt.DeathDetected`. With `cfg.deathPenaltyEnabled = true` (default) the timer jumps forward by `cfg.deathPenaltyMs` (default 2 min 30 s) the moment a death is detected, so the user no longer sees an inconsistency between the overlay timer and the post-finalize plot.
+- **Death penalty applied to the live timer.** `TimerService.AddPenaltyMs(ms)` and an `_OnDeathApplyTimerPenalty` handler subscribed to `Evt.DeathDetected`. When `cfg.deathPenaltyEnabled` is on, the timer jumps forward by `cfg.deathPenaltyMs` (150_000 ms = 2 min 30 s by default) the moment a death is detected, so the user no longer sees an inconsistency between the overlay timer and the post-finalize plot. **Default off** — the per-death overhead varies a lot by player (waypoint vs portal vs nearest checkpoint), so the estimate stays opt-in.
 
 ### Changed
 

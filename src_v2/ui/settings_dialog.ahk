@@ -168,10 +168,13 @@ class SettingsDialog
             "Pause when PoE2 loses focus")
         y += 24
         ; Death penalty: UI shows seconds for friendliness;
-        ; conversion to ms happens on save.
+        ; conversion to ms happens on save. The flag gates both the
+        ; live-timer adjustment (LiveReconfigurationHandlers) and the
+        ; "Deaths" bar in the post-run plot (RunStatsPlotBuilder), so
+        ; the label mentions both surfaces.
         this._ctrls["deathPenaltyEnabled"] := g.Add("Checkbox",
             "x180 y" y (this._cfg.deathPenaltyEnabled ? " Checked" : ""),
-            "Apply death penalty in run plot")
+            "Apply death penalty to timer and run plot")
         y += 26
         this._Label(g, y, "Penalty (seconds)")
         penaltySec := Round(this._cfg.deathPenaltyMs / 1000)

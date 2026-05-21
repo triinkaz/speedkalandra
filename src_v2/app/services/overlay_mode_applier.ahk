@@ -8,7 +8,8 @@
 ;
 ; RULES:
 ;   COMPACT -> only "compactLayout" visible
-;   MICRO   -> only "microLayout" visible
+;   MICRO   -> only "microLayout"   visible
+;   STEVE   -> only "steveLayout"   visible
 ;
 ; Any other widget id goes to hidden — defense in depth in case the
 ; composition root accidentally registers an unexpected widget.

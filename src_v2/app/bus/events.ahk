@@ -61,7 +61,7 @@ class Events
     static ProfileChanged       := "Evt.ProfileChanged"       ; data: {profileId, profileName}
     static OverlayToggled       := "Evt.OverlayToggled"       ; data: {visible}
     static WidgetVisibilityChanged := "Evt.WidgetVisibilityChanged" ; data: {widgetId, visible}
-    static OverlayModeChanged   := "Evt.OverlayModeChanged"   ; data: {mode, prevMode, locked, heldKeys}
+    static OverlayModeChanged   := "Evt.OverlayModeChanged"   ; data: {mode, prevMode, locked, steveLocked}
     static CtrlStateChanged     := "Evt.CtrlStateChanged"     ; data: {active}
 
     ; --- Settings changes ---

@@ -68,9 +68,11 @@ All hotkeys are remappable in Settings.
 
 | File | Purpose |
 |---|---|
-| `speedkalandra.ini` | Configuration |
+| `speedkalandra.ini` | Configuration + in-progress run state (`[RunState]` section) |
+| `speedkalandra_zones.txt` | Per-zone time accumulator for the in-progress run (separate file for write speed) |
 | `data/personal_bests.ini` | PBs per zone, per act, and full run |
 | `data/runs/{runId}.ini` | One file per finalized run (history) |
+| `data/deaths.csv` | Append-only log of every detected death (zone, patch, build) |
 | `data/speedkalandra.log` | Execution log (rotates at 5MB) |
 
 These are gitignored — they stay on your machine.
