@@ -58,12 +58,25 @@ class OverlayInteractionServiceTests extends TestCase
         "register_hwnd_with_zero_no_op",
         "register_hwnd_duplicate_is_no_op",
         "register_hwnd_with_callbacks_stores_them",
+        "register_hwnd_default_resize_border_is_empty_string",
+        "register_hwnd_with_resize_border_callback_stores_it",
+        "register_hwnd_with_default_min_size_uses_80_x_32",
+        "register_hwnd_with_explicit_min_size_stores_them",
 
         ; --- UnregisterHwnd ---
         "unregister_hwnd_removes_from_widgets",
         "unregister_hwnd_with_zero_no_op",
         "unregister_hwnd_for_unknown_no_op",
         "unregister_hwnd_during_drag_clears_drag_state",
+        "unregister_hwnd_during_resize_clears_drag_kind",
+
+        ; --- _FindWidget helper (used by _OnLButtonDown hit-test) ---
+        "find_widget_returns_widget_for_registered_hwnd",
+        "find_widget_returns_empty_string_for_unknown_hwnd",
+
+        ; --- Drag kind state machine ---
+        "initial_drag_kind_is_none",
+        "stop_resets_drag_kind",
 
         ; --- SetCtrlState ---
         "set_ctrl_state_true_updates_internal_state",
@@ -215,6 +228,54 @@ class OverlayInteractionServiceTests extends TestCase
         Assert.Equal(cbResize,  this.svc._widgets[1]["onResize"])
     }
 
+    register_hwnd_default_resize_border_is_empty_string()
+    {
+        ; Backward compat: callers that don't pass onResizeBorder
+        ; (every Classic widget) get "" stored. _OnLButtonDown
+        ; treats "" as "don't hit-test the border" so Classic
+        ; behavior is preserved.
+        this.svc.Start()
+        this.svc.RegisterHwnd(12345, (*) => 0, (steps) => 0)
+        Assert.Equal("", this.svc._widgets[1]["onResizeBorder"])
+    }
+
+    register_hwnd_with_resize_border_callback_stores_it()
+    {
+        ; Plus widgets register with the 4th argument (their
+        ; _OnBorderResize callback). The map slot must keep the
+        ; reference so _OnLButtonDown / _FireOnResizeBorderEnd can
+        ; pick it up later.
+        this.svc.Start()
+        cbBorder := (w, h) => "resize-" w "x" h
+        this.svc.RegisterHwnd(12345, (*) => 0, (steps) => 0, cbBorder)
+        Assert.Equal(cbBorder, this.svc._widgets[1]["onResizeBorder"])
+    }
+
+    register_hwnd_with_default_min_size_uses_80_x_32()
+    {
+        ; Conservative floor used when the caller doesn't override.
+        ; The defaults are smaller than any real widget's FIXED_W ×
+        ; MIN_SCALE, so a future widget that forgets to pass
+        ; minW/minH still gets a sane lower bound that won't let
+        ; the user shrink the overlay into invisibility.
+        this.svc.Start()
+        this.svc.RegisterHwnd(12345)
+        Assert.Equal(80, this.svc._widgets[1]["minW"])
+        Assert.Equal(32, this.svc._widgets[1]["minH"])
+    }
+
+    register_hwnd_with_explicit_min_size_stores_them()
+    {
+        ; Plus widgets that want a tighter floor pass minW/minH at
+        ; RegisterHwnd time. The service stores them and feeds them
+        ; into OverlayResizeGeometry.ComputeNewSize during the
+        ; live drag.
+        this.svc.Start()
+        this.svc.RegisterHwnd(12345, "", "", (*) => 0, 200, 64)
+        Assert.Equal(200, this.svc._widgets[1]["minW"])
+        Assert.Equal(64,  this.svc._widgets[1]["minH"])
+    }
+
     ; ============================================================
     ; UnregisterHwnd
     ; ============================================================
@@ -251,9 +312,83 @@ class OverlayInteractionServiceTests extends TestCase
         this.svc.RegisterHwnd(12345)
         ; Simulates an ongoing drag on that hwnd
         this.svc._dragHwnd := 12345
+        this.svc._dragKind := "move"
         this.svc.UnregisterHwnd(12345)
         Assert.Equal(0, this.svc._dragHwnd,
             "Cancels ongoing drag when unregistering the target hwnd")
+        Assert.Equal("none", this.svc._dragKind,
+            "Drag kind also reset — a half-unregistered drag would"
+            . " leave the next _OnDragMove branching on stale state.")
+    }
+
+    unregister_hwnd_during_resize_clears_drag_kind()
+    {
+        ; Same as above but for a resize gesture. Pins the parity
+        ; between the two paths — a regression that handled only
+        ; one kind would leave _dragKind="resize" pointing nowhere.
+        this.svc.Start()
+        this.svc.RegisterHwnd(12345)
+        this.svc._dragHwnd := 12345
+        this.svc._dragKind := "resize"
+        this.svc.UnregisterHwnd(12345)
+        Assert.Equal(0, this.svc._dragHwnd)
+        Assert.Equal("none", this.svc._dragKind)
+    }
+
+    ; ============================================================
+    ; _FindWidget helper
+    ; ============================================================
+
+    find_widget_returns_widget_for_registered_hwnd()
+    {
+        ; _FindWidget is the lookup _OnLButtonDown uses to extract
+        ; the resize callback + min size. Pin the contract so a
+        ; refactor doesn't silently change its return shape.
+        this.svc.Start()
+        cbBorder := (w, h) => 0
+        this.svc.RegisterHwnd(12345, (*) => 0, (s) => 0, cbBorder, 200, 64)
+
+        widget := this.svc._FindWidget(12345)
+        Assert.True(widget is Map, "returns the widget Map")
+        Assert.Equal(12345,    widget["hwnd"])
+        Assert.Equal(cbBorder, widget["onResizeBorder"])
+        Assert.Equal(200,      widget["minW"])
+        Assert.Equal(64,       widget["minH"])
+    }
+
+    find_widget_returns_empty_string_for_unknown_hwnd()
+    {
+        this.svc.Start()
+        this.svc.RegisterHwnd(12345)
+        Assert.Equal("", this.svc._FindWidget(99999))
+    }
+
+    ; ============================================================
+    ; Drag kind state machine
+    ; ============================================================
+
+    initial_drag_kind_is_none()
+    {
+        ; A freshly constructed service has no gesture in flight.
+        ; This is what _OnDragMove relies on to know there's nothing
+        ; to dispatch — if the field defaulted to "move" or "resize"
+        ; the next WM_MOUSEMOVE could start moving a window the user
+        ; never clicked.
+        Assert.Equal("none", this.svc._dragKind)
+    }
+
+    stop_resets_drag_kind()
+    {
+        ; Symmetric to stop_clears_drag_state: a Stop() in the
+        ; middle of a resize must also clear the kind, so a later
+        ; Start() + LButtonDown can't pick up the stale "resize"
+        ; branch.
+        this.svc.Start()
+        this.svc._dragHwnd := 12345
+        this.svc._dragKind := "resize"
+        this.svc.Stop()
+        Assert.Equal(0,      this.svc._dragHwnd)
+        Assert.Equal("none", this.svc._dragKind)
     }
 
     ; ============================================================

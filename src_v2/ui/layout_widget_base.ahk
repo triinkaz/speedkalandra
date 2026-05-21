@@ -128,18 +128,34 @@ class LayoutWidgetBase extends WidgetBase
         try WinSetExStyle("+0x20", "ahk_id " wg.Hwnd)
 
         ; Register Hwnd with OverlayInteractionService so that
-        ; Ctrl+drag (move) and Ctrl+wheel (resize) work on layout
+        ; Ctrl+drag (move), Ctrl+wheel (scale), and Ctrl+drag-border
+        ; (resize-by-border, Plus widgets only) work on layout
         ; widgets. This Show() override does NOT call super, so the
         ; equivalent block from WidgetBase.Show has to be replicated
         ; here -- without it, the overlay becomes uninteractable
         ; (silent failure: the widget renders but ignores Ctrl-based
         ; input).
+        ;
+        ; The 4th argument is the resize-by-border callback. Only
+        ; widgets that define `_OnBorderResize` opt in to the
+        ; gesture; Classic widgets leave it "" and the service
+        ; skips the border hit-test entirely (no behavior change
+        ; for them). The 5th/6th arguments use the default 80×32
+        ; floor — conservative for every existing widget, can be
+        ; tuned per-widget by overriding _GetResizeMin in a future
+        ; pass if a Plus layout needs a tighter clamp.
         if (OverlayInteractionService.Instance != "")
+        {
+            borderResizeFn := HasMethod(this, "_OnBorderResize")
+                ? this._OnBorderResize.Bind(this)
+                : ""
             OverlayInteractionService.Instance.RegisterHwnd(
                 this._gui.Hwnd,
                 this._UpdatePositionFromGui.Bind(this),
-                this._OnWheelResize.Bind(this)
+                this._OnWheelResize.Bind(this),
+                borderResizeFn
             )
+        }
     }
 
     ; ============================================================
