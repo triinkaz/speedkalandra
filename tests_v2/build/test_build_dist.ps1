@@ -110,6 +110,17 @@ $mustFilter = @{
     "tests_v2\run_tests.ahk"           = "; AHK test runner"
     "tests_v2\unit\domain\dummy.ahk"   = "; nested test file"
     "tests_v2\build\test_build_dist.ps1" = "# self-test of this very script"
+    # Catch-all for data/ — anything under data/ that's not
+    # data/zones.csv must be filtered out, mirroring .gitignore's
+    # `data/* !data/zones.csv` rule. Two sentinels: a name not on
+    # any explicit exclude list (proves the catch-all works for
+    # future personal files we haven't anticipated), and a name
+    # matching the .gitignore `data/zone_totals*.txt` pattern.
+    "data\notes_for_myself.md"         = "# personal notes the user dropped here"
+    "data\zone_totals_2024.txt"        = "Mud Burrow=215000"
+    # exports/ is now wholesale excluded (was leaking before)
+    "exports\my_run_2026-05-20.json"   = '{"runs":[]}'
+    "exports\nested\sub_export.json"   = '{"runs":[]}'
 }
 
 function New-Sentinel {

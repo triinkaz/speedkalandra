@@ -5,11 +5,9 @@
 .DESCRIPTION
     Copies the project to a destination directory while excluding:
       - speedkalandra.ini         (personal config)
-      - data/personal_bests.ini   (user PBs)
-      - data/speedkalandra.log    (runtime log)
-      - data/runs/                (run history - new format)
-      - data/run_state.ini        (in-progress run state, if any)
-      - data/deaths.csv           (append-only death log)
+      - speedkalandra_zones.txt   (in-progress run zone totals)
+      - data/                     (everything; only data/zones.csv is shipped)
+      - exports/                  (user-generated JSON exports)
       - runs/                     (legacy CSV history at the root)
       - debug/                    (Client.txt and diagnostic dumps)
       - BKP/, _LIXEIRA/           (backups and removed files)
@@ -17,6 +15,10 @@
       - tests_v2/                 (AHK test suite + build self-test)
       - *.bak, *.tmp, *.swp, *~   (temp files)
       - this script + build-dist.bat themselves
+
+    The data/ rule mirrors .gitignore's `data/* !data/zones.csv` so
+    a hand-edited personal file inside data/ never ships even when
+    the explicit exclude list doesn't name it.
 
     Optionally compiles to .exe via Ahk2Exe and produces a .zip.
 
@@ -340,7 +342,8 @@ $ExcludeDirs = @(
     "BKP",
     "debug",
     "runs",                 # legacy CSV history at the root
-    "data\runs",            # new history written by RunHistoryRepository
+    "data\runs",            # explicit; also covered by the data/* catch-all below
+    "exports",              # user-generated JSON exports; personal play data
     ".git",
     ".github",              # CI workflows, issue templates: dev-only
     ".vscode",
@@ -348,6 +351,17 @@ $ExcludeDirs = @(
     "node_modules",
     "tests_v2",             # AHK test suite + build self-test: dev-only
     "SpeedKalandra-dist"    # in case the user runs this from inside it
+)
+
+# Files allowed to ship from inside data/. Everything else under
+# data/ is excluded by Test-IsInDataDirAndNotAllowed below. This
+# mirrors the .gitignore rule `data/* !data/zones.csv` so a
+# hand-edited data file (a future data/zone_totals_2024.txt, an
+# accidental data/notes.md, etc.) never silently ships in the
+# release — belt-and-suspenders on top of the explicit excludes
+# below.
+$AllowedInDataDir = @(
+    "data\zones.csv"
 )
 
 # Specific files (paths relative to source)
@@ -414,6 +428,21 @@ function Test-IsExcludedFile {
     return $false
 }
 
+# Catch-all defense for data/: returns $true for any file under
+# data/ that isn't on the $AllowedInDataDir whitelist. This is the
+# `data/* !data/zones.csv` rule from .gitignore, applied at build
+# time too — a personal file the user dropped into data/
+# (data/zone_totals_old.txt, etc.) doesn't ship even when the
+# explicit $ExcludeFiles list doesn't name it.
+function Test-IsInDataDirAndNotAllowed {
+    param([string]$relPath)
+    if (-not ($relPath -imatch '^data\\')) { return $false }
+    foreach ($allowed in $AllowedInDataDir) {
+        if ($relPath -ieq $allowed.Replace('/', '\')) { return $false }
+    }
+    return $true
+}
+
 # ============================================================
 # Copy files
 # ============================================================
@@ -431,6 +460,16 @@ Get-ChildItem -Path $SourceDir -Recurse -File | ForEach-Object {
     # Check whether the file sits inside an excluded directory
     $relDir = Split-Path -Parent $relPath
     if ($relDir -and (Test-IsExcludedDir -relPath $relDir)) {
+        $script:skipped++
+        if ($script:skippedSamples.Count -lt 5) {
+            $script:skippedSamples += $relPath
+        }
+        return
+    }
+
+    # Defensive: anything under data/ that's not on the allow list
+    # is excluded (mirrors .gitignore's `data/* !data/zones.csv`).
+    if (Test-IsInDataDirAndNotAllowed -relPath $relPath) {
         $script:skipped++
         if ($script:skippedSamples.Count -lt 5) {
             $script:skippedSamples += $relPath
@@ -524,11 +563,11 @@ OVERLAY INTERACTION:
 
 PERSISTED DATA (created on first run):
    speedkalandra.ini             configuration + in-progress run state
+   speedkalandra_zones.txt       zone totals of the in-progress run
    data/personal_bests.ini       PBs per zone + full run
    data/runs/{runId}.ini         history of finalized runs
    data/deaths.csv               append-only log of every death detected
    data/speedkalandra.log        execution log (rotated at 5 MB)
-   data/speedkalandra_zones.txt  zone totals of the in-progress run
 
 UPGRADING:
    Extract the new release over the existing folder. The release
