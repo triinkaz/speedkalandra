@@ -397,10 +397,26 @@ class SpeedKalandraApp
             )
         }
 
-        this.microWidget := MicroLayoutWidget(
-            this.bus, microPos, this._persistFn,
-            this.timer, this.xpService
-        )
+        ; Micro widget: Classic vs Plus chosen by cfg.layoutVariant.
+        ; Same WIDGET_ID slot in [Overlay] across both variants.
+        ; Plus re-injects zoneTracker / zonesCatalog / personalBest —
+        ; Classic only needed timer + xp because Lv N was its only
+        ; PB-independent payload.
+        if (this._cfg.layoutVariant = "plus")
+        {
+            this.microWidget := MicroLayoutPlusWidget(
+                this.bus, microPos, this._persistFn,
+                this.timer, this.zoneTracker, this.xpService,
+                this.zonesCatalog, this.personalBest
+            )
+        }
+        else
+        {
+            this.microWidget := MicroLayoutWidget(
+                this.bus, microPos, this._persistFn,
+                this.timer, this.xpService
+            )
+        }
 
         ; Steve widget: Classic vs Plus chosen by cfg.layoutVariant.
         ; Both classes share WIDGET_ID ("steveLayout") so the user's

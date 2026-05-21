@@ -189,7 +189,9 @@ class SpeedKalandraAppIntegrationTests extends TestCase
         "default_layout_variant_constructs_classic_steve_widget",
         "layout_variant_plus_in_ini_constructs_plus_steve_widget",
         "default_layout_variant_constructs_classic_compact_widget",
-        "layout_variant_plus_in_ini_constructs_plus_compact_widget"
+        "layout_variant_plus_in_ini_constructs_plus_compact_widget",
+        "default_layout_variant_constructs_classic_micro_widget",
+        "layout_variant_plus_in_ini_constructs_plus_micro_widget"
     ]
 
     ; ============================================================
@@ -1576,6 +1578,50 @@ class SpeedKalandraAppIntegrationTests extends TestCase
         Assert.True(app2.compactWidget is LayoutWidgetBase,
             "Plus extends LayoutWidgetBase — dispatched by OverlayModeApplier")
         Assert.False(app2.compactWidget is CompactLayoutWidget,
+            "Plus does NOT extend Classic (siblings under LayoutWidgetBase);"
+            . " inheritance from Classic would double-subscribe handlers.")
+
+        try app2.Stop()
+    }
+
+    default_layout_variant_constructs_classic_micro_widget()
+    {
+        ; Companion to the Steve / Compact tests — the third widget
+        ; also branches on cfg.layoutVariant. Default = Classic.
+        Assert.True(this.app.microWidget is MicroLayoutWidget,
+            "default cfg.layoutVariant=classic constructs Classic Micro")
+        Assert.False(this.app.microWidget is MicroLayoutPlusWidget,
+            "and not Plus")
+    }
+
+    layout_variant_plus_in_ini_constructs_plus_micro_widget()
+    {
+        ; Plus opt-in via INI — same scaffold as the Steve / Compact
+        ; Plus tests. Separate test so each widget's composition path
+        ; is independently validated.
+        try this.app.Stop()
+        this.app := ""
+
+        ini := IniFile(this.iniPath)
+        ini.Write("plus", "Layouts", "Variant")
+
+        secondClock := Fixtures.MakeFakeClock(2000000)
+        app2 := SpeedKalandraApp(Map(
+            "iniPath",          this.iniPath,
+            "zonesCsvPath",     this.zonesCsvPath,
+            "logPath",          this.logPath,
+            "runHistoryDir",    this.runHistoryDir,
+            "personalBestPath", this.pbPath,
+            "deathLogPath",     this.deathLogPath,
+            "headless",         true,
+            "clock",            secondClock
+        ))
+
+        Assert.True(app2.microWidget is MicroLayoutPlusWidget,
+            "cfg.layoutVariant=plus constructs Plus Micro")
+        Assert.True(app2.microWidget is LayoutWidgetBase,
+            "Plus extends LayoutWidgetBase — dispatched by OverlayModeApplier")
+        Assert.False(app2.microWidget is MicroLayoutWidget,
             "Plus does NOT extend Classic (siblings under LayoutWidgetBase);"
             . " inheritance from Classic would double-subscribe handlers.")
 

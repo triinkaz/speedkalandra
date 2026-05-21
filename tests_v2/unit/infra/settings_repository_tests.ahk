@@ -48,8 +48,6 @@ class SettingsRepositoryTests extends TestCase
         "save_load_preserves_window_both_locks_independently",
         "save_load_preserves_overlay_hover_hide",
         "save_load_preserves_overlay_positions",
-        "save_load_preserves_overlay_width_and_height",
-        "load_overlay_width_height_default_to_zero_when_missing",
 
         ; --- VendorRegexes invariants ---
         "save_truncates_long_vendor_regex_to_50_chars",
@@ -422,55 +420,6 @@ class SettingsRepositoryTests extends TestCase
         Assert.Near(1.5,  loadedPos.scale, 0.001)
         Assert.True(loadedPos.visible)
         Assert.False(loadedPos.centered)
-    }
-
-    save_load_preserves_overlay_width_and_height()
-    {
-        ; The resize-by-border interaction (PLUS_LAYOUTS_SPEC.md §7)
-        ; writes positive integer pixels into width/height; this
-        ; round-trip locks down that those survive Save/Load. INI
-        ; persists as integer (Round()) so a 480.6 in memory comes
-        ; back as 481, which is acceptable lossy precision for pixels.
-        mainIni := IniFile(Fixtures.TempPath("ini"))
-        repo := SettingsRepository(mainIni)
-
-        cfg := AppSettings.Defaults()
-        pos := OverlayPosition()
-        pos.left   := 10.0
-        pos.top    := 5.0
-        pos.width  := 520
-        pos.height := 96
-        cfg.overlay.SetPosition("compactLayout", pos)
-        repo.Save(cfg)
-
-        loaded := repo.Load()
-        loadedPos := loaded.overlay.GetPosition("compactLayout")
-        Assert.Equal(520.0, loadedPos.width)
-        Assert.Equal(96.0,  loadedPos.height)
-    }
-
-    load_overlay_width_height_default_to_zero_when_missing()
-    {
-        ; Old INIs (written before the width/height keys existed)
-        ; must load with the zero sentinel so widgets fall back to
-        ; FIXED_W/FIXED_H. Anti-regression against a future change
-        ; that would mistakenly default to FIXED_W in the repo —
-        ; the repo doesn't know about widget constants; the widget
-        ; resolves the sentinel.
-        mainIni := IniFile(Fixtures.TempPath("ini"))
-        ; Write only the legacy keys; do NOT touch width/height.
-        mainIni.Write("10.00", "Overlay", "compactLayout.left")
-        mainIni.Write("5.00",  "Overlay", "compactLayout.top")
-        mainIni.Write("1.00",  "Overlay", "compactLayout.scale")
-        mainIni.Write("1",     "Overlay", "compactLayout.visible")
-        mainIni.Write("0",     "Overlay", "compactLayout.centered")
-
-        repo := SettingsRepository(mainIni)
-        loaded := repo.Load()
-        loadedPos := loaded.overlay.GetPosition("compactLayout")
-
-        Assert.Equal(0.0, loadedPos.width,  "Missing width key defaults to 0 sentinel")
-        Assert.Equal(0.0, loadedPos.height, "Missing height key defaults to 0 sentinel")
     }
 
     ; ============================================================

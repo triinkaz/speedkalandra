@@ -7,12 +7,8 @@
 ;     behind (PoE2 receives the click). The overlay does not block
 ;     game interaction.
 ;   - With Ctrl: the overlay becomes interactive.
-;       * Left click on a registered Gui starts a DRAG by default
-;         (moves the whole window).
-;       * Left click on the right/bottom edge of a Gui that
-;         registered an `onResizeBorder` callback starts a RESIZE
-;         instead. The widget receives the final (w, h) on release.
-;         See PLUS_LAYOUTS_SPEC.md §7 and OverlayResizeGeometry.
+;       * Left click on a registered Gui starts a DRAG (moves the
+;         whole window).
 ;       * Mouse wheel over a registered Gui fires the onResize
 ;         callback (widget changes scale, scales everything inside).
 ;
@@ -51,7 +47,6 @@
 ;   svc := OverlayInteractionService(bus, headless := false)
 ;   svc.Start()    ; installs SetTimer poll + OnMessage hooks
 ;   svc.RegisterHwnd(myGui.Hwnd, () => mySaveCb(), (steps) => myResizeCb(steps))
-;   svc.RegisterHwnd(myGui.Hwnd, dragCb, wheelCb, borderCb, minW, minH)
 ;   svc.UnregisterHwnd(myGui.Hwnd)
 ;   svc.Stop()
 ;
@@ -116,21 +111,6 @@ class OverlayInteractionService
     _dragStartMouseY := 0
     _dragStartWinX   := 0
     _dragStartWinY   := 0
-    ; Drag kind. "none" while no operation is in progress; "move"
-    ; for a Ctrl-drag of the whole window; "resize" for a right/
-    ; bottom border drag. The same OnMessage handlers cover both
-    ; — _OnDragMove and _EndDrag branch on this field. Kind is
-    ; selected in _OnLButtonDown via OverlayResizeGeometry.HitTestBorder.
-    _dragKind        := "none"
-    ; Resize state (only meaningful while _dragKind = "resize").
-    ; _resizeMinW/H are the floor for the live drag — the widget
-    ; supplies them at RegisterHwnd time, OverlayResizeGeometry
-    ; clamps against them inside ComputeNewSize.
-    _resizeEdge      := ""
-    _resizeStartW    := 0
-    _resizeStartH    := 0
-    _resizeMinW      := 0
-    _resizeMinH      := 0
     ; Last cursor position the drag handler reacted to. Used to skip
     ; redundant WinMove when Windows replays a coalesced WM_MOUSEMOVE
     ; with unchanged coords.
@@ -209,11 +189,10 @@ class OverlayInteractionService
             return
         this._enabled := false
 
-        ; Cancel any drag/resize in progress WITHOUT firing the
-        ; callbacks: teardown is not a commit. The widget keeps the
-        ; position/size it persisted on the last completed gesture.
+        ; Cancel any drag in progress WITHOUT firing the callback:
+        ; teardown is not a commit. The widget keeps the position
+        ; it persisted on the last completed gesture.
         this._dragHwnd := 0
-        this._dragKind := "none"
         this._CleanupDrag()
 
         if this._headless
@@ -230,26 +209,14 @@ class OverlayInteractionService
     ; ============================================================
     ; Public API: Register/Unregister
     ;
-    ;   onDragEnd      : callable() or "" — fired when the user
-    ;                    releases LButton after a normal drag (move).
-    ;                    Use to persist the new widget position.
-    ;   onResize       : callable(steps) or "" — fired on Ctrl+wheel
-    ;                    (steps = +1 wheel up, -1 down, etc.).
-    ;   onResizeBorder : callable(newW, newH) or "" — fired when the
-    ;                    user releases LButton after a right/bottom
-    ;                    border drag. Use to persist position.width/
-    ;                    height. If "", the widget is drag-only and
-    ;                    the border hit-test is skipped in
-    ;                    _OnLButtonDown (zero cost for Classic widgets).
-    ;   minW, minH     : floor in pixels for the resize-by-border
-    ;                    interaction. Used by OverlayResizeGeometry.
-    ;                    ComputeNewSize to clamp the live drag.
-    ;                    Defaults 80×32 are conservative — widgets
-    ;                    typically pass their own FIXED_W/FIXED_H ×
-    ;                    MIN_SCALE.
+    ;   onDragEnd : callable() or "" — fired when the user releases
+    ;               LButton after a Ctrl-drag. Use to persist the
+    ;               new widget position.
+    ;   onResize  : callable(steps) or "" — fired on Ctrl+wheel
+    ;               (steps = +1 wheel up, -1 down, etc.).
     ; ============================================================
 
-    RegisterHwnd(hwnd, onDragEnd := "", onResize := "", onResizeBorder := "", minW := 80, minH := 32)
+    RegisterHwnd(hwnd, onDragEnd := "", onResize := "")
     {
         if (hwnd = 0)
             return
@@ -259,12 +226,9 @@ class OverlayInteractionService
                 return
         }
         this._widgets.Push(Map(
-            "hwnd",           hwnd,
-            "onDragEnd",      onDragEnd,
-            "onResize",       onResize,
-            "onResizeBorder", onResizeBorder,
-            "minW",           minW,
-            "minH",           minH
+            "hwnd",      hwnd,
+            "onDragEnd", onDragEnd,
+            "onResize",  onResize
         ))
         OutputDebug("OverlayInteractionService: RegisterHwnd " hwnd " (total=" this._widgets.Length ")")
 
@@ -280,11 +244,9 @@ class OverlayInteractionService
             return
         if (this._dragHwnd = hwnd)
         {
-            ; Drag/resize target was unregistered mid-gesture (widget
-            ; hidden, layout swap). Cancel without firing the
-            ; corresponding callback.
+            ; Drag target was unregistered mid-gesture (widget hidden,
+            ; layout swap). Cancel without firing the callback.
             this._dragHwnd := 0
-            this._dragKind := "none"
             this._CleanupDrag()
         }
         for i, w in this._widgets
@@ -430,65 +392,36 @@ class OverlayInteractionService
     }
 
     ; ============================================================
-    ; OnMessage WM_LBUTTONDOWN — manual drag or resize-by-border
+    ; OnMessage WM_LBUTTONDOWN — manual drag
     ;
     ; The decision tree:
-    ;   no Ctrl                           → ignore (click-through)
-    ;   Ctrl + unregistered hwnd          → ignore
-    ;   Ctrl + registered + on border +
-    ;     has onResizeBorder callback     → start RESIZE
-    ;   Ctrl + registered                 → start DRAG (default)
-    ;
-    ; The border hit-test is gated on the callback so Classic
-    ; widgets (no callback registered) skip the WinGetPos +
-    ; HitTestBorder call entirely — no behavior change for them.
+    ;   no Ctrl                  → ignore (click-through)
+    ;   Ctrl + unregistered hwnd → ignore
+    ;   Ctrl + registered hwnd   → start DRAG
     ; ============================================================
 
     _OnLButtonDown(wParam, lParam, msg, hwnd)
     {
         if !this._ctrlDown
             return
-        widget := this._FindWidget(hwnd)
-        if (widget = "")
+        if !this._IsRegistered(hwnd)
             return
 
-        mx := 0, my := 0, wx := 0, wy := 0, ww := 0, wh := 0
+        mx := 0, my := 0, wx := 0, wy := 0
         try
         {
             MouseGetPos(&mx, &my)
-            WinGetPos(&wx, &wy, &ww, &wh, "ahk_id " hwnd)
+            WinGetPos(&wx, &wy, , , "ahk_id " hwnd)
         }
-
-        ; Border hit-test only if the widget opted in to resize.
-        ; The callback is the opt-in signal — a widget that registered
-        ; "" stays drag-only and the geometry is never queried.
-        edge := ""
-        if widget.Has("onResizeBorder") && IsObject(widget["onResizeBorder"])
-            edge := OverlayResizeGeometry.HitTestBorder(mx, my, wx, wy, ww, wh)
 
         this._dragHwnd        := hwnd
         this._dragStartMouseX := mx
         this._dragStartMouseY := my
+        this._dragStartWinX   := wx
+        this._dragStartWinY   := wy
         this._lastMouseX      := mx
         this._lastMouseY      := my
-
-        if (edge != "")
-        {
-            this._dragKind     := "resize"
-            this._resizeEdge   := edge
-            this._resizeStartW := ww
-            this._resizeStartH := wh
-            this._resizeMinW   := widget["minW"]
-            this._resizeMinH   := widget["minH"]
-            OutputDebug("OverlayInteractionService: resize start hwnd=" hwnd " edge=" edge)
-        }
-        else
-        {
-            this._dragKind     := "move"
-            this._dragStartWinX := wx
-            this._dragStartWinY := wy
-            OutputDebug("OverlayInteractionService: drag start hwnd=" hwnd)
-        }
+        OutputDebug("OverlayInteractionService: drag start hwnd=" hwnd)
 
         ; Take mouse capture explicitly. Windows normally does this
         ; in DefWindowProc on LBUTTONDOWN, but we return 0 below to
@@ -502,7 +435,7 @@ class OverlayInteractionService
         ; Install drag plumbing. Handlers are torn down in _EndDrag /
         ; _CleanupDrag, so they exist only while a gesture is in
         ; progress — no risk of duplicate handlers across multiple
-        ; drags or resizes.
+        ; drags.
         try OnMessage(OverlayInteractionService.WM_MOUSEMOVE, this._dragMoveFn)
         try OnMessage(OverlayInteractionService.WM_LBUTTONUP,  this._dragUpFn)
         try SetTimer(this._dragWatchdogFn, OverlayInteractionService.DRAG_WATCHDOG_MS)
@@ -572,28 +505,14 @@ class OverlayInteractionService
         return false
     }
 
-    ; Returns the widget Map (with hwnd / onDragEnd / onResize /
-    ; onResizeBorder / minW / minH) for the given hwnd, or "" if
-    ; the hwnd isn't registered. _OnLButtonDown uses this to extract
-    ; the resize callback + floor without doing a second loop.
-    _FindWidget(hwnd)
-    {
-        for w in this._widgets
-        {
-            if (w["hwnd"] = hwnd)
-                return w
-        }
-        return ""
-    }
-
     ; ============================================================
     ; Drag handlers (event-driven; see PHILOSOPHY)
     ; ============================================================
 
-    ; WM_MOUSEMOVE: moves OR resizes the dragged window, depending
-    ; on _dragKind. Windows already skips messages when the cursor
-    ; didn't move; the _lastMouseX/Y guard only catches a coalesced
-    ; replay with unchanged coords (rare but cheap to defend against).
+    ; WM_MOUSEMOVE: moves the dragged window. Windows already skips
+    ; messages when the cursor didn't move; the _lastMouseX/Y guard
+    ; only catches a coalesced replay with unchanged coords (rare
+    ; but cheap to defend against).
     _OnDragMove(wParam, lParam, msg, hwnd)
     {
         if (this._dragHwnd = 0)
@@ -607,26 +526,10 @@ class OverlayInteractionService
             this._lastMouseX := cx
             this._lastMouseY := cy
 
-            if (this._dragKind = "resize")
-            {
-                dx := cx - this._dragStartMouseX
-                dy := cy - this._dragStartMouseY
-                newSize := OverlayResizeGeometry.ComputeNewSize(
-                    this._resizeStartW, this._resizeStartH,
-                    dx, dy, this._resizeEdge,
-                    this._resizeMinW, this._resizeMinH)
-                ; WinMove(x, y, w, h) — omit x/y to keep top-left
-                ; anchored. Only the right/bottom edge moves under
-                ; this gesture (PLUS_LAYOUTS_SPEC.md §7).
-                WinMove(, , newSize["w"], newSize["h"], "ahk_id " this._dragHwnd)
-            }
-            else
-            {
-                WinMove(this._dragStartWinX + (cx - this._dragStartMouseX),
-                        this._dragStartWinY + (cy - this._dragStartMouseY),
-                        , ,
-                        "ahk_id " this._dragHwnd)
-            }
+            WinMove(this._dragStartWinX + (cx - this._dragStartMouseX),
+                    this._dragStartWinY + (cy - this._dragStartMouseY),
+                    , ,
+                    "ahk_id " this._dragHwnd)
         }
     }
 
@@ -654,25 +557,19 @@ class OverlayInteractionService
     }
 
     ; Ends the gesture normally: tears down the OnMessage handlers
-    ; and watchdog, then fires the appropriate callback (onDragEnd
-    ; for move, onResizeBorder for resize). Idempotent — safe to call
-    ; from both _OnDragUp and _DragWatchdog if the user releases
-    ; LBUTTON between watchdog ticks.
+    ; and watchdog, then fires the onDragEnd callback. Idempotent —
+    ; safe to call from both _OnDragUp and _DragWatchdog if the user
+    ; releases LBUTTON between watchdog ticks.
     _EndDrag()
     {
         if (this._dragHwnd = 0)
             return
         finishedHwnd := this._dragHwnd
-        finishedKind := this._dragKind
         this._dragHwnd := 0
-        this._dragKind := "none"
         this._CleanupDrag()
-        OutputDebug("OverlayInteractionService: " finishedKind " end hwnd=" finishedHwnd)
+        OutputDebug("OverlayInteractionService: drag end hwnd=" finishedHwnd)
 
-        if (finishedKind = "resize")
-            this._FireOnResizeBorderEnd(finishedHwnd)
-        else
-            this._FireOnDragEnd(finishedHwnd)
+        this._FireOnDragEnd(finishedHwnd)
     }
 
     ; Removes the drag-time OnMessage handlers, the watchdog timer
@@ -697,29 +594,6 @@ class OverlayInteractionService
             {
                 if IsObject(w["onDragEnd"])
                     try w["onDragEnd"].Call()
-                return
-            }
-        }
-    }
-
-    ; Fires onResizeBorder with the final (w, h) read from the live
-    ; window. The widget uses these to persist position.width/height.
-    ; Skips the call if the read failed (fw/fh stayed at 0) — better
-    ; to leave the widget at its last known size than to overwrite
-    ; with garbage.
-    _FireOnResizeBorderEnd(hwnd)
-    {
-        fw := 0, fh := 0
-        try WinGetPos(, , &fw, &fh, "ahk_id " hwnd)
-        if (fw <= 0 || fh <= 0)
-            return
-        for w in this._widgets
-        {
-            if (w["hwnd"] = hwnd)
-            {
-                cb := w.Has("onResizeBorder") ? w["onResizeBorder"] : ""
-                if IsObject(cb)
-                    try cb.Call(fw, fh)
                 return
             }
         }

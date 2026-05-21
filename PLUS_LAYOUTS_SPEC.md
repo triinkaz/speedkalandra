@@ -14,13 +14,13 @@ and this document disagree, the disagreement is resolved here first.
 
 - Three new widget classes co-existing with the current Classic widgets
 - Feature flag in `AppSettings` + checkbox in `SettingsDialog`
-- New resize-by-border interaction (applies to Plus variants only — see §10)
 - Palette aliases (`pb`, `map`, `loading`, `town`)
 
 **Out of scope:**
 - Removing or modifying Classic widgets
 - Changing the run lifecycle, persistence formats, or services
 - Per-widget granular toggles (single flag controls all three)
+- Resize-by-dragging-borders — see §7 below.
 
 ---
 
@@ -173,76 +173,47 @@ shows `zoneTime + runTime`, both with the conditional color treatment.
 
 ## 6. Layout responsiveness
 
-**a) Block positioning** — All inner-block coordinates are computed as
-**percentages of the current widget width/height**, not as fixed pixel offsets.
-When the widget is resized (via Ctrl+drag or Ctrl+wheel), blocks reflow proportionally.
+**a) Block positioning** — Originally specified as percentages of the
+current widget width/height for proportional reflow under resize. The
+resize-by-border interaction that motivated this was removed (see §7
+below), and the actual implementation uses static pixel offsets scaled
+by `_position.scale`. The Ctrl+wheel scale change reaches every offset
+uniformly, so there is no broken case left to fix — percentages are
+not needed.
 
 **b) Text overflow** — Long zone names truncate with trailing `...` (e.g.
 `The Twilight Strand and...`). No font shrinking. The truncation point is
-computed using `_EstimateTextW` (the same `chars × fontSize × 0.6` estimator
-already used by Compact Classic).
+computed using `_EstimateTextW` (the same `chars × fontSize × 0.6`
+estimator already used by Compact Classic).
 
 **c) Steve Plus dimensions** — `FIXED_W := 380`, `FIXED_H := 64`, same as
 Steve Classic. The faixa Map/Load/Town footer is **4 px** at scale 1.0.
 
 ---
 
-## 7. Resize by dragging borders (new interaction)
+## 7. Resize by dragging borders — **ABANDONED**
 
-A new interaction available on Plus widgets:
+This section described a Ctrl+drag-border interaction that let the user
+resize Plus widgets along the right and bottom edges, with the resulting
+width/height persisted to `[Overlay].<widgetId>.width` / `.height`.
 
-- **Active borders**: right edge and bottom edge only (no left/top, no corners).
-- **Trigger**: hold `Ctrl`, click and drag the border. Cursor changes to
-  resize cursor when hovering border with Ctrl held.
-- **Aspect ratio**: free (right drag affects width only; bottom drag affects
-  height only). User can produce non-default aspect ratios deliberately.
-- **Minimum size**: drag stops at the smallest valid size for the current
-  `scale`. The floor is `(FIXED_W × scale, FIXED_H × scale)` — below that,
-  content cannot fit even with reflow. Further drag is ignored.
-- **Maximum size**: unbounded (the user can make the widget arbitrarily large).
-- **Persistence**: new fields `width` and `height` per widget in `[Overlay]` INI:
-  ```
-  [Overlay]
-  compactLayout.left=10.0
-  compactLayout.top=1.5
-  compactLayout.scale=1.0
-  compactLayout.visible=1
-  compactLayout.centered=0
-  compactLayout.width=480     ; new — pixels at scale 1.0
-  compactLayout.height=120    ; new — pixels at scale 1.0
-  ```
-  Default values (when key missing): `width=FIXED_W`, `height=FIXED_H`.
+The feature was implemented, used in production for a single debug
+session, and removed in full. See `CHANGELOG.md` under `### Removed`
+for the three concrete problems that motivated the removal (border
+hit-test conflicting with the V1/V2/V3 button column, missing
+proportional reflow, redundancy with Ctrl+wheel scaling). Listed under
+GSG §17 anti-regression so it can't drift back in.
+
+Scroll wheel (`_OnWheelResize` in `LayoutWidgetBase`) is the only
+resize mechanism for both Classic and Plus widgets.
 
 ---
 
-## 8. Interaction between `scale` and `width/height`
+## 8. Interaction between `scale` and `width/height` — **ABANDONED**
 
-`scale` and `width/height` are **orthogonal**: they control different aspects
-of the widget and never overwrite each other.
-
-| Mechanism | Controls |
-|---|---|
-| `scale` (Ctrl+wheel) | **Typography**: font size, line thickness, internal padding, chip dimensions. Think "zoom of the content". |
-| `width` / `height` (Ctrl+drag) | **Container size**: the outer rectangle. Content reflows to fill. |
-
-**Resulting behaviors:**
-
-| User action | Effect on widget |
-|---|---|
-| Ctrl+wheel up | Font and padding grow. If the new content size exceeds current `width × height`, container auto-expands to accommodate (content never truncates from a wheel-up). |
-| Ctrl+wheel down | Font and padding shrink. Container stays at current `width × height` (extra space appears as empty padding around content). |
-| Ctrl+drag right/bottom expanding | Container grows. Content reflows: blocks gain margin, distribution bar stretches, but **font size does not change**. |
-| Ctrl+drag right/bottom shrinking | Container shrinks. Content compresses (less padding, blocks tighter). Stops at floor = `(FIXED_W × scale, FIXED_H × scale)`. Further drag ignored. |
-| Ctrl+wheel down while already at floor for current scale | First reduces scale (which also reduces the floor). If scale is already at its minimum, further wheel-down ignored. |
-
-**Floor formula**:
-```
-minW = FIXED_W * max(scale, MIN_SCALE)
-minH = FIXED_H * max(scale, MIN_SCALE)
-```
-
-`MIN_SCALE` is the same minimum already used by Classic for Ctrl+wheel
-(typically 0.5; verify in `LayoutWidgetBase` during implementation).
+This section described how the resize-by-border interaction (§7) was
+supposed to compose with Ctrl+wheel scaling. Both fields are gone—
+`scale` is the only knob.
 
 ---
 
@@ -254,16 +225,7 @@ minH = FIXED_H * max(scale, MIN_SCALE)
 Variant=classic
 ```
 
-`[Overlay]` gains two new keys per widget (back-compat: missing keys
-default to `FIXED_W` / `FIXED_H`):
-```
-[Overlay]
-<widgetId>.width=<int>
-<widgetId>.height=<int>
-```
-
-`SettingsRepository._LoadOverlay` / `_SaveOverlay` extended to read/write
-these. `OverlayPosition` value object gains `width` / `height` fields.
+The `[Overlay]` section is unchanged from Classic (`<widgetId>.{left,top,scale,visible,centered}` + `hoverHide`). Earlier drafts of this spec added `width` / `height` keys per widget for the resize-by-border interaction; both keys were removed along with the feature itself (see §7).
 
 ---
 
@@ -278,14 +240,8 @@ Each step is one session. Don't combine.
    branch in `app.ahk` composition root. Both branches still instantiate
    the Classic widgets (no Plus class exists yet — visual no-op, tests
    prove the wiring).
-3. **`OverlayPosition.width/height`** + repository round-trip:
-   data fields, INI read/write, tests. No UI changes yet — the new fields
-   default to `FIXED_W` / `FIXED_H` so Classic widgets ignore them. The
-   resize-by-border interaction itself comes later.
-4. **Resize-by-border interaction**: new service or extension of
-   `OverlayInteractionService` to handle right/bottom edge drag. Includes
-   the floor computation and the orthogonality with `scale`. Tests at the
-   service level (pure geometry, no real Gui).
+3. ~~**`OverlayPosition.width/height`** + repository round-trip~~ — reverted with the resize-by-border feature (see §7).
+4. ~~**Resize-by-border interaction**~~ — reverted (see §7).
 5. **Steve Plus**: smallest of the three. Re-injects `loadingTotals`,
    gains chips + PB-per-act chip + 4px distribution footer + mono timer.
    Live in production behind the flag.
@@ -308,9 +264,8 @@ Each step is one session. Don't combine.
 - `cfg.layoutVariant` is read **once at boot**. The composition root reads
   it during `__New` and instantiates one variant or the other. Mid-run
   changes do not take effect — the toast tells the user to restart.
-- The new `width` / `height` fields default to `FIXED_W` / `FIXED_H`, not
-  to zero. A user opening an old INI must see Classic widgets at their
-  original size, not collapsed to nothing.
+- **Resize-by-border (§7) was abandoned** and is now in GSG §17 as an
+  anti-regression item. Scroll wheel is the only resize mechanism.
 
 ---
 

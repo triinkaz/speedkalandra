@@ -7,7 +7,6 @@
 ;   - scale:        float [0.5..3.0]   (clamp via FromMap._GetScale)
 ;   - visible:      bool
 ;   - centered:     bool
-;   - width/height: float >= 0         (pixels; 0 = sentinel "use widget's FIXED_*")
 ;
 ; OverlayLayout: Map<widgetId, OverlayPosition> collection + hoverHide
 ;   - Defaults with compactLayout and microLayout pre-populated
@@ -22,7 +21,6 @@ class OverlayPositionTests extends TestCase
         "defaults_scale_is_one",
         "defaults_visible_is_true",
         "defaults_centered_is_false",
-        "defaults_width_height_are_zero_sentinel",
 
         ; --- left/top setter clamps ---
         "left_setter_clamps_below_zero_to_zero",
@@ -32,12 +30,6 @@ class OverlayPositionTests extends TestCase
         "left_setter_accepts_value_in_range",
         "left_setter_treats_non_number_as_zero",
 
-        ; --- width/height setter clamps ---
-        "width_setter_clamps_negative_to_zero",
-        "height_setter_clamps_negative_to_zero",
-        "width_setter_accepts_large_positive_value",
-        "width_setter_treats_non_number_as_zero",
-
         ; --- FromMap ---
         "from_map_reads_all_fields",
         "from_map_clamps_scale_below_min",
@@ -45,8 +37,6 @@ class OverlayPositionTests extends TestCase
         "from_map_clamps_left_top_to_safe_range",
         "from_map_throws_type_error_on_non_object",
         "from_map_uses_defaults_for_missing_keys",
-        "from_map_reads_width_height",
-        "from_map_clamps_negative_width_height_to_zero",
 
         ; --- ToMap ---
         "to_map_serializes_all_fields",
@@ -77,16 +67,6 @@ class OverlayPositionTests extends TestCase
     defaults_centered_is_false()
     {
         Assert.False(OverlayPosition().centered)
-    }
-
-    defaults_width_height_are_zero_sentinel()
-    {
-        ; 0 is the sentinel for "not configured” — widgets fall
-        ; back to their FIXED_W/FIXED_H. See overlay_layout.ahk
-        ; header and PLUS_LAYOUTS_SPEC.md §7.
-        op := OverlayPosition()
-        Assert.Equal(0.0, op.width)
-        Assert.Equal(0.0, op.height)
     }
 
     ; ============================================================
@@ -133,37 +113,6 @@ class OverlayPositionTests extends TestCase
         op := OverlayPosition()
         op.left := "abc"
         Assert.Equal(0.0, op.left)
-    }
-
-    width_setter_clamps_negative_to_zero()
-    {
-        op := OverlayPosition()
-        op.width := -50
-        Assert.Equal(0.0, op.width)
-    }
-
-    height_setter_clamps_negative_to_zero()
-    {
-        op := OverlayPosition()
-        op.height := -1
-        Assert.Equal(0.0, op.height)
-    }
-
-    width_setter_accepts_large_positive_value()
-    {
-        ; No upper bound: the resize-by-border interaction lets the
-        ; user expand the widget arbitrarily. A 4K monitor can
-        ; legitimately host a 3000+ px wide overlay.
-        op := OverlayPosition()
-        op.width := 3000
-        Assert.Equal(3000.0, op.width)
-    }
-
-    width_setter_treats_non_number_as_zero()
-    {
-        op := OverlayPosition()
-        op.width := "junk"
-        Assert.Equal(0.0, op.width)
     }
 
     ; ============================================================
@@ -218,20 +167,6 @@ class OverlayPositionTests extends TestCase
         Assert.True(op.visible)
     }
 
-    from_map_reads_width_height()
-    {
-        op := OverlayPosition.FromMap(Map("width", 480, "height", 120))
-        Assert.Equal(480.0, op.width)
-        Assert.Equal(120.0, op.height)
-    }
-
-    from_map_clamps_negative_width_height_to_zero()
-    {
-        op := OverlayPosition.FromMap(Map("width", -10, "height", -1))
-        Assert.Equal(0.0, op.width)
-        Assert.Equal(0.0, op.height)
-    }
-
     ; ============================================================
     ; ToMap
     ; ============================================================
@@ -244,8 +179,6 @@ class OverlayPositionTests extends TestCase
         op.scale    := 1.5
         op.visible  := false
         op.centered := true
-        op.width    := 480
-        op.height   := 120
 
         m := op.ToMap()
         Assert.Equal(10.0,  m["left"])
@@ -253,8 +186,6 @@ class OverlayPositionTests extends TestCase
         Assert.Equal(1.5,   m["scale"])
         Assert.Equal(false, m["visible"])
         Assert.Equal(true,  m["centered"])
-        Assert.Equal(480.0, m["width"])
-        Assert.Equal(120.0, m["height"])
     }
 
     to_map_from_map_roundtrip()
@@ -265,8 +196,6 @@ class OverlayPositionTests extends TestCase
         original.scale    := 2.0
         original.visible  := false
         original.centered := true
-        original.width    := 520
-        original.height   := 96
 
         recovered := OverlayPosition.FromMap(original.ToMap())
         Assert.Equal(original.left,     recovered.left)
@@ -274,8 +203,6 @@ class OverlayPositionTests extends TestCase
         Assert.Equal(original.scale,    recovered.scale)
         Assert.Equal(original.visible,  recovered.visible)
         Assert.Equal(original.centered, recovered.centered)
-        Assert.Equal(original.width,    recovered.width)
-        Assert.Equal(original.height,   recovered.height)
     }
 }
 

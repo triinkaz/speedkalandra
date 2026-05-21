@@ -41,14 +41,6 @@
 ; consults area level, and refreshing the XP chip color on area
 ; changes keeps it accurate without an extra tick wait.
 ;
-; RESIZE HOOK:
-;   _OnBorderResize(newW, newH) — fired by OverlayInteractionService
-;   via the wiring in LayoutWidgetBase.Show (fase 5B). Persists
-;   width/height into position and rebuilds the layout. ReRender is
-;   heavy (Hide + Show) but keeps the code simple — incremental
-;   in-place re-layout would be a future optimization if the live
-;   drag stutters on large widgets.
-;
 ; CONSTRUCTION:
 ;   widget := CompactLayoutPlusWidget(
 ;       bus, position, onPersist,
@@ -66,34 +58,95 @@ class CompactLayoutPlusWidget extends LayoutWidgetBase
     static FIXED_H := 96
 
     ; BASE layout (scale=1.0). _BuildGui multiplies by scale.
+    ;
+    ; Vertical budget at base size (FIXED_H=96):
+    ;   pad_top(2) + LINE1(14) + gap(6) + BLOCK(50) + gap(4)
+    ;     + CHIP(12) + gap(2) + BAR(6) + pad_bottom(0) = 96
+    ;
+    ; Two design moves bought the visible LINE1→BLOCK and
+    ; BLOCK→CHIP gaps the user asked for:
+    ;   - FONT_ZONE dropped from 11pt to 10pt, shrinking LINE1
+    ;     to h=14 (Segoe UI 10pt fits cleanly).
+    ;   - FONT_BLOCK_TIMER dropped from 16pt to 14pt, shrinking
+    ;     BLOCK from 54 to 50 without losing the mono-glyph room
+    ;     (defensive floor: timerH >= fontTimer+6=20, exact match
+    ;     at bh=50).
+    ; The 8 px reclaimed pay for: gap LINE1→BLOCK 4→6,
+    ; gap BLOCK→CHIP 2→4.
+    ;
+    ; Three constraints drive the sizing:
+    ;
+    ; 1. BLOCK >= 50. With fontTimer=14, the internal stack fits:
+    ;    header pad(4) + header(11) + gap(1) + timer(20=floor)
+    ;    + gap(2) + pb(10) + pad(2) = 50. Reducing BLOCK below 50
+    ;    triggers the defensive floor and overflows into the PB
+    ;    strip.
+    ;
+    ; 2. CHIP >= 12 because AHK Text controls don't auto-clip the
+    ;    bounding box to font line height — a control with h=10
+    ;    and a font that needs ~12 px of vertical room renders
+    ;    the top of each letter and crops the bottom.
+    ;
+    ; 3. LINE1 = 14 with FONT_ZONE = 10. Segoe UI 10pt has total
+    ;    line height ~13 px including ascenders and descenders.
+    ;    A box of 14 fits comfortably with 1 px of slack and
+    ;    doesn't clip 'p' / 'g' / 'y' / 'q' descenders.
+    ;
+    ; The chip→bar gap is implicit (runtime barY = this._h - barH
+    ; = 90, chip ends at 88, gap = 2 px).
+    ;
+    ; Known limitation: at scale < ~0.7, the rounded pads drop
+    ;    below the threshold AHK needs for non-clipped Windows
+    ;    rendering. The widget is designed for scale 0.8-1.5;
+    ;    outside that range the layout starts to break visually.
     static MARGIN_X     := 12
     static STRIPE_H     := 3
 
-    ; LINE1: ACT label + zone name
-    static LINE1_Y      := 6
+    ; LINE1: ACT label + zone name.
+    ;
+    ; LINE1_Y = 3 (not 2) so the text control doesn't overlap the
+    ; accent stripe (y=0..STRIPE_H=3).
+    ;
+    ; LINE1_H = 18 (not 14) because `SetFont("sN")` is in POINTS
+    ; while h is in PIXELS — a font of N pt occupies roughly
+    ; N * 96/72 = 1.33N pixels at the standard 96 DPI, plus
+    ; descenders. FONT_ZONE=10 pt ≈ 13.3 px glyph height + ~3 px
+    ; descender for 'p'/'g'/'y' = ~17 px total. h=14 was clipping.
+    ; h=18 gives ~1 px of slack. The line1_* controls also use
+    ; 0x200 (vertical center) so the text sits centered in the
+    ; box rather than top-aligned (which clips descenders first).
+    static LINE1_Y      := 3
     static LINE1_H      := 18
     static ACT_W        := 50    ; "ACT 1"
     static ACT_ZONE_GAP := 6
 
-    ; BLOCKS (ZONE / RUN, centered, side by side)
+    ; BLOCKS (ZONE / RUN, centered, side by side).
+    ; BLOCK_Y=26 gives a 5 px gap above the block (LINE1 ends at
+    ; y=21, BLOCK starts at y=26). The 2 px came from reducing
+    ; BAR_H from 6 to 4 — a thinner distribution footer is the
+    ; least-bad trade-off because the bar is decorative (color
+    ; segments only, no text labels in Plus) and stays visible
+    ; at 4 px.
     static BLOCK_Y      := 26
-    static BLOCK_H      := 42
+    static BLOCK_H      := 50
     static BLOCK_W      := 110   ; each block; total = 2 * 110 + gap
     static BLOCK_GAP    := 14
-    static BLOCK_HEADER_H := 11  ; "ZONE" / "RUN" label
-    static BLOCK_TIMER_H  := 18  ; mono timer
-    static BLOCK_PB_H     := 11  ; "PB MM:SS" sub-label
 
     ; CHIPS (mortes + XP)
-    static CHIP_Y       := 70
+    static CHIP_Y       := 76    ; block ends y=72, gap=4 to here
     static CHIP_H       := 12
     static CHIP_DEATHS_W := 40
     static CHIP_XP_W     := 22
     static CHIP_GAP      := 8
 
-    ; FOOTER distribution bar
-    static BAR_Y := 86
-    static BAR_H := 6
+    ; FOOTER distribution bar. BAR_Y is informational — _BuildGui
+    ; uses runtime `this._h - barH` so the bar always sits at the
+    ; bottom regardless of resize-by-border height.
+    ; BAR_H=4 (was 6) to free 2 px for the LINE1→BLOCK gap. The
+    ; bar is decorative color-only (no labels) in Plus, so a
+    ; thinner footer remains legible.
+    static BAR_Y := 92
+    static BAR_H := 4
 
     ; Vendor V1/V2/V3 column (right side) — same dimensions as Classic
     ; so the visual signature is preserved across the toggle.
@@ -102,11 +155,18 @@ class CompactLayoutPlusWidget extends LayoutWidgetBase
     static BTN_VGAP     := 3
     static BTN_MARGIN_R := 4
 
-    ; Fonts at scale=1.0
+    ; Fonts at scale=1.0.
+    ;   FONT_ZONE: 11→10 to free LINE1 vertical pixels for the
+    ;     LINE1→BLOCK gap.
+    ;   FONT_BLOCK_TIMER: 16→14 to shrink BLOCK from 54 to 50,
+    ;     freeing pixels for the BLOCK→CHIP gap. Timer remains
+    ;     dominant and legible in the block — 14pt mono Consolas
+    ;     is still substantially larger than the surrounding
+    ;     UI labels.
     static FONT_ACT     := 9
-    static FONT_ZONE    := 11
+    static FONT_ZONE    := 10
     static FONT_BLOCK_HEADER := 7
-    static FONT_BLOCK_TIMER  := 16   ; mono
+    static FONT_BLOCK_TIMER  := 14   ; mono
     static FONT_BLOCK_PB     := 8
     static FONT_CHIP    := 9
     static FONT_BTN     := 8
@@ -253,12 +313,18 @@ class CompactLayoutPlusWidget extends LayoutWidgetBase
         this._BuildAccentStripe(0, 0, w, stripeH)
 
         ; ============ LINE1: ACT + zone ============
+        ; 0x200 = SS_CENTERIMAGE = vertical center alignment.
+        ; Without it, AHK Text controls top-align the glyph, which
+        ; clips descenders ('p' in "Encampment") at the bottom edge
+        ; if h is close to the font's actual pixel line height.
+        ; With 0x200, the glyph centers in the box — any overflow
+        ; splits equally top/bottom rather than all-at-the-bottom.
         ; ACT label in accent color, left-aligned.
         wg.SetFont("s" fontAct " c" Theme.Color("accent") " bold", Theme.FONT_UI)
         this._ctrls["line1_act"] := wg.Add("Text",
             "x" marginX " y" line1Y
             " w" actW " h" line1H
-            " Left"
+            " Left 0x200"
             " Background" Theme.Color("surface"),
             "")
 
@@ -272,7 +338,7 @@ class CompactLayoutPlusWidget extends LayoutWidgetBase
         this._ctrls["line1_zone"] := wg.Add("Text",
             "x" zoneX " y" line1Y
             " w" zoneW " h" line1H
-            " Left"
+            " Left 0x200"
             " Background" Theme.Color("surface"),
             "")
 
@@ -293,13 +359,16 @@ class CompactLayoutPlusWidget extends LayoutWidgetBase
             "RUN", fontBlockHeader, fontBlockTimer, fontBlockPb)
 
         ; ============ CHIPS: × N + XP ============
+        ; Both chips use 0x200 (vertical center) — fontChip=9 pt
+        ; ≈ 12 px line height + descender, the bounding box at
+        ; h=12 is too tight for top-aligned rendering.
         chipX := marginX
 
         this._SetFont(fontChip, "muted", "bold")
         this._ctrls["chip_deaths"] := wg.Add("Text",
             "x" chipX " y" chipY
             " w" chipDeathsW " h" chipH
-            " Left"
+            " Left 0x200"
             " Background" Theme.Color("surface"),
             "")
         chipX += chipDeathsW + chipGap
@@ -309,7 +378,7 @@ class CompactLayoutPlusWidget extends LayoutWidgetBase
         this._ctrls["chip_xp"] := wg.Add("Text",
             "x" chipX " y" chipY
             " w" chipXpW " h" chipH
-            " Left"
+            " Left 0x200"
             " Background" Theme.Color("surface"),
             "XP")
 
@@ -366,6 +435,20 @@ class CompactLayoutPlusWidget extends LayoutWidgetBase
 
     ; Builds a single ZONE/RUN block at (bx, by, bw, bh). Controls
     ; stored under "{prefix}_header", "{prefix}_timer", "{prefix}_pb".
+    ;
+    ; Internal vertical stack (top → bottom):
+    ;   pad(2) | header(fontHeader+4) | gap(1) | timer(rest) | gap(2) | pb(fontPb+2) | pad(2)
+    ;
+    ; PB is anchored to the bottom (PB sub-label has a fixed visual
+    ; height proportional to its font), header to the top, and the
+    ; timer fills whatever vertical space is left in between. This
+    ; avoids the older formula (timerY = bh * 0.30, timerH = fontTimer
+    ; + 6) which produced an overlap between timer and PB at bh=42
+    ; — the mono timer glyphs were visibly clipped because the
+    ; effective bounding box was smaller than the Consolas line
+    ; height. Defensive floor at the bottom guarantees the timer
+    ; bounding box never shrinks below fontTimer+6 even if a future
+    ; smaller BLOCK_H gets introduced.
     _BuildBlock(prefix, bx, by, bw, bh, headerText, fontHeader, fontTimer, fontPb)
     {
         wg := this._gui
@@ -378,22 +461,38 @@ class CompactLayoutPlusWidget extends LayoutWidgetBase
             " Disabled c" Theme.Color("surface2") " Background" Theme.Color("surface2"),
             100)
 
+        ; Layout math (see header comment above for the stack).
+        ; headerY = by + 4 (was by + 2) pushes the "ZONE"/"RUN"
+        ; label down inside the block — combined with the 4 px
+        ; gap before the block, the visual distance from the
+        ; LINE1 text descender to the header is comfortable.
+        ; pbH = fontPb + 2 is the minimum that keeps the PB box
+        ; readable at scale 1.0; if the user shrinks below ~0.8
+        ; the PB bottom may clip 1 px, accepted limitation.
+        headerY := by + 4
+        headerH := fontHeader + 4
+
+        pbH := fontPb + 2
+        pbY := by + bh - pbH - 2
+
+        timerY := headerY + headerH + 1
+        timerH := pbY - timerY - 2
+        if (timerH < fontTimer + 6)
+            timerH := fontTimer + 6
+
         ; Header label (top of block, subtle/small).
-        headerY := by + 2
+        ; 0x200 (SS_CENTERIMAGE) centers the glyph vertically in
+        ; the box so the font's actual pixel height (fontPt * 1.33)
+        ; doesn't clip against the smaller bounding box (fontPt+4).
         wg.SetFont("s" fontHeader " c" Theme.Color("subtle") " bold", Theme.FONT_UI)
         this._ctrls[prefix "_header"] := wg.Add("Text",
             "x" bx " y" headerY
-            " w" bw " h" (fontHeader + 4)
-            " Center"
+            " w" bw " h" headerH
+            " Center 0x200"
             " Background" Theme.Color("surface2"),
             headerText)
 
         ; Timer (mono, dynamic color set in _Refresh*Timer).
-        ; Block height roughly: header (4-5) + timer (font + 4) + PB
-        ; (font + 4) + paddings. Y positions computed from the block's
-        ; top so the block re-positions cleanly under resize.
-        timerY := by + Round(bh * 0.30)
-        timerH := fontTimer + 6
         wg.SetFont("s" fontTimer " c" Theme.Color("text") " bold", Theme.FONT_MONO)
         this._ctrls[prefix "_timer"] := wg.Add("Text",
             "x" bx " y" timerY
@@ -403,12 +502,13 @@ class CompactLayoutPlusWidget extends LayoutWidgetBase
             "")
 
         ; PB sub-label (pb color or muted "--:--").
-        pbY := by + bh - fontPb - 6
+        ; 0x200 prevents descender clipping ('p' in "PB", and the
+        ; bottoms of '2'/'3'/'8' in the timer digits) at h=10.
         wg.SetFont("s" fontPb " c" Theme.Color("pb"), Theme.FONT_UI)
         this._ctrls[prefix "_pb"] := wg.Add("Text",
             "x" bx " y" pbY
-            " w" bw " h" (fontPb + 4)
-            " Center"
+            " w" bw " h" pbH
+            " Center 0x200"
             " Background" Theme.Color("surface2"),
             "")
     }
@@ -840,25 +940,6 @@ class CompactLayoutPlusWidget extends LayoutWidgetBase
                 }
             }
         }
-    }
-
-    ; ============================================================
-    ; Resize-by-border (wired by OverlayInteractionService via the
-    ; HasMethod check in LayoutWidgetBase.Show). Same body as Steve
-    ; Plus: persist width/height, ReRender. ReRender is heavy (Hide+
-    ; Show) — fine for the user's occasional drag, would need
-    ; in-place re-layout if the gesture stutters.
-    ; ============================================================
-    _OnBorderResize(newW, newH)
-    {
-        if (!IsNumber(newW) || !IsNumber(newH))
-            return
-        if (newW <= 0 || newH <= 0)
-            return
-        this._position.width  := newW
-        this._position.height := newH
-        this._Persist()
-        this.ReRender()
     }
 
     ; ============================================================

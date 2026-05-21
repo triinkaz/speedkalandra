@@ -16,7 +16,7 @@
 ;   [Layouts]        Variant (classic | plus; opt-in BETA)
 ;   [Hotkeys]        <action> -> keyBind
 ;   [Window]         MicroLocked, SteveLocked
-;   [Overlay]        <widgetId>.{left,top,scale,visible,centered,width,height} + hoverHide
+;   [Overlay]        <widgetId>.{left,top,scale,visible,centered} + hoverHide
 ;
 ; Orphan keys in old INIs (PanelOverlayKeys, GamePauseDetectionEnabled)
 ; are not read or written, so they sit inert.
@@ -406,8 +406,6 @@ class SettingsRepository
             keepKeys[widgetId ".scale"]    := true
             keepKeys[widgetId ".visible"]  := true
             keepKeys[widgetId ".centered"] := true
-            keepKeys[widgetId ".width"]    := true
-            keepKeys[widgetId ".height"]   := true
         }
 
         for _, existingKey in ini.KeysIn("Overlay")
@@ -424,12 +422,6 @@ class SettingsRepository
             ini.Write(Format("{:0.2f}", op.scale), "Overlay", widgetId ".scale")
             ini.Write(op.visible  ? 1 : 0,         "Overlay", widgetId ".visible")
             ini.Write(op.centered ? 1 : 0,         "Overlay", widgetId ".centered")
-            ; width / height: written as integer pixels (the resize
-            ; interaction snaps to whole pixels anyway, and an INI
-            ; line `compactLayout.width=480` reads better than 480.00
-            ; on the rare occasion a user inspects the file).
-            ini.Write(Round(op.width),  "Overlay", widgetId ".width")
-            ini.Write(Round(op.height), "Overlay", widgetId ".height")
         }
     }
 
@@ -449,13 +441,6 @@ class SettingsRepository
             posData["visible"] := propsMap["visible"] = "1"
         if propsMap.Has("centered")
             posData["centered"] := propsMap["centered"] = "1"
-        ; width / height: missing keys leave the position at its 0
-        ; sentinel ("use widget's FIXED_W/FIXED_H"). Empty strings
-        ; treated as missing for symmetry with left/top/scale.
-        if propsMap.Has("width") && propsMap["width"] != ""
-            posData["width"] := propsMap["width"] + 0.0
-        if propsMap.Has("height") && propsMap["height"] != ""
-            posData["height"] := propsMap["height"] + 0.0
         return posData
     }
 

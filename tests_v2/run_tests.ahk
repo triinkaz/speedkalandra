@@ -201,7 +201,6 @@ SkTestOnError(err, mode) {
 #Include ..\src_v2\app\services\overlay_mode_applier.ahk
 #Include ..\src_v2\app\services\hotkey_service.ahk
 #Include ..\src_v2\app\services\focus_auto_pause_service.ahk
-#Include ..\src_v2\app\services\overlay_resize_geometry.ahk
 #Include ..\src_v2\app\services\overlay_interaction_service.ahk
 #Include ..\src_v2\app\services\event_trace_logger.ahk
 #Include ..\src_v2\app\services\run_export_service.ahk
@@ -219,6 +218,7 @@ SkTestOnError(err, mode) {
 #Include ..\src_v2\ui\compact_layout_widget.ahk
 #Include ..\src_v2\ui\compact_layout_plus_widget.ahk
 #Include ..\src_v2\ui\micro_layout_widget.ahk
+#Include ..\src_v2\ui\micro_layout_plus_widget.ahk
 #Include ..\src_v2\ui\steve_layout_widget.ahk
 #Include ..\src_v2\ui\steve_layout_plus_widget.ahk
 #Include ..\src_v2\ui\settings_dialog.ahk
@@ -322,7 +322,6 @@ SpeedKalandraMsgBox(text, title := "", options := "") {
 #Include unit\app\services\overlay_mode_applier_tests.ahk
 #Include unit\app\services\hotkey_service_tests.ahk
 #Include unit\app\services\focus_auto_pause_service_tests.ahk
-#Include unit\app\services\overlay_resize_geometry_tests.ahk
 #Include unit\app\services\overlay_interaction_service_tests.ahk
 #Include unit\app\services\event_trace_logger_tests.ahk
 #Include unit\app\services\run_import_service_tests.ahk
@@ -344,6 +343,7 @@ SpeedKalandraMsgBox(text, title := "", options := "") {
 #Include unit\ui\layout_widget_base_tests.ahk
 #Include unit\ui\compact_layout_widget_tests.ahk
 #Include unit\ui\compact_layout_plus_widget_tests.ahk
+#Include unit\ui\micro_layout_plus_widget_tests.ahk
 #Include unit\ui\steve_layout_plus_widget_tests.ahk
 #Include unit\ui\run_stats_plot_dialog_tests.ahk
 #Include unit\ui\death_stats_dialog_tests.ahk

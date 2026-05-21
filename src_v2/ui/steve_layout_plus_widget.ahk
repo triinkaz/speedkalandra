@@ -35,12 +35,6 @@
 ;   - 4px distribution footer (no labels) using the colors from
 ;     theme aliases map/loading/town (defined in fase 1).
 ;
-; RESIZE HOOK:
-;   _OnBorderResize(newW, newH) is wired up here even though the
-;   OverlayInteractionService doesn't call it yet (lands in
-;   fase 5B). Having the method ready means fase 5B is a pure
-;   `RegisterHwnd` parameter wiring with no widget code change.
-;
 ; CONSTRUCTION:
 ;   widget := SteveLayoutPlusWidget(
 ;       bus, position, onPersist,
@@ -200,10 +194,7 @@ class SteveLayoutPlusWidget extends LayoutWidgetBase
         runPbW      := Round(SteveLayoutPlusWidget.RUN_PB_W * s)
 
         ; Distribution footer pins to the bottom edge of the rendered
-        ; container (not BAR_Y * scale). When the user expands height
-        ; via resize-by-border the chrome above can stretch; the bar
-        ; should always be the LAST 4 px (× scale, with a 1 px floor)
-        ; of whatever height we actually got.
+        ; container.
         barH := Max(2, Round(SteveLayoutPlusWidget.BAR_H * s))
         barY := h - barH
 
@@ -623,26 +614,6 @@ class SteveLayoutPlusWidget extends LayoutWidgetBase
                 }
             }
         }
-    }
-
-    ; ============================================================
-    ; Resize-by-border callback (wired by OverlayInteractionService
-    ; in fase 5B; the method is in place now so the wire is one-line
-    ; later). Persists width/height into _position and rebuilds the
-    ; layout. ReRender is heavy (Hide + Show) but keeps the code
-    ; simple — incremental in-place re-layout is a fase 5C optimization
-    ; if the live drag stutters in practice.
-    ; ============================================================
-    _OnBorderResize(newW, newH)
-    {
-        if (!IsNumber(newW) || !IsNumber(newH))
-            return
-        if (newW <= 0 || newH <= 0)
-            return
-        this._position.width  := newW
-        this._position.height := newH
-        this._Persist()
-        this.ReRender()
     }
 
     ; ============================================================

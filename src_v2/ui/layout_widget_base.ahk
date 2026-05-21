@@ -82,24 +82,8 @@ class LayoutWidgetBase extends WidgetBase
         if (!IsNumber(scale) || scale <= 0)
             scale := 1.0
 
-        ; Container size resolves in two layers:
-        ;   (1) `_position.width` / `_position.height` if set explicitly
-        ;       by the resize-by-border interaction (Plus layouts;
-        ;       PLUS_LAYOUTS_SPEC.md §7). These are absolute pixels,
-        ;       so scale doesn't compound on top.
-        ;   (2) `FIXED_W * scale` / `FIXED_H * scale` otherwise — the
-        ;       default for every Classic widget and any Plus widget
-        ;       the user has never resized.
-        ; The sentinel for "not configured" is 0 (OverlayPosition
-        ; clamps negatives to 0 too), so the > 0 check covers both
-        ; legitimate-unset and corrupt-INI cases without an extra
-        ; HasOwnProp branch.
-        this._w := this._position.width > 0
-            ? Round(this._position.width)
-            : Round(sz["w"] * scale)
-        this._h := this._position.height > 0
-            ? Round(this._position.height)
-            : Round(sz["h"] * scale)
+        this._w := Round(sz["w"] * scale)
+        this._h := Round(sz["h"] * scale)
 
         ; Subclass fills this._gui with bands, headers, controls
         ; using this._w / this._h (already scaled) + this._position.scale
@@ -128,32 +112,18 @@ class LayoutWidgetBase extends WidgetBase
         try WinSetExStyle("+0x20", "ahk_id " wg.Hwnd)
 
         ; Register Hwnd with OverlayInteractionService so that
-        ; Ctrl+drag (move), Ctrl+wheel (scale), and Ctrl+drag-border
-        ; (resize-by-border, Plus widgets only) work on layout
+        ; Ctrl+drag (move) and Ctrl+wheel (scale) work on layout
         ; widgets. This Show() override does NOT call super, so the
         ; equivalent block from WidgetBase.Show has to be replicated
         ; here -- without it, the overlay becomes uninteractable
         ; (silent failure: the widget renders but ignores Ctrl-based
         ; input).
-        ;
-        ; The 4th argument is the resize-by-border callback. Only
-        ; widgets that define `_OnBorderResize` opt in to the
-        ; gesture; Classic widgets leave it "" and the service
-        ; skips the border hit-test entirely (no behavior change
-        ; for them). The 5th/6th arguments use the default 80×32
-        ; floor — conservative for every existing widget, can be
-        ; tuned per-widget by overriding _GetResizeMin in a future
-        ; pass if a Plus layout needs a tighter clamp.
         if (OverlayInteractionService.Instance != "")
         {
-            borderResizeFn := HasMethod(this, "_OnBorderResize")
-                ? this._OnBorderResize.Bind(this)
-                : ""
             OverlayInteractionService.Instance.RegisterHwnd(
                 this._gui.Hwnd,
                 this._UpdatePositionFromGui.Bind(this),
-                this._OnWheelResize.Bind(this),
-                borderResizeFn
+                this._OnWheelResize.Bind(this)
             )
         }
     }
