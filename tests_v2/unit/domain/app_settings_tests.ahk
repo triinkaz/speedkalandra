@@ -59,6 +59,7 @@ class AppSettingsTests extends TestCase
         "from_map_reads_event_tracing_enabled",
         "from_map_reads_layout_variant_plus",
         "from_map_layout_variant_invalid_falls_back_to_classic",
+        "from_map_layout_variant_accepts_case_variations_as_plus",
         "from_map_reads_auto_finalize_regex",
         "from_map_reads_auto_start_regex_allowing_empty",
         "from_map_strict_string_treats_empty_as_missing",
@@ -321,14 +322,34 @@ class AppSettingsTests extends TestCase
 
     from_map_layout_variant_invalid_falls_back_to_classic()
     {
-        ; Hand-edited INI typo, future-variant name, casing mistake —
-        ; all normalize to "classic" rather than enter an undefined
-        ; runtime branch.
-        for _, badValue in ["Plus", "PLUS", "experimental", "plus_v2", "", " plus "]
+        ; Hand-edited INI typo, future-variant name, accidental
+        ; whitespace — anything that's not recognizably "plus"
+        ; normalizes to "classic" rather than enter an undefined
+        ; runtime branch. Case variations of "plus" are accepted
+        ; (see from_map_layout_variant_accepts_case_variations_as_plus)
+        ; because AHK v2 string compare is case-insensitive by default
+        ; and a user editing the INI by hand might type "Plus".
+        for _, badValue in ["experimental", "plus_v2", "", " plus ", "plusv2", "klassik"]
         {
             cfg := AppSettings.FromMap(Map("layoutVariant", badValue))
             Assert.Equal("classic", cfg.layoutVariant,
                 "Invalid value '" badValue "' must normalize to classic")
+        }
+    }
+
+    from_map_layout_variant_accepts_case_variations_as_plus()
+    {
+        ; AHK v2 `=` is case-insensitive. A hand-edited INI with
+        ; "Plus" or "PLUS" loads as the plus variant — the user's
+        ; intent is clear, and forcing strict case here would
+        ; require fighting the language default everywhere else.
+        ; The SettingsDialog always writes the canonical lowercase
+        ; "plus", so this is only a tolerance for hand edits.
+        for _, variant in ["Plus", "PLUS", "pLuS"]
+        {
+            cfg := AppSettings.FromMap(Map("layoutVariant", variant))
+            Assert.Equal("plus", cfg.layoutVariant,
+                "Case variation '" variant "' must load as plus")
         }
     }
 
