@@ -5,6 +5,7 @@
 ; AppSettings <-> INI with multiple sections:
 ;   [General] [Character] [CurrentArea] [Rules] [LoadingVisual]
 ;   [AutoFinalize] [AutoStart] [VendorRegexes] [Disclaimer]
+;   [Diagnostics] [Layouts]
 ;   [Hotkeys] [Window] [Overlay]
 ;
 ; Strategy: most tests do a roundtrip (Save with modified cfg, Load,
@@ -39,6 +40,8 @@ class SettingsRepositoryTests extends TestCase
         "save_load_preserves_vendor_regexes",
         "save_load_preserves_disclaimer_ack",
         "save_load_preserves_diagnostics_event_tracing",
+        "save_load_preserves_layout_variant_plus",
+        "load_layout_variant_falls_back_to_classic_on_invalid_ini",
         "save_load_preserves_hotkeys",
         "save_load_preserves_window_micro_locked",
         "save_load_preserves_window_steve_locked",
@@ -270,6 +273,48 @@ class SettingsRepositoryTests extends TestCase
         reloaded := repo.Load()
         Assert.False(reloaded.eventTracingEnabled,
             "Flipping back to false also persists")
+    }
+
+    save_load_preserves_layout_variant_plus()
+    {
+        ; Plus is the opt-in BETA variant. A user who flipped it on
+        ; in Settings must find it still selected after a restart.
+        mainIni := IniFile(Fixtures.TempPath("ini"))
+        repo := SettingsRepository(mainIni)
+
+        cfg := AppSettings.Defaults()
+        Assert.Equal("classic", cfg.layoutVariant, "sanity: default is classic")
+
+        cfg.layoutVariant := "plus"
+        repo.Save(cfg)
+
+        loaded := repo.Load()
+        Assert.Equal("plus", loaded.layoutVariant,
+            "[Layouts].Variant round-trips through INI")
+
+        ; Flip back to classic and confirm the classic value also persists
+        loaded.layoutVariant := "classic"
+        repo.Save(loaded)
+        reloaded := repo.Load()
+        Assert.Equal("classic", reloaded.layoutVariant,
+            "Flipping back to classic also persists")
+    }
+
+    load_layout_variant_falls_back_to_classic_on_invalid_ini()
+    {
+        ; A hand-edited INI with a value the repo doesn't recognize
+        ; ('Plus' capitalized, an unknown future variant, a typo) must
+        ; load as 'classic' rather than enter a runtime branch that
+        ; doesn't exist. Mirrors the AppSettings.FromMap normalization
+        ; — defense in depth.
+        mainIni := IniFile(Fixtures.TempPath("ini"))
+        mainIni.Write("experimental_v2", "Layouts", "Variant")
+
+        repo := SettingsRepository(mainIni)
+        loaded := repo.Load()
+
+        Assert.Equal("classic", loaded.layoutVariant,
+            "Unknown variant in INI normalizes to classic on load")
     }
 
     save_load_preserves_hotkeys()

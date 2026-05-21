@@ -10,6 +10,8 @@
 ;   - autoPauseOnFocus
 ;   - deathPenaltyEnabled, deathPenaltyMs
 ;   - disclaimerAcknowledged
+;   - eventTracingEnabled (opt-in)
+;   - layoutVariant (classic | plus; opt-in BETA)
 ;   - autoFinalizeRegex (strict: "" reverts to default)
 ;   - autoStartRegex (allow empty: "" accepted explicitly)
 ;   - vendorRegexes (NOT read by FromMap; repository handles it)
@@ -36,6 +38,7 @@ class AppSettingsTests extends TestCase
         "defaults_death_penalty_settings",
         "defaults_disclaimer_not_acknowledged",
         "defaults_event_tracing_disabled_by_default",
+        "defaults_layout_variant_is_classic",
         "defaults_auto_finalize_regex_empty",
         "defaults_auto_start_regex_is_wounded_man_line",
 
@@ -54,6 +57,8 @@ class AppSettingsTests extends TestCase
         "from_map_clamps_negative_death_penalty_ms_to_zero",
         "from_map_reads_disclaimer_acknowledged",
         "from_map_reads_event_tracing_enabled",
+        "from_map_reads_layout_variant_plus",
+        "from_map_layout_variant_invalid_falls_back_to_classic",
         "from_map_reads_auto_finalize_regex",
         "from_map_reads_auto_start_regex_allowing_empty",
         "from_map_strict_string_treats_empty_as_missing",
@@ -157,6 +162,13 @@ class AppSettingsTests extends TestCase
         ; starts the interceptor unless the user explicitly enables
         ; it under [Diagnostics] in speedkalandra.ini.
         Assert.False(AppSettings.Defaults().eventTracingEnabled)
+    }
+
+    defaults_layout_variant_is_classic()
+    {
+        ; Plus is opt-in BETA. A fresh install boots the Classic
+        ; widgets. See PLUS_LAYOUTS_SPEC.md §1.
+        Assert.Equal("classic", AppSettings.Defaults().layoutVariant)
     }
 
     defaults_auto_finalize_regex_empty()
@@ -291,6 +303,33 @@ class AppSettingsTests extends TestCase
         ; Missing key falls back to the safe default (false)
         cfg3 := AppSettings.FromMap(Map())
         Assert.False(cfg3.eventTracingEnabled)
+    }
+
+    from_map_reads_layout_variant_plus()
+    {
+        cfg := AppSettings.FromMap(Map("layoutVariant", "plus"))
+        Assert.Equal("plus", cfg.layoutVariant)
+
+        ; Missing key keeps the default
+        cfg2 := AppSettings.FromMap(Map())
+        Assert.Equal("classic", cfg2.layoutVariant)
+
+        ; Explicit "classic" round-trips too
+        cfg3 := AppSettings.FromMap(Map("layoutVariant", "classic"))
+        Assert.Equal("classic", cfg3.layoutVariant)
+    }
+
+    from_map_layout_variant_invalid_falls_back_to_classic()
+    {
+        ; Hand-edited INI typo, future-variant name, casing mistake —
+        ; all normalize to "classic" rather than enter an undefined
+        ; runtime branch.
+        for _, badValue in ["Plus", "PLUS", "experimental", "plus_v2", "", " plus "]
+        {
+            cfg := AppSettings.FromMap(Map("layoutVariant", badValue))
+            Assert.Equal("classic", cfg.layoutVariant,
+                "Invalid value '" badValue "' must normalize to classic")
+        }
     }
 
     from_map_reads_auto_finalize_regex()

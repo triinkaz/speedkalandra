@@ -11,6 +11,7 @@
 ;   [AutoStart]     Regex (PCRE, empty = disabled)
 ;   [VendorRegexes] Slot1, Slot2, Slot3 (max 50 chars each)
 ;   [Diagnostics]   EventTracingEnabled (opt-in)
+;   [Layouts]       Variant (classic | plus)
 ;   [Disclaimer]    Acknowledged (do-not-show-again flag)
 ;   [Hotkeys]       <action> = keyBind
 ;   [Window]        → WindowState (composite)
@@ -69,6 +70,13 @@ class AppSettings
     ; never persists that data — user has to enable it explicitly
     ; for diagnostics.
     eventTracingEnabled := false
+
+    ; --- Layouts (BETA) ---
+    ; Selects between Classic (current widgets) and Plus (experimental
+    ; variants with mono timer, percent-based reflow, resize-by-border).
+    ; Read once at boot by the composition root; switching requires a
+    ; restart. See PLUS_LAYOUTS_SPEC.md.
+    layoutVariant := "classic"
 
     ; --- Auto-finalize ---
     autoFinalizeRegex := ""
@@ -154,6 +162,17 @@ class AppSettings
 
         ; --- Diagnostics ---
         cfg.eventTracingEnabled := AppSettings._GetBool(data, "eventTracingEnabled", cfg.eventTracingEnabled)
+
+        ; --- Layouts ---
+        ; Any value that isn't exactly "plus" normalizes to "classic".
+        ; A hand-edited INI with a typo ("Plus", "plus_v2", "") falls
+        ; back to the safe default rather than entering an undefined
+        ; runtime branch.
+        if data.Has("layoutVariant")
+        {
+            v := String(data["layoutVariant"])
+            cfg.layoutVariant := (v = "plus") ? "plus" : "classic"
+        }
 
         ; --- Auto-finalize ---
         cfg.autoFinalizeRegex := AppSettings._GetStr(data, "autoFinalizeRegex", cfg.autoFinalizeRegex)

@@ -11,6 +11,7 @@
 ;   AutoFinalize      Regex
 ;   VendorRegexes     3 slots (max 50 chars each) for V1/V2/V3 shortcuts
 ;   Rules             AutoPauseOnFocus, DeathPenaltyEnabled + seconds
+;   Layouts (BETA)    LayoutVariant (classic | plus)
 ;   Hotkeys           Every action registered in cfg.hotkeys
 ;
 ; AHK v2 gotcha on Gui.Add: "s<size>" and "c<hex>" inline options are
@@ -181,6 +182,19 @@ class SettingsDialog
         this._ctrls["deathPenaltySec"] := this._AddEdit(g, 180, y, 120, penaltySec, "Number")
         y += 36
 
+        ; ============ Layouts (BETA) ============
+        ; Opt-in switch between the Classic widgets (default) and the
+        ; experimental Plus variants. Read once at boot — a change
+        ; here requires a restart, surfaced via SpeedKalandraMsgBox in
+        ; _OnSave. See PLUS_LAYOUTS_SPEC.md §1.
+        this._SectionHeader(g, y, "LAYOUTS (BETA)")
+        y += 22
+        g.SetFont("s9 c" Theme.Color("text"), Theme.FONT_UI)
+        this._ctrls["layoutVariantPlus"] := g.Add("Checkbox",
+            "x180 y" y (this._cfg.layoutVariant = "plus" ? " Checked" : ""),
+            'Use experimental "Plus" layouts (requires restart)')
+        y += 32
+
         ; ============ Hotkeys ============
         this._SectionHeader(g, y, "HOTKEYS")
         y += 22
@@ -287,6 +301,10 @@ class SettingsDialog
         ; Snapshot the old log path so we can detect a change and
         ; restart LogMonitor without a full app reload.
         oldLogFile := cfg.logFile
+        ; Snapshot the layout variant too. Unlike logFile, this one
+        ; does NOT hot-reload — widgets are instantiated once at boot.
+        ; The mismatch is surfaced via a MsgBox at the end of save.
+        oldLayoutVariant := cfg.layoutVariant
         cfg.logFile     := this._ctrls["logFile"].Value
         cfg.autoStartRegex    := this._ctrls["autoStartRegex"].Value
         cfg.autoFinalizeRegex := this._ctrls["autoFinalizeRegex"].Value
@@ -325,6 +343,15 @@ class SettingsDialog
         }
         catch
             cfg.deathPenaltyMs := 150000
+
+        ; Layout variant (BETA opt-in). Defensive ternary: anything
+        ; other than a checked box maps to "classic". AppSettings and
+        ; SettingsRepository both normalize on load too, so a typo
+        ; here would round-trip through "classic" anyway, but staying
+        ; defensive keeps the in-memory cfg unambiguous.
+        cfg.layoutVariant := (this._ctrls.Has("layoutVariantPlus")
+            && this._ctrls["layoutVariantPlus"].Value = 1) ? "plus" : "classic"
+        layoutVariantChanged := (oldLayoutVariant != cfg.layoutVariant)
 
         ; Hotkeys.
         ; The user types in human format ("Ctrl+Alt+F");
@@ -372,6 +399,21 @@ class SettingsDialog
             try this._bus.Publish(Events.VendorRegexesChanged, Map(
                 "oldRegexes", oldVendorRegexes,
                 "newRegexes", SettingsDialog._CloneStringArray(cfg.vendorRegexes)))
+        }
+        ; Layout variant change → no event published. Widgets are
+        ; instantiated once at boot, so a hot-reload would have to
+        ; tear down GUI handles, re-position from INI, and re-wire
+        ; bus subscriptions — too much complexity for a flag a user
+        ; toggles a handful of times in the life of the app. A MsgBox
+        ; tells them to restart instead.
+        if layoutVariantChanged
+        {
+            targetLabel := (cfg.layoutVariant = "plus") ? "Plus (experimental)" : "Classic"
+            try SpeedKalandraMsgBox(
+                "Layout variant changed to " . targetLabel . ".`n`n"
+                . "Restart SpeedKalandra to apply.",
+                "Layout change",
+                "Iconi")
         }
         try TrayTip("SpeedKalandra", "Settings saved.", "Mute")
         this.Close()

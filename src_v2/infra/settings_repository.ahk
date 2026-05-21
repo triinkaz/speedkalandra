@@ -13,6 +13,7 @@
 ;   [VendorRegexes]  Slot1, Slot2, Slot3
 ;   [Disclaimer]     Acknowledged
 ;   [Diagnostics]    EventTracingEnabled (opt-in; off by default)
+;   [Layouts]        Variant (classic | plus; opt-in BETA)
 ;   [Hotkeys]        <action> -> keyBind
 ;   [Window]         MicroLocked, SteveLocked
 ;   [Overlay]        <widgetId>.{left,top,scale,visible,centered} + hoverHide
@@ -53,6 +54,7 @@ class SettingsRepository
         this._LoadVendorRegexes(cfg)
         this._LoadDisclaimer(cfg)
         this._LoadDiagnostics(cfg)
+        this._LoadLayouts(cfg)
         this._LoadHotkeys(cfg)
         cfg.window  := this._LoadWindow()
         cfg.overlay := this._LoadOverlay()
@@ -73,6 +75,7 @@ class SettingsRepository
         this._SaveVendorRegexes(cfg)
         this._SaveDisclaimer(cfg)
         this._SaveDiagnostics(cfg)
+        this._SaveLayouts(cfg)
         this._SaveHotkeys(cfg)
         this._SaveWindow(cfg.window)
         this._SaveOverlay(cfg.overlay)
@@ -281,6 +284,27 @@ class SettingsRepository
     _SaveDiagnostics(cfg)
     {
         this._ini.Write(cfg.eventTracingEnabled ? 1 : 0, "Diagnostics", "EventTracingEnabled")
+    }
+
+    ; ============================================================
+    ; [Layouts]
+    ;
+    ; Selects between Classic (default) and Plus overlay variants.
+    ; Read once at boot by the composition root; switching requires
+    ; a restart. Any value other than the literal "plus" normalizes
+    ; to "classic" so a typo in a hand-edited INI lands on the safe
+    ; branch. See PLUS_LAYOUTS_SPEC.md §1.
+    ; ============================================================
+    _LoadLayouts(cfg)
+    {
+        v := this._ini.Read("Layouts", "Variant", "classic")
+        cfg.layoutVariant := (v = "plus") ? "plus" : "classic"
+    }
+
+    _SaveLayouts(cfg)
+    {
+        v := (cfg.layoutVariant = "plus") ? "plus" : "classic"
+        this._ini.Write(v, "Layouts", "Variant")
     }
 
     ; ============================================================
