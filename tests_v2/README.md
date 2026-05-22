@@ -1,6 +1,6 @@
 # SpeedKalandra Test Suite
 
-Self-contained AHK v2 test suite for SpeedKalandra. Pure AHK v2 — no external runner, no `pip install`, no `npm`. Over 1800 tests across `core/`, `domain/`, `infra/`, `app/`, `ui/`, and integration.
+Self-contained AHK v2 test suite for SpeedKalandra. Pure AHK v2 — no external runner, no `pip install`, no `npm`. 2000+ tests across `core/`, `domain/`, `infra/`, `app/`, `ui/`, and integration.
 
 ## How to run
 

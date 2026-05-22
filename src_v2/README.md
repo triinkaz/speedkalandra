@@ -41,14 +41,18 @@ src_v2/
 └── ui/                                ; Widgets and dialogs
     ├── theme.ahk                      ; Color palette + font helpers
     ├── widget_base.ahk                ; Base for GDI+ widgets
-    ├── layout_widget_base.ahk         ; Base for layout widgets (Compact/Micro/Steve)
-    ├── compact_layout_widget.ahk
+    ├── layout_widget_base.ahk         ; Base for layout widgets (Compact/Micro/Steve, Classic + Plus)
+    ├── compact_layout_widget.ahk      ; Classic variant
+    ├── compact_layout_plus_widget.ahk ; Plus variant (BETA, opt-in)
     ├── micro_layout_widget.ahk
+    ├── micro_layout_plus_widget.ahk
     ├── steve_layout_widget.ahk
+    ├── steve_layout_plus_widget.ahk
     ├── settings_dialog.ahk
     ├── line_chart_renderer.ahk
     ├── run_stats_plot_dialog.ahk
     ├── run_history_dialog.ahk
+    ├── death_stats_dialog.ahk         ; Aggregate "deaths per zone" view
     ├── export_options_dialog.ahk
     └── import_preview_dialog.ahk
 ```
@@ -75,7 +79,7 @@ Requires AutoHotkey v2. The entry point is `speedkalandra.ahk` at the repo root,
 
 ## Tests
 
-The full automated test suite lives in [`../tests_v2/`](../tests_v2/) — over 1800 unit + integration tests covering `core/`, `domain/`, `infra/`, `app/services/`, `ui/`, and end-to-end wiring of `SpeedKalandraApp`. Run with:
+The full automated test suite lives in [`../tests_v2/`](../tests_v2/) — 2000+ unit + integration tests covering `core/`, `domain/`, `infra/`, `app/services/`, `ui/`, and end-to-end wiring of `SpeedKalandraApp`. Run with:
 
 ```
 "C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe" tests_v2\run_tests.ahk

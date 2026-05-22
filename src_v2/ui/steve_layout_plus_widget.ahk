@@ -21,19 +21,16 @@
 ; fonts shift the colon-second alignment every other frame.
 ;
 ; DELTAS FROM CLASSIC:
-;   - Re-injects loadingTotals (Classic lost it in the Fase 11
-;     audit because the widget never used it; Plus needs it for
-;     the distribution footer).
-;   - Re-injects cfg (currently unused but plumbed so a future
-;     Plus-only setting — e.g. footer visibility — costs zero).
 ;   - Adds a per-act PB chip on LINE2 ("PB MM:SS"), reading
 ;     pbService.GetRunPbForAct(currentAct) — same path Classic
 ;     already uses for the timer's color comparison.
 ;   - Adds a RUN · PB sublabel showing the FULL run PB (the same
 ;     value chained PBs converge to), so the user can see both
 ;     act-PB and run-PB without toggling layouts.
-;   - 4px distribution footer (no labels) using the colors from
-;     theme aliases map/loading/town (defined in fase 1).
+;   - 4 px distribution footer (no labels) using the colors from
+;     theme aliases map/loading/town.
+;   - Re-injects loadingTotals (needed for the distribution footer)
+;     and cfg (plumbed for future Plus-only settings).
 ;
 ; CONSTRUCTION:
 ;   widget := SteveLayoutPlusWidget(

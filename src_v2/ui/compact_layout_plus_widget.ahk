@@ -4,8 +4,7 @@
 ;
 ; Opt-in via cfg.layoutVariant = "plus" (Settings > LAYOUTS BETA).
 ; Shares WIDGET_ID and base dimensions with CompactLayoutWidget so
-; the user's persisted position/scale carry across the toggle —
-; PLUS_LAYOUTS_SPEC.md §11 anti-regression.
+; the user's persisted position/scale carry across the toggle.
 ;
 ; LAYOUT (base 380×96 at scale=1.0):
 ;
@@ -21,32 +20,24 @@
 ;   | ▓▓▓▓▓▓▓▓▓▓▓░░░░▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓     |  ← FOOTER 6px
 ;   +-------------------------------------------------------+
 ;
-; DELTAS FROM CLASSIC (spec section 4.1):
+; DELTAS FROM CLASSIC:
 ;   - Removed: Lv N, LOAD %, TOWN % text chips, Area N
 ;   - Two ZONE/RUN blocks pushed to the right side of the widget
-;     (mirrors Classic's right-aligned timers, see image 1 in the
-;     design session). The left column stacks ACT on top of the
-;     zone name in two lines (one word per line, first two words
-;     only). Each block stacks header + mono timer + PB sub-label.
+;     (mirrors Classic's right-aligned timers). The left column
+;     stacks ACT on top of the zone name in two lines (one word
+;     per line, first two words only via _SplitToTwoWords). Each
+;     block stacks header + mono timer + PB sub-label.
 ;   - PB sub-labels show "PB --:--" muted when no PB exists --
-;     predictable structure, no surprise gap (spec section 5).
-;   - Zone-name truncation by WORDS (first two only, see
-;     _SplitToTwoWords). Long single words fall back to the
-;     ellipsis truncation from _TruncateToWidth.
+;     predictable structure, no surprise gap.
+;   - Zone-name truncation by WORDS (first two only). Long single
+;     words fall back to the ellipsis truncation from
+;     _TruncateToWidth.
 ;   - Distribution footer is 4 px high without labels (Classic's
-;     bar has inline "Map 70%" text). The Plus aesthetic is
-;     "fewer words, more visual".
+;     bar has inline "Map 70%" text).
 ;
-; (The ASCII LAYOUT diagram above is approximate -- the actual
-; horizontal budget is documented next to the LEFT COLUMN /
-; BLOCKS static constants below.)
-;
-; SUBSCRIPTIONS — same 9 events as Classic. Note that Plus skips
-; AreaLevelChanged because the Area chip was removed; Classic
-; subscribes because XP indicator updates on area-level changes.
-; Plus keeps the subscription anyway: XpService.GetXpPenaltyInfo()
-; consults area level, and refreshing the XP chip color on area
-; changes keeps it accurate without an extra tick wait.
+; SUBSCRIPTIONS — same 9 events as Classic. XpService.GetXpPenaltyInfo()
+; consults area level, so refreshing on AreaLevelChanged keeps the
+; XP chip color accurate without waiting for the next tick.
 ;
 ; CONSTRUCTION:
 ;   widget := CompactLayoutPlusWidget(
@@ -68,18 +59,7 @@ class CompactLayoutPlusWidget extends LayoutWidgetBase
     ;
     ; Vertical budget at base size (FIXED_H=96):
     ;   pad_top(2) + LINE1(14) + gap(6) + BLOCK(50) + gap(4)
-    ;     + CHIP(12) + gap(2) + BAR(6) + pad_bottom(0) = 96
-    ;
-    ; Two design moves bought the visible LINE1→BLOCK and
-    ; BLOCK→CHIP gaps the user asked for:
-    ;   - FONT_ZONE dropped from 11pt to 10pt, shrinking LINE1
-    ;     to h=14 (Segoe UI 10pt fits cleanly).
-    ;   - FONT_BLOCK_TIMER dropped from 16pt to 14pt, shrinking
-    ;     BLOCK from 54 to 50 without losing the mono-glyph room
-    ;     (defensive floor: timerH >= fontTimer+6=20, exact match
-    ;     at bh=50).
-    ; The 8 px reclaimed pay for: gap LINE1→BLOCK 4→6,
-    ; gap BLOCK→CHIP 2→4.
+    ;     + CHIP(12) + gap(2) + BAR(4) + pad_bottom(2) = 96
     ;
     ; Three constraints drive the sizing:
     ;
@@ -99,9 +79,6 @@ class CompactLayoutPlusWidget extends LayoutWidgetBase
     ;    A box of 14 fits comfortably with 1 px of slack and
     ;    doesn't clip 'p' / 'g' / 'y' / 'q' descenders.
     ;
-    ; The chip→bar gap is implicit (runtime barY = this._h - barH
-    ; = 90, chip ends at 88, gap = 2 px).
-    ;
     ; Known limitation: at scale < ~0.7, the rounded pads drop
     ;    below the threshold AHK needs for non-clipped Windows
     ;    rendering. The widget is designed for scale 0.8-1.5;
@@ -112,8 +89,7 @@ class CompactLayoutPlusWidget extends LayoutWidgetBase
     ; LEFT COLUMN: ACT label (top) + zone name in two stacked lines.
     ; The ACT label introduces the row at y=ACT_Y; the two zone
     ; lines sit below, one word per line (truncated to the first
-    ; two words of the zone name). Mirrors the Classic Compact
-    ; layout's left column — see image 1 in the design discussion.
+    ; two words of the zone name).
     ;
     ; h >= fontPt * 1.6 rule (h is pixels, font is points). Segoe
     ; UI 10pt is ~13 px glyph height + ~3 px descender = ~16 px.
@@ -158,10 +134,8 @@ class CompactLayoutPlusWidget extends LayoutWidgetBase
 
     ; FOOTER distribution bar. BAR_Y is informational — _BuildGui
     ; uses runtime `this._h - barH` so the bar always sits at the
-    ; bottom regardless of resize-by-border height.
-    ; BAR_H=4 (was 6) to free 2 px for the LINE1→BLOCK gap. The
-    ; bar is decorative color-only (no labels) in Plus, so a
-    ; thinner footer remains legible.
+    ; bottom of the rendered container. Color-only (no inline
+    ; labels), so 4 px is enough to remain legible.
     static BAR_Y := 92
     static BAR_H := 4
 
@@ -172,14 +146,9 @@ class CompactLayoutPlusWidget extends LayoutWidgetBase
     static BTN_VGAP     := 3
     static BTN_MARGIN_R := 4
 
-    ; Fonts at scale=1.0.
-    ;   FONT_ZONE: 11→10 to free LINE1 vertical pixels for the
-    ;     LINE1→BLOCK gap.
-    ;   FONT_BLOCK_TIMER: 16→14 to shrink BLOCK from 54 to 50,
-    ;     freeing pixels for the BLOCK→CHIP gap. Timer remains
-    ;     dominant and legible in the block — 14pt mono Consolas
-    ;     is still substantially larger than the surrounding
-    ;     UI labels.
+    ; Fonts at scale=1.0. FONT_BLOCK_TIMER uses Theme.FONT_MONO
+    ; (Consolas) so the digits don't reflow under the 50 ms refresh;
+    ; everything else uses Theme.FONT_UI.
     static FONT_ACT     := 9
     static FONT_ZONE    := 10
     static FONT_BLOCK_HEADER := 7
@@ -306,9 +275,8 @@ class CompactLayoutPlusWidget extends LayoutWidgetBase
         chipH  := Max(8, Round(CompactLayoutPlusWidget.CHIP_H * s))
 
         ; Distribution bar pins to the bottom edge of the rendered
-        ; container — same trick as Steve Plus, so the footer stays
-        ; the last (BAR_H × scale) px even after a resize-by-border
-        ; stretches the widget height.
+        ; container so the footer stays the last (BAR_H × scale) px
+        ; regardless of widget height.
         barH := Max(2, Round(CompactLayoutPlusWidget.BAR_H * s))
         barY := h - barH
 
@@ -354,9 +322,9 @@ class CompactLayoutPlusWidget extends LayoutWidgetBase
 
         ; Zone name in two stacked lines (one word per line). The
         ; word split is done in _RefreshLine1 via _SplitToTwoWords;
-        ; the third word and beyond are dropped (PLUS rule, per
-        ; user discussion). A single very long word still falls
-        ; back to the existing ellipsis truncation.
+        ; words after the second are dropped. A single very long
+        ; word still falls back to the ellipsis truncation in
+        ; _TruncateToWidth.
         this._SetFont(fontZone, "text", "")
         this._ctrls["zone_line1"] := wg.Add("Text",
             "x" marginX " y" zoneL1Y
@@ -469,16 +437,11 @@ class CompactLayoutPlusWidget extends LayoutWidgetBase
     ; Internal vertical stack (top → bottom):
     ;   pad(2) | header(fontHeader+4) | gap(1) | timer(rest) | gap(2) | pb(fontPb+2) | pad(2)
     ;
-    ; PB is anchored to the bottom (PB sub-label has a fixed visual
-    ; height proportional to its font), header to the top, and the
-    ; timer fills whatever vertical space is left in between. This
-    ; avoids the older formula (timerY = bh * 0.30, timerH = fontTimer
-    ; + 6) which produced an overlap between timer and PB at bh=42
-    ; — the mono timer glyphs were visibly clipped because the
-    ; effective bounding box was smaller than the Consolas line
-    ; height. Defensive floor at the bottom guarantees the timer
-    ; bounding box never shrinks below fontTimer+6 even if a future
-    ; smaller BLOCK_H gets introduced.
+    ; PB is anchored to the bottom, header to the top, and the
+    ; timer fills whatever vertical space is left in between. The
+    ; defensive floor `timerH >= fontTimer+6` guarantees the mono
+    ; bounding box doesn't shrink below the Consolas line height
+    ; even if a future smaller BLOCK_H is introduced.
     _BuildBlock(prefix, bx, by, bw, bh, headerText, fontHeader, fontTimer, fontPb)
     {
         wg := this._gui
@@ -492,10 +455,6 @@ class CompactLayoutPlusWidget extends LayoutWidgetBase
             100)
 
         ; Layout math (see header comment above for the stack).
-        ; headerY = by + 4 (was by + 2) pushes the "ZONE"/"RUN"
-        ; label down inside the block — combined with the 4 px
-        ; gap before the block, the visual distance from the
-        ; LINE1 text descender to the header is comfortable.
         ; pbH = fontPb + 2 is the minimum that keeps the PB box
         ; readable at scale 1.0; if the user shrinks below ~0.8
         ; the PB bottom may clip 1 px, accepted limitation.
@@ -754,8 +713,8 @@ class CompactLayoutPlusWidget extends LayoutWidgetBase
         }
     }
 
-    ; Same math as Compact Classic but no inline labels (footer is
-    ; 6 px high — labels wouldn't fit). 100 % map flash before the
+    ; Same math as Compact Classic but no inline labels (the bar is
+    ; too thin for legible text in Plus). 100 % map flash before the
     ; first transition is suppressed via the runMs <= 0 guard.
     _RefreshBar()
     {
@@ -1019,13 +978,10 @@ class CompactLayoutPlusWidget extends LayoutWidgetBase
 
     ; Live-timer format. MM:SS under 1h, H:MM:SS at 1h+. The Plus
     ; Compact widget intentionally drops centiseconds from the live
-    ; timer (user feedback in design discussion): the ZONE/RUN blocks
-    ; sit next to a static zone-name column on the left, and the
-    ; ticking last two digits competed visually with the steady
-    ; left-column text. PB sub-labels were already cs-free via
-    ; _FormatMsShort — dropping cs from the live timer brings both
-    ; rows to the same MM:SS shape so the eye doesn't have to track
-    ; a different precision per row.
+    ; timer: it sits next to a static zone-name column on the left,
+    ; and ticking cs digits compete visually with the steady text.
+    ; PB sub-labels are already cs-free via _FormatMsShort, so both
+    ; rows end up with the same MM:SS shape.
     static _FormatMs(ms)
     {
         if (ms < 0)

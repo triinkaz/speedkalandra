@@ -225,14 +225,6 @@ class SpeedKalandraApp
                 . this.personalBest.GetRunPbRunId() . ")", "App")
         }
 
-        ; Save handlers used to be subscribed NOW (before the services
-        ; that clear their state on RunCancelled) and the bus's FIFO
-        ; ordering carried them. Replaced with RunService.SetOnBefore*
-        ; hooks at the bottom of __New — the run snapshot is captured
-        ; in the same call frame as FinalizeRun/CancelRun, before any
-        ; subscriber sees the lifecycle event, so wiring order no
-        ; longer matters. See the class header.
-
         this.runState   := RunStateRepository(ini, runStateSink)
         this.timer      := TimerService(this.clock, this.bus)
         this.runService := RunService(this.clock, this.bus, this.timer, this.runState, this.log)
@@ -374,10 +366,8 @@ class SpeedKalandraApp
         this._persistFn := () => this._persister.PersistSettings()
 
         ; Compact widget: Classic vs Plus chosen by cfg.layoutVariant.
-        ; Same WIDGET_ID slot in [Overlay] across both variants so
-        ; the user's persisted position carries through a toggle.
-        ; Constructor signatures are identical — Plus is a drop-in
-        ; replacement at the composition root.
+        ; Both share WIDGET_ID and constructor signature, so Plus is
+        ; a drop-in replacement at this site.
         if (this._cfg.layoutVariant = "plus")
         {
             this.compactWidget := CompactLayoutPlusWidget(
@@ -398,10 +388,8 @@ class SpeedKalandraApp
         }
 
         ; Micro widget: Classic vs Plus chosen by cfg.layoutVariant.
-        ; Same WIDGET_ID slot in [Overlay] across both variants.
-        ; Plus re-injects zoneTracker / zonesCatalog / personalBest —
-        ; Classic only needed timer + xp because Lv N was its only
-        ; PB-independent payload.
+        ; Plus re-injects zoneTracker / zonesCatalog / personalBest;
+        ; Classic doesn't need them (only timer + xp).
         if (this._cfg.layoutVariant = "plus")
         {
             this.microWidget := MicroLayoutPlusWidget(
@@ -419,11 +407,8 @@ class SpeedKalandraApp
         }
 
         ; Steve widget: Classic vs Plus chosen by cfg.layoutVariant.
-        ; Both classes share WIDGET_ID ("steveLayout") so the user's
-        ; persisted position carries across a toggle. Plus re-injects
-        ; loadingTotals + cfg — dependencies Classic doesn't need.
-        ; The flag is read once at boot; SettingsDialog surfaces a
-        ; MsgBox prompting the user to restart when they flip it.
+        ; Plus re-injects loadingTotals + cfg. The flag is read once
+        ; at boot; SettingsDialog prompts the user to restart on flip.
         if (this._cfg.layoutVariant = "plus")
         {
             this.steveWidget := SteveLayoutPlusWidget(
