@@ -61,24 +61,68 @@ class SettingsRepository
         return cfg
     }
 
+    ; Save with backup-rollback. Sections are still serialized via
+    ; sequential IniWrite calls; true atomicity would require a
+    ; full in-memory rebuild + single AtomicWriter flush, which is
+    ; a deeper refactor of IniFile. This path adds defense in depth:
+    ; copy the existing INI to a .pre-save sibling before mutating,
+    ; wrap the save sequence in try/catch, and restore the backup
+    ; on any throw. The dominant failure mode in practice is a
+    ; mid-sequence IniWrite throw (file lock, permissions, AV) and
+    ; this covers it. The small gap between FileCopy and the first
+    ; IniWrite (where a system crash could lose both) is accepted.
     Save(cfg)
     {
         if !(cfg is AppSettings)
             throw TypeError("SettingsRepository.Save: 'cfg' must be AppSettings")
-        this._SaveGeneral(cfg)
-        this._SaveCharacter(cfg)
-        this._SaveCurrentArea(cfg)
-        this._SaveRules(cfg)
-        this._SaveLoadingVisual(cfg)
-        this._SaveAutoFinalize(cfg)
-        this._SaveAutoStart(cfg)
-        this._SaveVendorRegexes(cfg)
-        this._SaveDisclaimer(cfg)
-        this._SaveDiagnostics(cfg)
-        this._SaveLayouts(cfg)
-        this._SaveHotkeys(cfg)
-        this._SaveWindow(cfg.window)
-        this._SaveOverlay(cfg.overlay)
+
+        iniPath := this._ini.path
+        backupPath := iniPath . ".pre-save"
+        hadFile := !!FileExist(iniPath)
+
+        if hadFile
+        {
+            try FileCopy(iniPath, backupPath, true)
+        }
+
+        try
+        {
+            this._SaveGeneral(cfg)
+            this._SaveCharacter(cfg)
+            this._SaveCurrentArea(cfg)
+            this._SaveRules(cfg)
+            this._SaveLoadingVisual(cfg)
+            this._SaveAutoFinalize(cfg)
+            this._SaveAutoStart(cfg)
+            this._SaveVendorRegexes(cfg)
+            this._SaveDisclaimer(cfg)
+            this._SaveDiagnostics(cfg)
+            this._SaveLayouts(cfg)
+            this._SaveHotkeys(cfg)
+            this._SaveWindow(cfg.window)
+            this._SaveOverlay(cfg.overlay)
+        }
+        catch as ex
+        {
+            ; Restore pre-save bytes so the user's INI isn't left
+            ; half-written. Best-effort: if the restore itself
+            ; fails, the .pre-save file stays on disk so the user
+            ; can recover it manually.
+            if (hadFile && FileExist(backupPath))
+            {
+                try FileCopy(backupPath, iniPath, true)
+            }
+            try FileDelete(backupPath)
+            ; Rethrow so the caller can react (SettingsDialog shows
+            ; an error MsgBox; programmatic callers see the exception).
+            throw ex
+        }
+
+        ; Success path — discard the backup.
+        if FileExist(backupPath)
+        {
+            try FileDelete(backupPath)
+        }
     }
 
     ; ============================================================

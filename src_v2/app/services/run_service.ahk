@@ -282,7 +282,24 @@ class RunService
 
     _Persist()
     {
-        try this._stateRepo.Save(this._state)
+        try
+        {
+            this._stateRepo.Save(this._state)
+        }
+        catch as ex
+        {
+            ; Lifecycle-transition persist (NewRun, FinalizeRun,
+            ; CancelRun, ResetRun). A failure here means crash
+            ; recovery will see stale data on the next boot —
+            ; warn via the log so a silent persistence drift
+            ; becomes visible. PersistTimer (every-5s tick) stays
+            ; silent on purpose: the next tick retries, and
+            ; warning per tick would flood the log if the disk is
+            ; persistently unavailable.
+            try this._log.Warn("Lifecycle persist failed: " . ex.Message
+                . " | status=" . this._state.status,
+                "RunService")
+        }
     }
 
     ; Invokes a pre-publish hook with try/catch + Warn. Centralized so

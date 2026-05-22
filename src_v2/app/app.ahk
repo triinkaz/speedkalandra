@@ -435,7 +435,7 @@ class SpeedKalandraApp
         this.overlayApplier := OverlayModeApplier(this.bus, this.widgets)
         this.tickEmitter := AppTickEmitter(this.bus, 300)
 
-        this.settingsDialog := SettingsDialog(this.bus, this._settingsRepo, this._cfg, headless)
+        this.settingsDialog := SettingsDialog(this.bus, this._settingsRepo, this._cfg, headless, this.log)
         this.plotDialog := RunStatsPlotDialog(
             this.bus, this.plotBuilder, this.statsRecorder,
             this.zoneTracker, this.timer, this.runHistory, headless

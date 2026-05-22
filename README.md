@@ -24,6 +24,10 @@ PoE2 translates `Client.txt` to the UI language, and SpeedKalandra parses Englis
 
 The auto-start and auto-finalize regexes can be edited in **Settings** to match the equivalent lines in your locale; the manual hotkeys (`Ctrl+Alt+N` to start, `Ctrl+Alt+F` to finalize) also work. The pixel-based loading detector is language-agnostic — a non-English user can time runs manually with loading isolation, but the core campaign-tracking experience assumes English.
 
+## Cruel difficulty: live tracking is partial
+
+The campaign zones in cruel difficulty (acts 1–3 replayed before endgame) emit a different log signal than normal acts — `Generating level X area "C_<id>"` only, with no `[SCENE] Set Source` line. SpeedKalandra's live tracker only watches `[SCENE]`, so during a cruel run, zone transitions are not detected and zone time accumulates against the last normal zone seen before crossing into cruel. The post-run **Death Stats** dialog has an "All-time (from log)" view that does pick up cruel zones (with a `" (Cruel)"` suffix) — use that for inspecting cruel deaths until the live path catches up. See `KNOWN_ISSUES.md` for the full breakdown.
+
 ## Disclaimer
 
 SpeedKalandra is an independent personal project. It reads Path of Exile 2's `Client.txt` log file and samples pixel colors on screen for loading detection — it does not inject into the game process, modify game files, or send gameplay inputs. The only key-level action it issues is a defensive `{Ctrl up}{Alt up}{Shift up}{LWin up}{RWin up}` on script exit, which releases modifiers if AHK happens to terminate while you're holding a hotkey (`SpeedKalandraOnExitHandler` in `speedkalandra.ahk`). This is OS-level housekeeping, not addressed at the game. To the best of my knowledge this falls within typical overlay/tracker territory, but I make no guarantees; use it understanding that you are responsible for what runs on your machine while playing.

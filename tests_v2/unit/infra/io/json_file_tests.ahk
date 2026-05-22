@@ -96,6 +96,22 @@ class JsonFileTests extends TestCase
         "parse_throws_on_invalid_escape",
         "parse_throws_on_non_string_input",
 
+        ; --- Parse: surrogate pairs (BMP+ chars like emoji) ---
+        "parse_handles_surrogate_pair_for_emoji",
+        "parse_throws_on_lone_high_surrogate",
+        "parse_throws_on_lone_low_surrogate",
+        "parse_throws_on_high_surrogate_not_followed_by_low",
+
+        ; --- Parse: strict number grammar (RFC 8259) ---
+        "parse_throws_on_leading_zero_integer",
+        "parse_throws_on_dot_without_fractional_digits",
+        "parse_throws_on_exponent_without_digits",
+        "parse_throws_on_exponent_sign_without_digits",
+
+        ; --- Parse: trailing comma (JSON forbids) ---
+        "parse_throws_on_trailing_comma_in_array",
+        "parse_throws_on_trailing_comma_in_object",
+
         ; --- Roundtrip ---
         "roundtrip_stringify_parse_preserves_simple_map",
         "roundtrip_stringify_parse_preserves_nested",
@@ -447,6 +463,119 @@ class JsonFileTests extends TestCase
         jsonInst := JsonFile(path)
         jsonInst.Write(Map("k", "v"))
         Assert.False(FileExist(path ".tmp"))
+    }
+
+    ; ============================================================
+    ; Parse: surrogate pairs (BMP+ chars like emoji)
+    ; ============================================================
+    ;
+    ; JSON encodes characters above the BMP as a high-surrogate +
+    ; low-surrogate pair (RFC 8259 §7). Without surrogate handling,
+    ; Chr() on a lone high surrogate emits ill-formed UTF-16; with
+    ; it, the two escapes combine into a single codepoint that AHK
+    ; can round-trip cleanly. Lone surrogates (high without low, or
+    ; low alone) are malformed and must throw.
+
+    parse_handles_surrogate_pair_for_emoji()
+    {
+        ; U+1F600 (GRINNING FACE) is encoded as \uD83D\uDE00.
+        ; The combined codepoint is 0x10000 + (0xD83D - 0xD800) * 0x400
+        ; + (0xDE00 - 0xDC00) = 0x1F600.
+        result := JsonFile.Parse('"\uD83D\uDE00"')
+        Assert.Equal(Chr(0x1F600), result,
+            "Surrogate pair must combine into U+1F600")
+    }
+
+    parse_throws_on_lone_high_surrogate()
+    {
+        ; \uD83D alone (no following \uXXXX) is malformed.
+        Assert.Throws(Error, () => JsonFile.Parse('"\uD83D"'),
+            "Lone high surrogate must throw")
+    }
+
+    parse_throws_on_lone_low_surrogate()
+    {
+        ; \uDE00 with no preceding high surrogate is malformed.
+        Assert.Throws(Error, () => JsonFile.Parse('"\uDE00"'),
+            "Lone low surrogate must throw")
+    }
+
+    parse_throws_on_high_surrogate_not_followed_by_low()
+    {
+        ; \uD83D followed by a non-surrogate \u (\u0041 = 'A') is
+        ; malformed: the high surrogate demands a low surrogate.
+        Assert.Throws(Error, () => JsonFile.Parse('"\uD83D\u0041"'),
+            "High surrogate not followed by low surrogate must throw")
+    }
+
+    ; ============================================================
+    ; Parse: strict number grammar (RFC 8259 §6)
+    ; ============================================================
+    ;
+    ; The lax pre-fix parser accepted 01, 1., 1e and other shapes
+    ; that JSON forbids. Each of these would silently feed into
+    ; Integer()/Float() and either round-trip with surprising values
+    ; or throw with a confusing low-level message. The hardened
+    ; parser rejects these at the JSON layer with a clear message.
+
+    parse_throws_on_leading_zero_integer()
+    {
+        ; "01" is malformed (RFC 8259 §6: a single 0 OR 1-9 followed
+        ; by more digits; never 0 followed by more digits).
+        Assert.Throws(Error, () => JsonFile.Parse("01"),
+            "Leading zero must throw")
+        Assert.Throws(Error, () => JsonFile.Parse("007"),
+            "Multiple leading zeros must throw")
+    }
+
+    parse_throws_on_dot_without_fractional_digits()
+    {
+        ; "1." is malformed: the decimal point demands at least one
+        ; digit after it.
+        Assert.Throws(Error, () => JsonFile.Parse("1."),
+            "Decimal point without fractional digits must throw")
+    }
+
+    parse_throws_on_exponent_without_digits()
+    {
+        ; "1e" is malformed: the exponent marker demands at least
+        ; one digit (with or without sign).
+        Assert.Throws(Error, () => JsonFile.Parse("1e"),
+            "Exponent marker without digits must throw")
+        Assert.Throws(Error, () => JsonFile.Parse("1E"),
+            "Uppercase exponent marker without digits must throw")
+    }
+
+    parse_throws_on_exponent_sign_without_digits()
+    {
+        ; "1e+" and "1e-" are malformed: even with the sign, at
+        ; least one digit must follow.
+        Assert.Throws(Error, () => JsonFile.Parse("1e+"),
+            "Exponent with sign but no digits must throw")
+        Assert.Throws(Error, () => JsonFile.Parse("1e-"),
+            "Exponent with negative sign but no digits must throw")
+    }
+
+    ; ============================================================
+    ; Parse: trailing comma (JSON forbids)
+    ; ============================================================
+    ;
+    ; JSON (RFC 8259) does NOT allow trailing commas in arrays or
+    ; objects — unlike JavaScript object literals. The parser must
+    ; reject them so a stray comma in a hand-edited or AI-generated
+    ; file surfaces with a clear error instead of being silently
+    ; tolerated.
+
+    parse_throws_on_trailing_comma_in_array()
+    {
+        Assert.Throws(Error, () => JsonFile.Parse("[1, 2, 3,]"),
+            "Trailing comma in array must throw")
+    }
+
+    parse_throws_on_trailing_comma_in_object()
+    {
+        Assert.Throws(Error, () => JsonFile.Parse('{"a":1,}'),
+            "Trailing comma in object must throw")
     }
 }
 

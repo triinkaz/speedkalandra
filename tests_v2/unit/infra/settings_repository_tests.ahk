@@ -12,6 +12,31 @@
 ; compare). Also covers specific invariants (VendorRegexes truncation
 ; at 250 chars, Overlay sanitization).
 
+; Test helper: an IniFile that throws on a chosen Write call. Used
+; to drive the Save backup-rollback path — the user-facing
+; consequence of a mid-sequence Save throw is the INI being
+; restored to its pre-save state and the exception bubbling to
+; the caller (SettingsDialog._OnSave shows an error MsgBox).
+class _ThrowingIniFile extends IniFile
+{
+    _throwOnCall := 0     ; 1-indexed; 0 means "never throw"
+    _callCount   := 0
+
+    ThrowOnCall(n)
+    {
+        this._throwOnCall := n
+        this._callCount := 0
+    }
+
+    Write(value, section, key)
+    {
+        this._callCount += 1
+        if (this._throwOnCall > 0 && this._callCount = this._throwOnCall)
+            throw Error("_ThrowingIniFile: forced failure on call " . this._callCount)
+        super.Write(value, section, key)
+    }
+}
+
 class SettingsRepositoryTests extends TestCase
 {
     Teardown()
@@ -65,6 +90,11 @@ class SettingsRepositoryTests extends TestCase
         ; --- Bool coercion ---
         "bool_one_reads_as_true",
         "bool_zero_reads_as_false",
+
+        ; --- Backup-rollback on Save failure ---
+        "save_success_removes_pre_save_backup_file",
+        "save_failure_restores_pre_save_bytes_and_rethrows",
+        "save_failure_on_empty_ini_does_not_create_backup",
     ]
 
     ; ============================================================
@@ -546,6 +576,106 @@ class SettingsRepositoryTests extends TestCase
         repo := SettingsRepository(mainIni)
         loaded := repo.Load()
         Assert.False(loaded.autoPauseOnFocus)
+    }
+
+    ; ============================================================
+    ; Backup-rollback on Save failure
+    ; ============================================================
+
+    save_success_removes_pre_save_backup_file()
+    {
+        ; The .pre-save sibling is a transient artifact — it exists
+        ; only between the FileCopy at the top of Save and the
+        ; FileDelete at the bottom on the success path. After a
+        ; successful Save it must not be left behind, or repeated
+        ; saves would slowly fill the user's directory with stale
+        ; backups.
+        path := Fixtures.TempPath("ini")
+        mainIni := IniFile(path)
+        repo := SettingsRepository(mainIni)
+
+        cfg := AppSettings.Defaults()
+        cfg.profileName := "V1"
+        repo.Save(cfg)   ; create the INI so the next Save has a file to back up
+
+        cfg.profileName := "V2"
+        repo.Save(cfg)
+
+        Assert.False(FileExist(path . ".pre-save") != "",
+            ".pre-save must not linger after a successful Save")
+    }
+
+    save_failure_restores_pre_save_bytes_and_rethrows()
+    {
+        ; Mid-sequence Write throw: the file must end up back at the
+        ; pre-Save bytes (not the partial-write state), and the
+        ; original exception must bubble so the caller can show an
+        ; error to the user.
+        path := Fixtures.TempPath("ini")
+
+        ; First, lay down a known-good baseline via the real IniFile.
+        seedIni := IniFile(path)
+        seedRepo := SettingsRepository(seedIni)
+        baseline := AppSettings.Defaults()
+        baseline.profileName := "BaselineProfile"
+        baseline.characterName := "BaselineChar"
+        seedRepo.Save(baseline)
+
+        ; Sanity: the baseline is on disk.
+        Assert.Equal("BaselineProfile",
+            seedIni.Read("General", "ProfileName"))
+
+        ; Now drive a Save through a ThrowingIniFile that fails on
+        ; the 4th Write — i.e. after [General].ProfileName,
+        ; [General].GamePatch, [General].LogFile have been written
+        ; with the NEW values but before the rest of the sections
+        ; land. Without backup-rollback, the INI would be a hybrid
+        ; (new General + old Character/Rules/etc.).
+        throwingIni := _ThrowingIniFile(path)
+        throwingIni.ThrowOnCall(4)
+        repo := SettingsRepository(throwingIni)
+
+        nextCfg := AppSettings.Defaults()
+        nextCfg.profileName := "NewProfile"
+        nextCfg.characterName := "NewChar"
+
+        Assert.Throws(Error, () => repo.Save(nextCfg),
+            "Mid-sequence Save throw must bubble to caller")
+
+        ; After the throw, the file must be back at the baseline
+        ; bytes — ProfileName must NOT have flipped to "NewProfile".
+        verifyIni := IniFile(path)
+        Assert.Equal("BaselineProfile",
+            verifyIni.Read("General", "ProfileName"),
+            "Failed Save must restore the pre-save ProfileName")
+        Assert.Equal("BaselineChar",
+            verifyIni.Read("Character", "Name"),
+            "Failed Save must restore the pre-save Character.Name")
+
+        ; And the .pre-save backup must have been cleaned up.
+        Assert.False(FileExist(path . ".pre-save") != "",
+            ".pre-save must be removed even after a failed restore-then-cleanup")
+    }
+
+    save_failure_on_empty_ini_does_not_create_backup()
+    {
+        ; Fresh-install case: the INI doesn't exist yet. Save must
+        ; still try the sequence, propagate the throw, and not leave
+        ; a phantom .pre-save behind (there was nothing to back up).
+        path := Fixtures.TempPath("ini")
+        if FileExist(path)
+            FileDelete(path)
+
+        throwingIni := _ThrowingIniFile(path)
+        throwingIni.ThrowOnCall(1)   ; fail on the very first Write
+        repo := SettingsRepository(throwingIni)
+
+        cfg := AppSettings.Defaults()
+        Assert.Throws(Error, () => repo.Save(cfg),
+            "Save throw must propagate on fresh-install path")
+
+        Assert.False(FileExist(path . ".pre-save") != "",
+            "No .pre-save should be created when there was no pre-existing INI")
     }
 }
 

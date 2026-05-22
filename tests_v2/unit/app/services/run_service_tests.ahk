@@ -21,6 +21,29 @@
 ;
 ; Real deps used: TimerService + RunStateRepository (typecheck via `is`).
 
+; Test helper: RunStateRepository subclass whose Save throws on
+; demand. Used to verify the lifecycle-persist warn path (a
+; mid-lifecycle disk failure must surface in the log so the
+; silent-data-loss footgun doesn't return).
+class _ThrowingRunStateRepository extends RunStateRepository
+{
+    _throwNext := false
+
+    ThrowOnNextSave()
+    {
+        this._throwNext := true
+    }
+
+    Save(state)
+    {
+        if this._throwNext
+        {
+            this._throwNext := false
+            throw Error("_ThrowingRunStateRepository: forced Save failure")
+        }
+        super.Save(state)
+    }
+}
 
 class RunServiceTests extends TestCase
 {
@@ -136,6 +159,9 @@ class RunServiceTests extends TestCase
         "set_on_before_cancel_throws_when_callback_not_callable",
         "set_on_before_finalize_accepts_empty_string_to_clear",
         "hook_throw_is_warned_through_log",
+
+        ; --- Lifecycle persistence failure ---
+        "lifecycle_persist_failure_warns_through_log",
 
         ; --- Dispose ---
         "dispose_unsubscribes_all_commands",
@@ -851,6 +877,41 @@ class RunServiceTests extends TestCase
     static _ThrowSimulated()
     {
         throw Error("simulated hook failure")
+    }
+
+    ; ============================================================
+    ; Lifecycle persistence failure (silent-save guard)
+    ; ============================================================
+
+    lifecycle_persist_failure_warns_through_log()
+    {
+        ; The silent `try this._stateRepo.Save(...)` in _Persist was
+        ; flagged in a senior review: a failed lifecycle save means
+        ; crash recovery will see stale data on the next boot, and
+        ; the user would never know. The fix wraps the call in a
+        ; real try/catch + warn through the injected logger. This
+        ; test pins that contract.
+        ;
+        ; PersistTimer (every-5s) stays silent on purpose — the next
+        ; tick retries and warning per tick would flood the log. The
+        ; warn lives on the lifecycle path only.
+        freshBus    := Fixtures.MakeBus()
+        freshTimer  := TimerService(this.stubClock, freshBus)
+        freshRepoP  := Fixtures.TempPath("ini")
+        throwingRepo := _ThrowingRunStateRepository(IniFile(freshRepoP))
+        memLog      := InMemoryLogger()
+        freshSvc    := RunService(this.stubClock, freshBus, freshTimer, throwingRepo, memLog)
+
+        ; Force the next Save (called inside NewRun → _Persist) to throw.
+        throwingRepo.ThrowOnNextSave()
+        freshSvc.NewRun()   ; must NOT propagate the throw; bus/runtime stays alive
+
+        Assert.True(memLog.HasEntry("WARN", "Lifecycle persist failed"),
+            "_Persist surfaces save failure through the log")
+        Assert.True(freshSvc.IsActive(),
+            "NewRun still succeeds in memory despite a failed lifecycle persist")
+
+        try freshSvc.Dispose()
     }
 }
 

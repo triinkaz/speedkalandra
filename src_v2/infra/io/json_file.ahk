@@ -483,8 +483,41 @@ class JsonFile
                     if !RegExMatch(hex, "^[0-9A-Fa-f]{4}$")
                         throw Error("JsonFile.Parse: invalid \\uXXXX '" hex "' at position " pos)
                     code := Integer("0x" hex)
-                    out .= Chr(code)
                     pos += 6
+
+                    ; Surrogate pair handling. JSON encodes
+                    ; characters above the BMP (U+10000 and beyond,
+                    ; e.g. emoji) as two \u escapes: a high surrogate
+                    ; (D800-DBFF) followed by a low surrogate
+                    ; (DC00-DFFF). Chr() on a lone high surrogate
+                    ; would emit ill-formed UTF-16; the combined
+                    ; codepoint is what AHK can round-trip cleanly.
+                    ; A lone surrogate (high without low, or low
+                    ; without high) is malformed JSON.
+                    if (code >= 0xD800 && code <= 0xDBFF)
+                    {
+                        ; High surrogate — next 6 chars must be \uXXXX (low).
+                        if (pos + 5 > len || SubStr(text, pos, 2) != "\u")
+                            throw Error("JsonFile.Parse: lone high surrogate \\u" hex " at position " (pos - 6))
+                        hex2 := SubStr(text, pos + 2, 4)
+                        if !RegExMatch(hex2, "^[0-9A-Fa-f]{4}$")
+                            throw Error("JsonFile.Parse: invalid \\uXXXX after high surrogate at position " pos)
+                        code2 := Integer("0x" hex2)
+                        if (code2 < 0xDC00 || code2 > 0xDFFF)
+                            throw Error("JsonFile.Parse: high surrogate \\u" hex " not followed by low surrogate at position " pos)
+                        ; Combine into a single codepoint (RFC 8259 / RFC 2781).
+                        combined := 0x10000 + (code - 0xD800) * 0x400 + (code2 - 0xDC00)
+                        out .= Chr(combined)
+                        pos += 6
+                    }
+                    else if (code >= 0xDC00 && code <= 0xDFFF)
+                    {
+                        throw Error("JsonFile.Parse: lone low surrogate \\u" hex " at position " (pos - 6))
+                    }
+                    else
+                    {
+                        out .= Chr(code)
+                    }
                 }
                 else
                 {
@@ -506,26 +539,33 @@ class JsonFile
         len := state["len"]
         start := state["pos"]
         pos := start
+
+        ; --- Optional minus sign (JSON forbids leading '+') ---
         if (SubStr(text, pos, 1) = "-")
             pos += 1
-        while (pos <= len)
+
+        ; --- Integer part ---
+        ; RFC 8259 §6: a single '0' is fine; '01' / '07' are NOT.
+        ; The first char after the optional sign must be a digit,
+        ; and if it's '0' the next char must not be another digit.
+        if (pos > len)
+            throw Error("JsonFile.Parse: invalid number at position " start " (no digits)")
+        firstDigit := SubStr(text, pos, 1)
+        firstCode := Ord(firstDigit)
+        if (firstCode < 48 || firstCode > 57)
+            throw Error("JsonFile.Parse: invalid number at position " start " (expected digit)")
+        if (firstDigit = "0")
         {
-            ch := SubStr(text, pos, 1)
-            code := Ord(ch)
-            if (code >= 48 && code <= 57)   ; 0-9
+            pos += 1
+            if (pos <= len)
             {
-                pos += 1
-                continue
+                nextCode := Ord(SubStr(text, pos, 1))
+                if (nextCode >= 48 && nextCode <= 57)
+                    throw Error("JsonFile.Parse: invalid number at position " start " (leading zero)")
             }
-            break
         }
-        ; Local name is `numIsFloat` (not `isFloat`) to avoid a
-        ; case-insensitive collision with the builtin function
-        ; `IsFloat` which triggers #Warn.
-        numIsFloat := false
-        if (pos <= len && SubStr(text, pos, 1) = ".")
+        else
         {
-            numIsFloat := true
             pos += 1
             while (pos <= len)
             {
@@ -538,6 +578,29 @@ class JsonFile
                 break
             }
         }
+
+        ; --- Optional fraction: '.' MUST be followed by >=1 digit ---
+        numIsFloat := false
+        if (pos <= len && SubStr(text, pos, 1) = ".")
+        {
+            numIsFloat := true
+            pos += 1
+            fracStart := pos
+            while (pos <= len)
+            {
+                code := Ord(SubStr(text, pos, 1))
+                if (code >= 48 && code <= 57)
+                {
+                    pos += 1
+                    continue
+                }
+                break
+            }
+            if (pos = fracStart)
+                throw Error("JsonFile.Parse: invalid number at position " start " (no digits after '.')")
+        }
+
+        ; --- Optional exponent: 'e'/'E' [sign] >=1 digit ---
         if (pos <= len)
         {
             ch := SubStr(text, pos, 1)
@@ -551,6 +614,7 @@ class JsonFile
                     if (sign = "+" || sign = "-")
                         pos += 1
                 }
+                expStart := pos
                 while (pos <= len)
                 {
                     code := Ord(SubStr(text, pos, 1))
@@ -561,8 +625,11 @@ class JsonFile
                     }
                     break
                 }
+                if (pos = expStart)
+                    throw Error("JsonFile.Parse: invalid number at position " start " (no digits in exponent)")
             }
         }
+
         numStr := SubStr(text, start, pos - start)
         state["pos"] := pos
         if (numStr = "" || numStr = "-")

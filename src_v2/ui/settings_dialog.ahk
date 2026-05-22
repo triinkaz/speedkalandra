@@ -31,12 +31,13 @@ class SettingsDialog
     _settingsRepo  := ""
     _cfg           := ""
     _headless      := false
+    _log           := ""   ; Logger (NullLogger by default). Used to record save failures.
     _gui           := ""
     _ctrls         := ""    ; Map<key, GuiControl>
     _isOpen        := false
     _hotkeyActions := ""    ; Array<actionName> ordered
 
-    __New(bus, settingsRepo, cfg, headless := false)
+    __New(bus, settingsRepo, cfg, headless := false, log := "")
     {
         if !(bus is EventBus)
             throw TypeError("SettingsDialog: 'bus' must be EventBus")
@@ -49,6 +50,11 @@ class SettingsDialog
         this._settingsRepo := settingsRepo
         this._cfg          := cfg
         this._headless     := !!headless
+        ; Logger is optional (tests construct without one and existing
+        ; call sites pre-date the `log` param). Default to NullLogger
+        ; so the save-failure warn path is a safe no-op in those
+        ; callers. Production wires the real LogService.
+        this._log          := (log = "" || !IsObject(log)) ? NullLogger() : log
         this._ctrls        := Map()
         this._hotkeyActions := []
 
@@ -374,7 +380,38 @@ class SettingsDialog
         }
         hotkeysChanged := !SettingsDialog._StringMapsEqual(oldHotkeys, cfg.hotkeys)
 
-        try this._settingsRepo.Save(cfg)
+        ; ATOMIC SAVE — the repository's backup-rollback restores
+        ; the previous INI bytes on any mid-sequence throw, but we
+        ; still own the user-facing consequences here: NO change
+        ; events on failure (services would hot-reload based on
+        ; stale cfg), NO "Settings saved" TrayTip (lying to the
+        ; user), and the dialog stays open so the user can retry
+        ; or Cancel out cleanly. The in-memory cfg has been mutated
+        ; in-place during the field loop above; we accept that as
+        ; the recovery path (next save retry uses the same values)
+        ; rather than try to roll back N field assignments here.
+        try
+        {
+            this._settingsRepo.Save(cfg)
+        }
+        catch as ex
+        {
+            try this._log.Warn("Settings save failed: " . ex.Message
+                . " | What: " . (ex.HasOwnProp("What") ? ex.What : "?")
+                . " | Line: " . (ex.HasOwnProp("Line") ? ex.Line : "?"),
+                "SettingsDialog")
+            try SpeedKalandraMsgBox(
+                "Failed to save settings to disk.`n`n"
+                . "Reason: " . ex.Message . "`n`n"
+                . "Your changes are NOT persisted. The previous INI was "
+                . "restored. Try again, or check that speedkalandra.ini "
+                . "isn't locked by another process. Details in "
+                . "data\\speedkalandra.log.",
+                "Save failed",
+                "IconX")
+            return   ; abort: no publishes, no success TrayTip, dialog stays open
+        }
+
         ; logFile change → publish so the composition root can
         ; restart LogMonitor against the new path. Empty new path is
         ; also published (the user may want monitoring disabled).
