@@ -26,8 +26,8 @@ class CompactLayoutPlusWidgetTests extends TestCase
         "constants_display_name_differs_from_classic",
 
         ; --- _FormatMs / _FormatMsShort ---
-        "format_ms_zero_returns_zero_padded",
-        "format_ms_under_hour_includes_centiseconds",
+        "format_ms_zero_returns_mm_ss",
+        "format_ms_under_hour_returns_mm_ss",
         "format_ms_over_hour_drops_centiseconds",
         "format_ms_negative_treated_as_zero",
         "format_ms_short_under_hour_no_centiseconds",
@@ -45,7 +45,13 @@ class CompactLayoutPlusWidgetTests extends TestCase
         "truncate_long_text_appends_ellipsis",
         "truncate_avail_zero_returns_empty",
         "truncate_empty_text_returns_empty",
-        "truncate_very_narrow_avail_returns_just_ellipsis"
+        "truncate_very_narrow_avail_returns_just_ellipsis",
+
+        ; --- _SplitToTwoWords (word-split policy for zone name lines) ---
+        "split_to_two_words_empty_returns_empty_lines",
+        "split_to_two_words_single_word_goes_to_line1",
+        "split_to_two_words_two_words_split_correctly",
+        "split_to_two_words_more_than_two_words_drops_extras"
     ]
 
     ; ============================================================
@@ -76,14 +82,20 @@ class CompactLayoutPlusWidgetTests extends TestCase
     ; _FormatMs / _FormatMsShort
     ; ============================================================
 
-    format_ms_zero_returns_zero_padded()
+    format_ms_zero_returns_mm_ss()
     {
-        Assert.Equal("00:00.00", CompactLayoutPlusWidget._FormatMs(0))
+        ; Compact Plus drops centiseconds from the live timer
+        ; (different from Steve Plus / Micro Plus, which still
+        ; include cs). See _FormatMs header comment for the
+        ; rationale.
+        Assert.Equal("00:00", CompactLayoutPlusWidget._FormatMs(0))
     }
 
-    format_ms_under_hour_includes_centiseconds()
+    format_ms_under_hour_returns_mm_ss()
     {
-        Assert.Equal("02:31.23", CompactLayoutPlusWidget._FormatMs(151234))
+        ; 151234 ms = 2:31.234. Under 1h, format is MM:SS with no
+        ; centiseconds.
+        Assert.Equal("02:31", CompactLayoutPlusWidget._FormatMs(151234))
     }
 
     format_ms_over_hour_drops_centiseconds()
@@ -93,7 +105,7 @@ class CompactLayoutPlusWidgetTests extends TestCase
 
     format_ms_negative_treated_as_zero()
     {
-        Assert.Equal("00:00.00", CompactLayoutPlusWidget._FormatMs(-100))
+        Assert.Equal("00:00", CompactLayoutPlusWidget._FormatMs(-100))
     }
 
     format_ms_short_under_hour_no_centiseconds()
@@ -188,6 +200,52 @@ class CompactLayoutPlusWidgetTests extends TestCase
         ; signals truncation) rather than a half-rendered ellipsis.
         Assert.Equal("...",
             CompactLayoutPlusWidget._TruncateToWidth("anything", 10, 5))
+    }
+
+    ; ============================================================
+    ; _SplitToTwoWords — zone name -> 2 stacked lines (left column)
+    ; ============================================================
+
+    split_to_two_words_empty_returns_empty_lines()
+    {
+        ; Defensive: when there's no current zone (boot, between
+        ; runs), _RefreshLine1 hands an em-dash or empty string
+        ; here. Both lines must come back empty so the second
+        ; control renders blank rather than echoing whatever was
+        ; on it before.
+        result := CompactLayoutPlusWidget._SplitToTwoWords("")
+        Assert.Equal("", result["line1"])
+        Assert.Equal("", result["line2"])
+    }
+
+    split_to_two_words_single_word_goes_to_line1()
+    {
+        ; "Manor" -> line1="Manor", line2="" (so the second
+        ; control renders blank rather than duplicating the word).
+        result := CompactLayoutPlusWidget._SplitToTwoWords("Manor")
+        Assert.Equal("Manor", result["line1"])
+        Assert.Equal("",      result["line2"])
+    }
+
+    split_to_two_words_two_words_split_correctly()
+    {
+        ; The canonical case from the design discussion:
+        ; "Clearfell Encampment" -> line1="Clearfell",
+        ; line2="Encampment".
+        result := CompactLayoutPlusWidget._SplitToTwoWords("Clearfell Encampment")
+        Assert.Equal("Clearfell",  result["line1"])
+        Assert.Equal("Encampment", result["line2"])
+    }
+
+    split_to_two_words_more_than_two_words_drops_extras()
+    {
+        ; "The Twilight Strand" -> line1="The", line2="Twilight".
+        ; "Strand" is dropped: showing partial tails of the name
+        ; would clutter the left column without communicating the
+        ; rest. The truncation is by intent, not by width.
+        result := CompactLayoutPlusWidget._SplitToTwoWords("The Twilight Strand")
+        Assert.Equal("The",      result["line1"])
+        Assert.Equal("Twilight", result["line2"])
     }
 }
 

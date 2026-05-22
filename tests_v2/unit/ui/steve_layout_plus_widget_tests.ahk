@@ -45,7 +45,13 @@ class SteveLayoutPlusWidgetTests extends TestCase
         "resolve_timer_color_zero_current_returns_text",
         "resolve_timer_color_under_pb_returns_good_strong",
         "resolve_timer_color_at_pb_returns_good_strong",
-        "resolve_timer_color_over_pb_returns_danger"
+        "resolve_timer_color_over_pb_returns_danger",
+
+        ; --- _TruncateToWidth (act/zone overflow on long zone names) ---
+        "truncate_short_text_returns_as_is",
+        "truncate_long_text_appends_ellipsis",
+        "truncate_empty_text_returns_empty",
+        "truncate_very_narrow_avail_returns_just_ellipsis"
     ]
 
     ; ============================================================
@@ -197,6 +203,51 @@ class SteveLayoutPlusWidgetTests extends TestCase
     {
         Assert.Equal(Theme.Color("danger"),
             SteveLayoutPlusWidget._ResolveTimerColor(75000, 60000))
+    }
+
+    ; ============================================================
+    ; _TruncateToWidth — prevents AHK Text wrap on long zone names
+    ;
+    ; Anti-regression: the LINE1 act/zone control has h=30 (matches
+    ; the mono timer height), which is enough room for two lines
+    ; of FONT_ACT_ZONE=9pt text. Without truncation, AHK Text
+    ; word-wraps long composed strings like
+    ; "Act 1 · Clearfell Encampment" onto a second line, colliding
+    ; with the chip row below.
+    ; ============================================================
+
+    truncate_short_text_returns_as_is()
+    {
+        ; 6 chars x 9 x 0.6 = ~32 px estimate; well under 200 avail.
+        Assert.Equal("Act 1",
+            SteveLayoutPlusWidget._TruncateToWidth("Act 1", 9, 200))
+    }
+
+    truncate_long_text_appends_ellipsis()
+    {
+        ; "Act 1 · Clearfell Encampment" is the canonical case from
+        ; the design discussion: 28 chars x 9 x 0.6 = ~151 px,
+        ; over the ~140 px available next to the wide mono timer.
+        result := SteveLayoutPlusWidget._TruncateToWidth(
+            "Act 1 " Chr(0x00B7) " Clearfell Encampment", 9, 100)
+        Assert.Equal("...", SubStr(result, -3),
+            "Truncated text must end in '...': got '" result "'")
+        Assert.True(StrLen(result) < StrLen("Act 1 · Clearfell Encampment"),
+            "Truncated text must be shorter than the original")
+    }
+
+    truncate_empty_text_returns_empty()
+    {
+        Assert.Equal("", SteveLayoutPlusWidget._TruncateToWidth("", 9, 200))
+    }
+
+    truncate_very_narrow_avail_returns_just_ellipsis()
+    {
+        ; availW < ellipsisW: helper returns "..." alone (still
+        ; signals truncation visually) rather than a half-rendered
+        ; ellipsis or crashing.
+        Assert.Equal("...",
+            SteveLayoutPlusWidget._TruncateToWidth("anything", 9, 5))
     }
 }
 

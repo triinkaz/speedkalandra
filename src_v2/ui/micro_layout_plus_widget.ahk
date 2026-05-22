@@ -6,22 +6,26 @@
 ; Shares WIDGET_ID and base dimensions with MicroLayoutWidget so
 ; the persisted position carries across the toggle.
 ;
-; LAYOUT (base 200×32 at scale=1.0):
+; LAYOUT (base 200x32 at scale=1.0):
 ;
 ;   +--------------------------------+
-;   | 00:28  │  03:33  │   XP        |
+;   |        03:33        |  XP      |
 ;   +--------------------------------+
 ;
-; Three blocks separated by 1 px vertical lines in `Theme.Color("line")`
-; (3A3330) — no `/`, `;`, `·` glyphs (spec §4.3).
+; Two blocks: RUN timer (wide, mono) on the left + XP chip on the
+; right, separated by a 1 px vertical line in `Theme.Color("line")`
+; (3A3330) -- no `/`, `;`, `·` glyphs (spec section 4.3).
 ;
 ; DELTAS FROM CLASSIC:
 ;   - Removed: Lv N (Classic showed runTime + "Lv N" in a single
-;     control; Plus shows zoneTime + runTime as two timers).
-;   - Added: zone timer + per-act PB-based conditional color on
-;     both timers. Implies new dependencies on zoneTracker /
-;     zonesCatalog / personalBest (Classic only needed timer + xp).
-;   - 1 px separators between blocks (Theme `line` color).
+;     control). Plus shows the run timer alone in the left block,
+;     dropping any zone-scoped sub-display — the Compact Plus
+;     variant already surfaces zone time + PB, and duplicating
+;     that here makes the Micro overlay redundant for users who
+;     run Compact as the primary HUD.
+;   - Run timer color tracks the per-act PB the same way the
+;     larger Plus widgets do, so the speedrun signal is preserved.
+;   - 1 px separator between the two blocks (Theme `line` color).
 ;
 ; XP CHIP:
 ;   The fixed "XP" text whose color communicates status. Same
@@ -49,6 +53,8 @@ class MicroLayoutPlusWidget extends LayoutWidgetBase
     static MARGIN_X  := 4
     static SEP_W     := 1      ; vertical separator width in px
     static SEP_Y_PAD := 4      ; vertical padding above/below separator
+    static XP_W      := 40     ; fixed width of the right-side XP chip
+                               ; (the RUN timer block absorbs the rest)
     static FONT_TIMER := 11    ; mono
     static FONT_XP    := 10    ; UI bold
 
@@ -69,8 +75,6 @@ class MicroLayoutPlusWidget extends LayoutWidgetBase
     _currentAct  := 0
 
     ; Render caches — skip SetFont / Value writes per tick.
-    _lastZoneTimerText  := ""
-    _lastZoneTimerColor := ""
     _lastRunTimerText   := ""
     _lastRunTimerColor  := ""
     _lastXpColor        := ""
@@ -147,77 +151,62 @@ class MicroLayoutPlusWidget extends LayoutWidgetBase
         contentY := stripeH + 1
         contentH := h - stripeH - 2
 
-        ; Three blocks + two separators. The third block absorbs the
-        ; rounding remainder so total widths sum to contentW exactly
-        ; (Floor on the first two would leave 1-2 px unused otherwise).
-        contentW  := w - 2 * marginX
-        blockW    := Floor((contentW - 2 * sepW) / 3)
-        thirdW    := contentW - 2 * blockW - 2 * sepW
-        if (thirdW < 10)
-            thirdW := 10   ; defensive: pathological tiny widget
+        ; Two-block layout: RUN timer takes the bulk of the width
+        ; on the left, XP chip sits on the right with a 1 px
+        ; separator between. xpW is anchored to a fixed pixel count
+        ; (scaled) so the chip stays compact regardless of widget
+        ; width; the run timer absorbs whatever's left.
+        contentW   := w - 2 * marginX
+        xpW        := Max(20, Round(MicroLayoutPlusWidget.XP_W * s))
+        runTimerW  := contentW - xpW - sepW
+        if (runTimerW < 40)
+            runTimerW := 40   ; defensive: pathological tiny widget
 
         ; Background + accent stripe (shared signature).
         this._BuildKalandraBand(0, 0, w, h, "surface")
         this._BuildAccentStripe(0, 0, w, stripeH)
 
-        ; --- Block 1: zone timer (left) ---
+        ; --- Block 1: RUN timer (left, wide) ---
         x := marginX
         wg.SetFont("s" fontTimer " c" Theme.Color("text") " bold", Theme.FONT_MONO)
-        this._ctrls["zone_timer"] := wg.Add("Text",
+        this._ctrls["run_timer"] := wg.Add("Text",
             "x" x " y" contentY
-            " w" blockW " h" contentH
+            " w" runTimerW " h" contentH
             " Center 0x200"
             " Background" Theme.Color("surface"),
             "")
-        x += blockW
+        x += runTimerW
 
-        ; --- Separator 1 (1 px vertical in line color) ---
+        ; --- Separator (1 px vertical in line color) ---
         ; Progress with cForeground = Background renders a solid bar.
         ; Disabled so clicks pass straight through to the underlying
         ; controls / game (the widget is click-through anyway, but
         ; Disabled is the explicit signal).
-        sep1Y := contentY + sepYPad
-        sep1H := contentH - 2 * sepYPad
-        if (sep1H < 4)
-            sep1H := contentH    ; tiny scale: don't lose the separator
+        sepY := contentY + sepYPad
+        sepH := contentH - 2 * sepYPad
+        if (sepH < 4)
+            sepH := contentH    ; tiny scale: don't lose the separator
         wg.Add("Progress",
-            "x" x " y" sep1Y " w" sepW " h" sep1H
+            "x" x " y" sepY " w" sepW " h" sepH
             " Disabled c" Theme.Color("line") " Background" Theme.Color("line"),
             100)
         x += sepW
 
-        ; --- Block 2: run timer (middle) ---
-        wg.SetFont("s" fontTimer " c" Theme.Color("text") " bold", Theme.FONT_MONO)
-        this._ctrls["run_timer"] := wg.Add("Text",
-            "x" x " y" contentY
-            " w" blockW " h" contentH
-            " Center 0x200"
-            " Background" Theme.Color("surface"),
-            "")
-        x += blockW
-
-        ; --- Separator 2 ---
-        wg.Add("Progress",
-            "x" x " y" sep1Y " w" sepW " h" sep1H
-            " Disabled c" Theme.Color("line") " Background" Theme.Color("line"),
-            100)
-        x += sepW
-
-        ; --- Block 3: XP chip (right, color-only) ---
+        ; --- Block 2: XP chip (right, color-only) ---
         wg.SetFont("s" fontXp " c" Theme.Color("muted") " bold", Theme.FONT_UI)
         this._ctrls["xp_chip"] := wg.Add("Text",
             "x" x " y" contentY
-            " w" thirdW " h" contentH
+            " w" xpW " h" contentH
             " Center 0x200"
             " Background" Theme.Color("surface"),
             "XP")
 
-        ; Resync state (handles mid-run widget swap)
+        ; Resync state (handles mid-run widget swap). Still needed
+        ; even without a zone timer because the RUN timer color
+        ; resolution depends on _currentAct -> _GetRunPbMs.
         this._ResolveInitialActZone()
 
         ; Reset caches so the first render writes everything.
-        this._lastZoneTimerText  := ""
-        this._lastZoneTimerColor := ""
         this._lastRunTimerText   := ""
         this._lastRunTimerColor  := ""
         this._lastXpColor        := ""
@@ -241,15 +230,14 @@ class MicroLayoutPlusWidget extends LayoutWidgetBase
         this._Refresh()
     }
 
-    ; 50ms timer — only the two timers (the XP chip color rarely
-    ; changes, the Tick path handles it).
+    ; 50ms timer — only the live RUN timer (the XP chip color
+    ; rarely changes, the Tick path handles it).
     _OnHighFreqTimer()
     {
         if !this._gui
             return
         if !this._modeVisible
             return
-        this._RefreshZoneTimer()
         this._RefreshRunTimer()
     }
 
@@ -257,34 +245,8 @@ class MicroLayoutPlusWidget extends LayoutWidgetBase
     {
         if !this._gui
             return
-        this._RefreshZoneTimer()
         this._RefreshRunTimer()
         this._RefreshXp()
-    }
-
-    _RefreshZoneTimer()
-    {
-        if !this._ctrls.Has("zone_timer")
-            return
-
-        zoneMs := IsObject(this._zoneTracker) && this._currentZone != ""
-                  ? this._zoneTracker.GetZoneTotalWithActive(this._currentZone)
-                  : 0
-        text  := MicroLayoutPlusWidget._FormatMs(zoneMs)
-        color := MicroLayoutPlusWidget._ResolveTimerColor(zoneMs, this._GetZonePbMs())
-
-        ctrl := this._ctrls["zone_timer"]
-        if (color != this._lastZoneTimerColor)
-        {
-            fontTimer := Max(7, Round(MicroLayoutPlusWidget.FONT_TIMER * this._GetScale()))
-            try ctrl.SetFont("s" fontTimer " c" color " bold", Theme.FONT_MONO)
-            this._lastZoneTimerColor := color
-        }
-        if (text != this._lastZoneTimerText)
-        {
-            try ctrl.Value := text
-            this._lastZoneTimerText := text
-        }
     }
 
     _RefreshRunTimer()
@@ -378,7 +340,10 @@ class MicroLayoutPlusWidget extends LayoutWidgetBase
     }
 
     ; ============================================================
-    ; PB lookups — mirror Steve Plus / Compact Plus.
+    ; PB lookups — mirror Steve Plus / Compact Plus. Only run-level
+    ; PB is consulted: the zone-time block was removed (see
+    ; DELTAS FROM CLASSIC in the header), so _GetZonePbMs would
+    ; have no caller — dropped along with it.
     ; ============================================================
 
     _GetRunPbMs()
@@ -392,15 +357,6 @@ class MicroLayoutPlusWidget extends LayoutWidgetBase
             return 0
         try
             return this._pbService.GetRunPbForAct(act)
-        return 0
-    }
-
-    _GetZonePbMs()
-    {
-        if !IsObject(this._pbService) || this._currentZone = ""
-            return 0
-        try
-            return this._pbService.GetZonePbMs(this._currentZone)
         return 0
     }
 

@@ -219,7 +219,7 @@ class SteveLayoutPlusWidget extends LayoutWidgetBase
         this._ctrls["line1_act_zone"] := wg.Add("Text",
             "x" contentX " y" line1Y
             " w" actZoneW " h" line1H
-            " Left"
+            " Left 0x200"
             " Background" Theme.Color("surface"),
             "")
 
@@ -376,6 +376,24 @@ class SteveLayoutPlusWidget extends LayoutWidgetBase
         actStr  := this._currentAct > 0 ? ("Act " this._currentAct) : ("Act " Chr(0x2014))
         zoneStr := this._currentZone != "" ? this._currentZone : Chr(0x2014)
         text := actStr " " Chr(0x00B7) " " zoneStr
+
+        ; Truncate with ellipsis if the composed string overflows
+        ; the act/zone column. The mono timer on the right takes
+        ; TIMER_W pixels, so the act/zone column is the leftover
+        ; (~150 px at scale=1.0) — "Act 1 · Clearfell Encampment"
+        ; (28 chars) sits right at the boundary and the AHK Text
+        ; control would word-wrap to a second line, colliding with
+        ; the chip row below. Truncating up front keeps the
+        ; rendering on one line.
+        s := this._GetScale()
+        marginX    := Max(4, Round(SteveLayoutPlusWidget.MARGIN_X * s))
+        timerW     := Max(80, Round(SteveLayoutPlusWidget.TIMER_W * s))
+        actZoneGap := Max(2, Round(SteveLayoutPlusWidget.ACT_ZONE_GAP * s))
+        actZoneW   := this._w - marginX - marginX - timerW - actZoneGap
+        if (actZoneW < 40)
+            actZoneW := 40
+        fontActZone := Max(7, Round(SteveLayoutPlusWidget.FONT_ACT_ZONE * s))
+        text := SteveLayoutPlusWidget._TruncateToWidth(text, fontActZone, actZoneW)
 
         if (text != this._lastActZoneText)
         {
@@ -673,6 +691,30 @@ class SteveLayoutPlusWidget extends LayoutWidgetBase
         if (h > 0)
             return Format("{:d}:{:02d}:{:02d}", h, m, s)
         return Format("{:d}:{:02d}", m, s)
+    }
+
+    ; Plus-only truncation policy (spec section 6.b): keep font, cut
+    ; text with trailing "...". Width estimate uses the same chars
+    ; x fontSize x 0.6 heuristic Classic uses for shrink decisions.
+    ; Reserves space for "..." up front so the visible prefix doesn't
+    ; have to be re-trimmed after appending the ellipsis. Ported from
+    ; CompactLayoutPlusWidget to keep both widgets on the same
+    ; truncation policy.
+    static _TruncateToWidth(text, fontSize, availW)
+    {
+        if (text = "" || availW <= 0)
+            return ""
+        estW := StrLen(text) * fontSize * 0.6
+        if (estW <= availW)
+            return text
+        ellipsisW := 3 * fontSize * 0.6
+        targetW := availW - ellipsisW
+        if (targetW <= 0)
+            return "..."
+        maxChars := Floor(targetW / (fontSize * 0.6))
+        if (maxChars <= 0)
+            return "..."
+        return SubStr(text, 1, maxChars) "..."
     }
 
     Dispose()
