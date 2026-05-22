@@ -10,7 +10,7 @@
 ;
 ; Strategy: most tests do a roundtrip (Save with modified cfg, Load,
 ; compare). Also covers specific invariants (VendorRegexes truncation
-; at 50 chars, Overlay sanitization).
+; at 250 chars, Overlay sanitization).
 
 class SettingsRepositoryTests extends TestCase
 {
@@ -50,8 +50,8 @@ class SettingsRepositoryTests extends TestCase
         "save_load_preserves_overlay_positions",
 
         ; --- VendorRegexes invariants ---
-        "save_truncates_long_vendor_regex_to_50_chars",
-        "load_truncates_long_vendor_regex_to_50_chars",
+        "save_truncates_long_vendor_regex_to_250_chars",
+        "load_truncates_long_vendor_regex_to_250_chars",
 
         ; --- Obsolete keys cleanup ---
         "save_removes_obsolete_hotkey_keys",
@@ -426,37 +426,41 @@ class SettingsRepositoryTests extends TestCase
     ; VendorRegexes invariants
     ; ============================================================
 
-    save_truncates_long_vendor_regex_to_50_chars()
+    save_truncates_long_vendor_regex_to_250_chars()
     {
+        ; Cap raised from 50→250 in PoE 0.x to match the in-game
+        ; vendor filter limit. Defensive truncation in Save guarantees
+        ; the invariant even if cfg.vendorRegexes was set programmatically
+        ; to a string longer than the UI's Limit250.
         mainIni := IniFile(Fixtures.TempPath("ini"))
         repo := SettingsRepository(mainIni)
 
         cfg := AppSettings.Defaults()
         longRegex := ""
-        Loop 60
-            longRegex .= "a"   ; 60 chars
+        Loop 300
+            longRegex .= "a"   ; 300 chars
         cfg.vendorRegexes := [longRegex, "", ""]
         repo.Save(cfg)
 
-        ; INI must have the regex truncated at 50
+        ; INI must have the regex truncated at 250
         written := mainIni.Read("VendorRegexes", "Slot1")
-        Assert.Equal(50, StrLen(written))
+        Assert.Equal(250, StrLen(written))
     }
 
-    load_truncates_long_vendor_regex_to_50_chars()
+    load_truncates_long_vendor_regex_to_250_chars()
     {
         mainIni := IniFile(Fixtures.TempPath("ini"))
-        ; Manually write an 80-char regex to the INI (bypass Save)
+        ; Manually write a 300-char regex to the INI (bypass Save)
         longRegex := ""
-        Loop 80
+        Loop 300
             longRegex .= "x"
         mainIni.Write(longRegex, "VendorRegexes", "Slot1")
 
         repo := SettingsRepository(mainIni)
         loaded := repo.Load()
 
-        Assert.Equal(50, StrLen(loaded.vendorRegexes[1]),
-            "Load must defensively truncate at 50 chars")
+        Assert.Equal(250, StrLen(loaded.vendorRegexes[1]),
+            "Load must defensively truncate at 250 chars")
     }
 
     ; ============================================================

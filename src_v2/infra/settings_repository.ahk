@@ -208,9 +208,10 @@ class SettingsRepository
     ; ============================================================
     ; [VendorRegexes]
     ;
-    ; Persists 3 short regex slots (max 50 chars each) used by the
+    ; Persists 3 short regex slots (max 250 chars each) used by the
     ; V1/V2/V3 buttons of CompactLayoutWidget for copy-to-clipboard
-    ; during the run.
+    ; during the run. Cap raised from 50→250 in PoE 0.x to match
+    ; the in-game vendor filter limit.
     ;
     ; Defensive truncation applied in both Load and Save: guarantees
     ; the invariant even if the INI is hand-edited with a long string.
@@ -223,8 +224,8 @@ class SettingsRepository
         {
             i := A_Index
             v := ini.Read("VendorRegexes", "Slot" i, "")
-            if (StrLen(v) > 50)
-                v := SubStr(v, 1, 50)
+            if (StrLen(v) > 250)
+                v := SubStr(v, 1, 250)
             out[i] := v
         }
         cfg.vendorRegexes := out
@@ -239,8 +240,8 @@ class SettingsRepository
             v := (IsObject(cfg.vendorRegexes) && cfg.vendorRegexes.Has(i))
                  ? String(cfg.vendorRegexes[i])
                  : ""
-            if (StrLen(v) > 50)
-                v := SubStr(v, 1, 50)
+            if (StrLen(v) > 250)
+                v := SubStr(v, 1, 250)
             ; Use WriteVerbatim to preserve leading/trailing
             ; double-quotes (common in PoE2 vendor filters like
             ; '"!(uiv)" "melee|mov"'). Regular Write loses the outer

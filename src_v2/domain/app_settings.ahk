@@ -9,7 +9,7 @@
 ;   [LoadingVisual] Enabled, PollMs, MinMs, MaxMs
 ;   [AutoFinalize]  Regex (PCRE, empty = disabled)
 ;   [AutoStart]     Regex (PCRE, empty = disabled)
-;   [VendorRegexes] Slot1, Slot2, Slot3 (max 50 chars each)
+;   [VendorRegexes] Slot1, Slot2, Slot3 (max 250 chars each)
 ;   [Diagnostics]   EventTracingEnabled (opt-in)
 ;   [Layouts]       Variant (classic | plus)
 ;   [Disclaimer]    Acknowledged (do-not-show-again flag)
@@ -95,12 +95,12 @@ class AppSettings
     autoStartRegex := "i)Wounded Man: By the First Ones!"
 
     ; --- Vendor Regex Slots ---
-    ; Three short strings (max 50 chars each) the user copies to the
+    ; Three short strings (max 250 chars each) the user copies to the
     ; clipboard via V1/V2/V3 buttons in the compact overlay during a
     ; run. Typical use: a vendor-item regex for resistances, jewels
-    ; with specific mods, sockets/links, etc. The 50-char cap is
-    ; enforced on Load and Save so a hand-edited INI can't break the
-    ; invariant.
+    ; with specific mods, sockets/links, etc. The 250-char cap matches
+    ; the in-game vendor filter limit raised in PoE 0.x; enforced on
+    ; Load and Save so a hand-edited INI can't break the invariant.
     vendorRegexes := ["", "", ""]
 
     ; --- Hotkeys --- Map<actionName, keyBind>

@@ -9,7 +9,7 @@
 ;   General           ProfileName, LogFile path
 ;   AutoStart         Regex (PoE2 is localized — user configures per language)
 ;   AutoFinalize      Regex
-;   VendorRegexes     3 slots (max 50 chars each) for V1/V2/V3 shortcuts
+;   VendorRegexes     3 slots (max 250 chars each) for V1/V2/V3 shortcuts
 ;   Rules             AutoPauseOnFocus, DeathPenaltyEnabled + seconds
 ;   Layouts (BETA)    LayoutVariant (classic | plus)
 ;   Hotkeys           Every action registered in cfg.hotkeys
@@ -144,9 +144,11 @@ class SettingsDialog
         y += 32
 
         ; ============ Vendor Regex Slots ============
-        ; Edits limited to 50 chars via "Limit50". V1/V2/V3 buttons in
-        ; CompactLayoutWidget copy each slot to clipboard via Ctrl+click.
-        this._SectionHeader(g, y, "VENDOR SHORTCUTS (clipboard via V1/V2/V3 in overlay, max 50 chars)")
+        ; Edits limited to 250 chars via "Limit250" (PoE 0.x raised
+        ; the in-game vendor filter cap from 50 to 250). V1/V2/V3
+        ; buttons in CompactLayoutWidget copy each slot to clipboard
+        ; via Ctrl+click.
+        this._SectionHeader(g, y, "VENDOR SHORTCUTS (clipboard via V1/V2/V3 in overlay, max 250 chars)")
         y += 22
         Loop 3
         {
@@ -155,7 +157,7 @@ class SettingsDialog
             val := (IsObject(this._cfg.vendorRegexes) && this._cfg.vendorRegexes.Has(i))
                    ? this._cfg.vendorRegexes[i]
                    : ""
-            this._ctrls["vendorRegex" i] := this._AddEdit(g, 180, y, 360, val, "Limit50")
+            this._ctrls["vendorRegex" i] := this._AddEdit(g, 180, y, 360, val, "Limit250")
             y += 26
         }
         y += 6
@@ -309,8 +311,8 @@ class SettingsDialog
         cfg.autoStartRegex    := this._ctrls["autoStartRegex"].Value
         cfg.autoFinalizeRegex := this._ctrls["autoFinalizeRegex"].Value
 
-        ; Vendor regex slots — defensive 50-char clamp matches the
-        ; Edit's Limit50.
+        ; Vendor regex slots — defensive 250-char clamp matches the
+        ; Edit's Limit250.
         ;
         ; Snapshot vendorRegexes BEFORE rewriting cfg so we can emit
         ; Evt.VendorRegexesChanged on real changes and the
@@ -323,8 +325,8 @@ class SettingsDialog
             if this._ctrls.Has("vendorRegex" i)
             {
                 v := this._ctrls["vendorRegex" i].Value
-                if (StrLen(v) > 50)
-                    v := SubStr(v, 1, 50)
+                if (StrLen(v) > 250)
+                    v := SubStr(v, 1, 250)
                 vrOut[i] := v
             }
         }
