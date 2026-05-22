@@ -301,29 +301,24 @@ class SettingsDialog
 
     _OnSave()
     {
+        ; Snapshot the in-memory cfg BEFORE mutating any field. If
+        ; the save fails, _PersistAndPublishCfg restores from this
+        ; snapshot so the in-memory this._cfg matches what's on
+        ; disk — services that hold a reference to this._cfg won't
+        ; observe ghost values that never landed on disk.
+        snapshot := SettingsDialog._SnapshotMutableCfg(this._cfg)
+
         cfg := this._cfg
         cfg.profileName := this._ctrls["profileName"].Value
         ; gamePatch keeps whatever was already in cfg (default
         ; "Unknown" on a fresh install); the dialog doesn't expose it.
 
-        ; Snapshot the old log path so we can detect a change and
-        ; restart LogMonitor without a full app reload.
-        oldLogFile := cfg.logFile
-        ; Snapshot the layout variant too. Unlike logFile, this one
-        ; does NOT hot-reload — widgets are instantiated once at boot.
-        ; The mismatch is surfaced via a MsgBox at the end of save.
-        oldLayoutVariant := cfg.layoutVariant
-        cfg.logFile     := this._ctrls["logFile"].Value
+        cfg.logFile           := this._ctrls["logFile"].Value
         cfg.autoStartRegex    := this._ctrls["autoStartRegex"].Value
         cfg.autoFinalizeRegex := this._ctrls["autoFinalizeRegex"].Value
 
         ; Vendor regex slots — defensive 250-char clamp matches the
         ; Edit's Limit250.
-        ;
-        ; Snapshot vendorRegexes BEFORE rewriting cfg so we can emit
-        ; Evt.VendorRegexesChanged on real changes and the
-        ; CompactLayoutWidget refreshes its V1/V2/V3 button labels.
-        oldVendorRegexes := SettingsDialog._CloneStringArray(cfg.vendorRegexes)
         vrOut := ["", "", ""]
         Loop 3
         {
@@ -337,7 +332,6 @@ class SettingsDialog
             }
         }
         cfg.vendorRegexes := vrOut
-        vendorRegexesChanged := !SettingsDialog._StringArraysEqual(oldVendorRegexes, cfg.vendorRegexes)
 
         cfg.autoPauseOnFocus := this._ctrls["autoPauseOnFocus"].Value = 1
 
@@ -359,16 +353,10 @@ class SettingsDialog
         ; defensive keeps the in-memory cfg unambiguous.
         cfg.layoutVariant := (this._ctrls.Has("layoutVariantPlus")
             && this._ctrls["layoutVariantPlus"].Value = 1) ? "plus" : "classic"
-        layoutVariantChanged := (oldLayoutVariant != cfg.layoutVariant)
 
-        ; Hotkeys.
-        ; The user types in human format ("Ctrl+Alt+F");
+        ; Hotkeys: user types in human format ("Ctrl+Alt+F");
         ; HotkeyFormatter.ToAhk converts to internal syntax ("^!f")
         ; before persisting. Old-format input passes through as-is.
-        ;
-        ; Snapshot oldHotkeys BEFORE the loop so we can emit
-        ; Evt.HotkeysChanged and trigger a hot rebind in HotkeyService.
-        oldHotkeys := SettingsDialog._CloneStringMap(cfg.hotkeys)
         for _, action in this._hotkeyActions
         {
             ctrlKey := "hk_" action
@@ -378,24 +366,88 @@ class SettingsDialog
                 cfg.hotkeys[action] := HotkeyFormatter.ToAhk(rawVal)
             }
         }
-        hotkeysChanged := !SettingsDialog._StringMapsEqual(oldHotkeys, cfg.hotkeys)
 
-        ; ATOMIC SAVE — the repository's backup-rollback restores
-        ; the previous INI bytes on any mid-sequence throw, but we
-        ; still own the user-facing consequences here: NO change
-        ; events on failure (services would hot-reload based on
-        ; stale cfg), NO "Settings saved" TrayTip (lying to the
-        ; user), and the dialog stays open so the user can retry
-        ; or Cancel out cleanly. The in-memory cfg has been mutated
-        ; in-place during the field loop above; we accept that as
-        ; the recovery path (next save retry uses the same values)
-        ; rather than try to roll back N field assignments here.
+        ; Persist + publish. On failure, _PersistAndPublishCfg
+        ; restores this._cfg from the snapshot, logs, shows a
+        ; MsgBox, and returns false — no change events published,
+        ; no success TrayTip, dialog stays open.
+        this._PersistAndPublishCfg(cfg, snapshot)
+    }
+
+    ; ============================================================
+    ; Snapshot / Restore / PersistAndPublish
+    ; ============================================================
+    ;
+    ; Extracted from _OnSave to isolate the parts that don't depend
+    ; on this._ctrls (GUI-bound, populated only after _BuildGui).
+    ; Headless tests construct the dialog with headless=true — the
+    ; GUI isn't built, but these three methods stay reachable.
+    ;
+    ; Contract:
+    ;   - _SnapshotMutableCfg(cfg) returns a Map carrying the fields
+    ;     that _OnSave mutates (deep-copying the Array/Map ones so a
+    ;     later mutation in this._cfg doesn't leak through the
+    ;     reference).
+    ;   - _RestoreCfgFromSnapshot(snapshot) overwrites this._cfg's
+    ;     mutable fields with the snapshot values. Used by
+    ;     _PersistAndPublishCfg on save failure.
+    ;   - _PersistAndPublishCfg(cfg, snapshot) saves via the repo;
+    ;     on success publishes the diff events vs snapshot and
+    ;     returns true; on failure restores from snapshot, logs +
+    ;     MsgBox, and returns false (no event publishes, no success
+    ;     TrayTip, dialog stays open).
+
+    static _SnapshotMutableCfg(cfg)
+    {
+        ; Deep-copies vendorRegexes (Array) and hotkeys (Map);
+        ; primitives don't need copying. layoutVariant captured
+        ; here too so the success path's MsgBox is driven from
+        ; the snapshot, not from a re-read of cfg (which might
+        ; have been restored mid-flight).
+        return Map(
+            "profileName",          cfg.profileName,
+            "logFile",              cfg.logFile,
+            "autoStartRegex",       cfg.autoStartRegex,
+            "autoFinalizeRegex",    cfg.autoFinalizeRegex,
+            "vendorRegexes",        SettingsDialog._CloneStringArray(cfg.vendorRegexes),
+            "autoPauseOnFocus",     cfg.autoPauseOnFocus,
+            "deathPenaltyEnabled",  cfg.deathPenaltyEnabled,
+            "deathPenaltyMs",       cfg.deathPenaltyMs,
+            "layoutVariant",        cfg.layoutVariant,
+            "hotkeys",              SettingsDialog._CloneStringMap(cfg.hotkeys)
+        )
+    }
+
+    _RestoreCfgFromSnapshot(snapshot)
+    {
+        cfg := this._cfg
+        cfg.profileName         := snapshot["profileName"]
+        cfg.logFile             := snapshot["logFile"]
+        cfg.autoStartRegex      := snapshot["autoStartRegex"]
+        cfg.autoFinalizeRegex   := snapshot["autoFinalizeRegex"]
+        cfg.vendorRegexes       := snapshot["vendorRegexes"]    ; the deep clone from snapshot
+        cfg.autoPauseOnFocus    := snapshot["autoPauseOnFocus"]
+        cfg.deathPenaltyEnabled := snapshot["deathPenaltyEnabled"]
+        cfg.deathPenaltyMs      := snapshot["deathPenaltyMs"]
+        cfg.layoutVariant       := snapshot["layoutVariant"]
+        cfg.hotkeys             := snapshot["hotkeys"]          ; the deep clone from snapshot
+    }
+
+    _PersistAndPublishCfg(cfg, snapshot)
+    {
+        ; Save with best-effort rollback (see SettingsRepository
+        ; .Save header). On any throw we restore the in-memory cfg
+        ; from snapshot so services that hold a reference to
+        ; this._cfg don't observe ghost values that never landed
+        ; on disk — the MsgBox honestly reports "nothing was
+        ; persisted; in-memory state restored".
         try
         {
             this._settingsRepo.Save(cfg)
         }
         catch as ex
         {
+            this._RestoreCfgFromSnapshot(snapshot)
             try this._log.Warn("Settings save failed: " . ex.Message
                 . " | What: " . (ex.HasOwnProp("What") ? ex.What : "?")
                 . " | Line: " . (ex.HasOwnProp("Line") ? ex.Line : "?"),
@@ -403,40 +455,43 @@ class SettingsDialog
             try SpeedKalandraMsgBox(
                 "Failed to save settings to disk.`n`n"
                 . "Reason: " . ex.Message . "`n`n"
-                . "Your changes are NOT persisted. The previous INI was "
-                . "restored. Try again, or check that speedkalandra.ini "
-                . "isn't locked by another process. Details in "
+                . "Your changes were NOT persisted, and in-memory "
+                . "state has been restored to its pre-save values. "
+                . "Try again, or check that speedkalandra.ini isn't "
+                . "locked by another process. Details in "
                 . "data\\speedkalandra.log.",
                 "Save failed",
                 "IconX")
-            return   ; abort: no publishes, no success TrayTip, dialog stays open
+            return false   ; no publishes, no success TrayTip, dialog stays open
         }
+
+        ; Success path: publish diff events comparing snapshot vs cfg.
 
         ; logFile change → publish so the composition root can
         ; restart LogMonitor against the new path. Empty new path is
         ; also published (the user may want monitoring disabled).
-        if (Trim(oldLogFile) != Trim(cfg.logFile))
+        if (Trim(snapshot["logFile"]) != Trim(cfg.logFile))
         {
             try this._bus.Publish(Events.LogFilePathChanged, Map(
-                "oldPath", oldLogFile,
+                "oldPath", snapshot["logFile"],
                 "newPath", cfg.logFile))
         }
         ; hotkeys change → publish so HotkeyService can rebind
-        ; without a full app reload. Send a defensive copy of the new
-        ; map so the handler can't accidentally mutate cfg.hotkeys.
-        if hotkeysChanged
+        ; without a full app reload. Send a defensive copy of the
+        ; new map so the handler can't accidentally mutate cfg.hotkeys.
+        if !SettingsDialog._StringMapsEqual(snapshot["hotkeys"], cfg.hotkeys)
         {
             try this._bus.Publish(Events.HotkeysChanged, Map(
-                "oldHotkeys", oldHotkeys,
+                "oldHotkeys", snapshot["hotkeys"],
                 "newHotkeys", SettingsDialog._CloneStringMap(cfg.hotkeys)))
         }
         ; vendor regex change → publish so CompactLayoutWidget can
         ; refresh its V1/V2/V3 button labels (filled vs empty)
         ; without a full app reload. Send a copy of the new array.
-        if vendorRegexesChanged
+        if !SettingsDialog._StringArraysEqual(snapshot["vendorRegexes"], cfg.vendorRegexes)
         {
             try this._bus.Publish(Events.VendorRegexesChanged, Map(
-                "oldRegexes", oldVendorRegexes,
+                "oldRegexes", snapshot["vendorRegexes"],
                 "newRegexes", SettingsDialog._CloneStringArray(cfg.vendorRegexes)))
         }
         ; Layout variant change → no event published. Widgets are
@@ -445,7 +500,7 @@ class SettingsDialog
         ; bus subscriptions — too much complexity for a flag a user
         ; toggles a handful of times in the life of the app. A MsgBox
         ; tells them to restart instead.
-        if layoutVariantChanged
+        if (snapshot["layoutVariant"] != cfg.layoutVariant)
         {
             targetLabel := (cfg.layoutVariant = "plus") ? "Plus (experimental)" : "Classic"
             try SpeedKalandraMsgBox(
@@ -454,8 +509,10 @@ class SettingsDialog
                 "Layout change",
                 "Iconi")
         }
+
         try TrayTip("SpeedKalandra", "Settings saved.", "Mute")
         this.Close()
+        return true
     }
 
     ; Defensive Map<string, string> snapshot/diff helpers for

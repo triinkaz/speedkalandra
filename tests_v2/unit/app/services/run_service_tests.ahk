@@ -162,6 +162,9 @@ class RunServiceTests extends TestCase
 
         ; --- Lifecycle persistence failure ---
         "lifecycle_persist_failure_warns_through_log",
+        "lifecycle_persist_failure_sets_degraded_flag",
+        "lifecycle_persist_success_after_failure_clears_degraded_flag",
+        "lifecycle_persist_traytip_rate_limited_to_one_per_60s",
 
         ; --- Dispose ---
         "dispose_unsubscribes_all_commands",
@@ -910,6 +913,119 @@ class RunServiceTests extends TestCase
             "_Persist surfaces save failure through the log")
         Assert.True(freshSvc.IsActive(),
             "NewRun still succeeds in memory despite a failed lifecycle persist")
+
+        try freshSvc.Dispose()
+    }
+
+    lifecycle_persist_failure_sets_degraded_flag()
+    {
+        ; The persistence-degraded contract: a failed lifecycle
+        ; persist must (a) set IsPersistenceDegraded() to true so
+        ; UI/tray can surface stale crash recovery, and (b) fire
+        ; exactly one TrayTip on first failure (cooldown gate
+        ; passes because the sentinel init is -60000).
+        freshBus     := Fixtures.MakeBus()
+        freshTimer   := TimerService(this.stubClock, freshBus)
+        freshRepoP   := Fixtures.TempPath("ini")
+        throwingRepo := _ThrowingRunStateRepository(IniFile(freshRepoP))
+        memLog       := InMemoryLogger()
+        freshSvc     := RunService(this.stubClock, freshBus, freshTimer, throwingRepo, memLog)
+
+        Assert.False(freshSvc.IsPersistenceDegraded(),
+            "degraded flag is false before any save runs")
+        Assert.Equal(0, freshSvc.GetPersistenceTrayTipCount(),
+            "TrayTip count is 0 before any save runs")
+
+        throwingRepo.ThrowOnNextSave()
+        freshSvc.NewRun()
+
+        Assert.True(freshSvc.IsPersistenceDegraded(),
+            "degraded flag must flip to true after a failed lifecycle persist")
+        Assert.Equal(1, freshSvc.GetPersistenceTrayTipCount(),
+            "first failure must fire exactly one TrayTip (sentinel init lets it pass the gate)")
+
+        try freshSvc.Dispose()
+    }
+
+    lifecycle_persist_success_after_failure_clears_degraded_flag()
+    {
+        ; Recovery contract: once a subsequent lifecycle persist
+        ; succeeds, the degraded flag clears and the log carries
+        ; an Info entry marking the recovery so a log tail shows
+        ; the transition explicitly.
+        freshBus     := Fixtures.MakeBus()
+        freshTimer   := TimerService(this.stubClock, freshBus)
+        freshRepoP   := Fixtures.TempPath("ini")
+        throwingRepo := _ThrowingRunStateRepository(IniFile(freshRepoP))
+        memLog       := InMemoryLogger()
+        freshSvc     := RunService(this.stubClock, freshBus, freshTimer, throwingRepo, memLog)
+
+        ; First persist fails -> degraded.
+        throwingRepo.ThrowOnNextSave()
+        freshSvc.NewRun()
+        Assert.True(freshSvc.IsPersistenceDegraded(),
+            "precondition: degraded after first failure")
+
+        ; FinalizeRun's _Persist call runs without a queued throw,
+        ; so the underlying RunStateRepository.Save succeeds. The
+        ; degraded flag must clear and an Info entry must show up.
+        freshSvc.FinalizeRun()
+
+        Assert.False(freshSvc.IsPersistenceDegraded(),
+            "degraded flag must clear after a successful lifecycle persist")
+        Assert.True(memLog.HasEntry("INFO", "Lifecycle persist recovered"),
+            "recovery must be logged at INFO so a log tail shows the transition")
+
+        try freshSvc.Dispose()
+    }
+
+    lifecycle_persist_traytip_rate_limited_to_one_per_60s()
+    {
+        ; Throttle contract: at most one TrayTip per 60 s window.
+        ; Without this, a transient lock (antivirus, OneDrive sync)
+        ; could burst 3+ notifications across a NewRun -> Finalize
+        ; -> NewRun sequence in a couple of seconds.
+        ;
+        ; Setup baseline at clock=10000 (Setup's fake clock init).
+        ; Sentinel _lastDegradedTrayTipMs=-60000 means diff=70000
+        ; on the first check -> passes the 60000 ms cooldown gate
+        ; and fires. After firing, last := 10000.
+        ;
+        ; +30 s -> clock=40000, diff=30000 -> blocked.
+        ; +31 s -> clock=71000, diff=61000 -> passes gate, fires.
+        freshBus     := Fixtures.MakeBus()
+        freshTimer   := TimerService(this.stubClock, freshBus)
+        freshRepoP   := Fixtures.TempPath("ini")
+        throwingRepo := _ThrowingRunStateRepository(IniFile(freshRepoP))
+        memLog       := InMemoryLogger()
+        freshSvc     := RunService(this.stubClock, freshBus, freshTimer, throwingRepo, memLog)
+
+        ; First failure at clock=10000 -> fires (sentinel gate).
+        throwingRepo.ThrowOnNextSave()
+        freshSvc.NewRun()
+        Assert.Equal(1, freshSvc.GetPersistenceTrayTipCount(),
+            "first failure must fire exactly one TrayTip")
+
+        ; Advance 30 s. Second failure at clock=40000.
+        ; diff = 40000 - 10000 = 30000 ms < 60000 ms cooldown.
+        ; TrayTip must NOT fire; the flag stays degraded; log
+        ; still records the WARN.
+        this.stubClock.AdvanceMs(30000)
+        throwingRepo.ThrowOnNextSave()
+        freshSvc.FinalizeRun()
+        Assert.Equal(1, freshSvc.GetPersistenceTrayTipCount(),
+            "second failure within the 60 s window must NOT fire a TrayTip")
+        Assert.True(freshSvc.IsPersistenceDegraded(),
+            "degraded flag stays set across consecutive failures")
+
+        ; Advance 31 s more (total +61 s vs first fire). Third
+        ; failure at clock=71000. diff = 71000 - 10000 = 61000
+        ; ms >= 60000 ms cooldown. TrayTip must fire again.
+        this.stubClock.AdvanceMs(31000)
+        throwingRepo.ThrowOnNextSave()
+        freshSvc.NewRun()
+        Assert.Equal(2, freshSvc.GetPersistenceTrayTipCount(),
+            "third failure after the cooldown window must fire a second TrayTip")
 
         try freshSvc.Dispose()
     }

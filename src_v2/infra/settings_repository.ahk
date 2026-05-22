@@ -61,16 +61,36 @@ class SettingsRepository
         return cfg
     }
 
-    ; Save with backup-rollback. Sections are still serialized via
-    ; sequential IniWrite calls; true atomicity would require a
-    ; full in-memory rebuild + single AtomicWriter flush, which is
-    ; a deeper refactor of IniFile. This path adds defense in depth:
-    ; copy the existing INI to a .pre-save sibling before mutating,
-    ; wrap the save sequence in try/catch, and restore the backup
-    ; on any throw. The dominant failure mode in practice is a
-    ; mid-sequence IniWrite throw (file lock, permissions, AV) and
-    ; this covers it. The small gap between FileCopy and the first
-    ; IniWrite (where a system crash could lose both) is accepted.
+    ; Save with best-effort rollback (NOT atomic — true atomicity
+    ; would require a full in-memory rebuild + AtomicWriter flush,
+    ; which is a deeper refactor of IniFile). Three guarantees:
+    ;
+    ;   1. BACKUP-FAIL-ABORT. If the .pre-save copy can't be
+    ;      created, abort BEFORE touching the INI. Without a
+    ;      backup, a mid-sequence failure would leave the file
+    ;      half-written with no recovery point — worse than not
+    ;      saving at all. Surfacing the error to the caller lets
+    ;      the user retry (close whatever process is locking the
+    ;      INI) instead of silently corrupting state.
+    ;
+    ;   2. PRESERVE-BACKUP-ON-RESTORE-FAIL. If a mid-sequence
+    ;      save throws AND the subsequent FileCopy restore from
+    ;      .pre-save also fails, KEEP the .pre-save on disk. The
+    ;      user (or a future boot) can copy it back manually.
+    ;      Deleting the only known-good copy because the restore
+    ;      failed would compound the failure.
+    ;
+    ;   3. FRESH-INSTALL-CLEANUP. Fresh install (INI didn't exist
+    ;      before this Save): a mid-sequence failure deletes the
+    ;      partial INI bytes. Next boot lands on AppSettings
+    ;      .Defaults() instead of parsing a half-formed file as
+    ;      authoritative state.
+    ;
+    ; Trade-off: there's a small gap between FileCopy and the
+    ; first IniWrite where a system crash (power loss) loses
+    ; both. The dominant failure mode in practice is IniWrite
+    ; throw mid-sequence (file lock, permissions, antivirus) and
+    ; this path covers it.
     Save(cfg)
     {
         if !(cfg is AppSettings)
@@ -80,9 +100,20 @@ class SettingsRepository
         backupPath := iniPath . ".pre-save"
         hadFile := !!FileExist(iniPath)
 
+        ; --- Guarantee 1: backup-fail-abort ---
+        ; If the INI exists and we can't snapshot it, refuse to
+        ; mutate it. The exception propagates to the caller, which
+        ; in production (SettingsDialog._OnSave) shows a MsgBox.
         if hadFile
         {
-            try FileCopy(iniPath, backupPath, true)
+            try
+            {
+                FileCopy(iniPath, backupPath, true)
+            }
+            catch as ex
+            {
+                throw Error("SettingsRepository.Save: pre-save backup failed (refusing to mutate INI without a recovery point): " . ex.Message)
+            }
         }
 
         try
@@ -104,17 +135,43 @@ class SettingsRepository
         }
         catch as ex
         {
-            ; Restore pre-save bytes so the user's INI isn't left
-            ; half-written. Best-effort: if the restore itself
-            ; fails, the .pre-save file stays on disk so the user
-            ; can recover it manually.
-            if (hadFile && FileExist(backupPath))
+            if hadFile
             {
-                try FileCopy(backupPath, iniPath, true)
+                ; --- Guarantee 2: preserve-backup-on-restore-fail ---
+                ; Track restore success: ONLY delete the .pre-save
+                ; backup after a confirmed-OK restore. If the
+                ; restore throws, the .pre-save stays on disk for
+                ; manual recovery.
+                restored := false
+                if FileExist(backupPath)
+                {
+                    try
+                    {
+                        FileCopy(backupPath, iniPath, true)
+                        restored := true
+                    }
+                }
+                if restored
+                {
+                    try FileDelete(backupPath)
+                }
+                ; else: .pre-save preserved on disk for manual recovery
             }
-            try FileDelete(backupPath)
-            ; Rethrow so the caller can react (SettingsDialog shows
-            ; an error MsgBox; programmatic callers see the exception).
+            else
+            {
+                ; --- Guarantee 3: fresh-install-cleanup ---
+                ; There was no INI before this Save, so any bytes
+                ; on disk now are partial junk. Delete so the next
+                ; boot lands on AppSettings.Defaults() rather than
+                ; treating a half-formed file as authoritative.
+                if FileExist(iniPath)
+                {
+                    try FileDelete(iniPath)
+                }
+            }
+            ; Rethrow so the caller can react (SettingsDialog
+            ; shows an error MsgBox and restores its in-memory
+            ; snapshot; programmatic callers see the exception).
             throw ex
         }
 

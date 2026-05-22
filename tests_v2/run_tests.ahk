@@ -347,6 +347,7 @@ SpeedKalandraMsgBox(text, title := "", options := "") {
 #Include unit\ui\steve_layout_plus_widget_tests.ahk
 #Include unit\ui\run_stats_plot_dialog_tests.ahk
 #Include unit\ui\death_stats_dialog_tests.ahk
+#Include unit\ui\settings_dialog_tests.ahk
 
 ; ------------------------------------------------------------
 ; Suites - integration (end-to-end)

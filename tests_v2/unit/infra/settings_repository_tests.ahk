@@ -95,6 +95,8 @@ class SettingsRepositoryTests extends TestCase
         "save_success_removes_pre_save_backup_file",
         "save_failure_restores_pre_save_bytes_and_rethrows",
         "save_failure_on_empty_ini_does_not_create_backup",
+        "save_aborts_when_backup_copy_fails",
+        "save_failure_on_fresh_install_mid_sequence_deletes_partial_ini",
     ]
 
     ; ============================================================
@@ -677,6 +679,107 @@ class SettingsRepositoryTests extends TestCase
         Assert.False(FileExist(path . ".pre-save") != "",
             "No .pre-save should be created when there was no pre-existing INI")
     }
+
+    save_aborts_when_backup_copy_fails()
+    {
+        ; Guarantee 1 (backup-fail-abort): when the .pre-save copy
+        ; can't be created, the save MUST abort BEFORE touching the
+        ; INI. The user's existing INI must be untouched, so they
+        ; can retry once whatever blocked the backup is cleared.
+        ;
+        ; Strategy to force FileCopy failure: pre-create a read-only
+        ; file at the backup path. FileCopy(src, dest, overwrite=true)
+        ; in Windows can't replace a read-only file without first
+        ; clearing the +R attribute, so the copy throws.
+        path := Fixtures.TempPath("ini")
+        mainIni := IniFile(path)
+        repo := SettingsRepository(mainIni)
+
+        baseline := AppSettings.Defaults()
+        baseline.profileName := "BaselineProfile"
+        repo.Save(baseline)
+
+        ; Sanity: baseline on disk
+        Assert.Equal("BaselineProfile",
+            mainIni.Read("General", "ProfileName"))
+
+        backupPath := path . ".pre-save"
+        FileAppend("blocking", backupPath, "UTF-8")
+        FileSetAttrib("+R", backupPath)
+        Fixtures.RegisterTempPath(backupPath)
+
+        nextCfg := AppSettings.Defaults()
+        nextCfg.profileName := "NewProfile"
+
+        ; Use try/catch around the assertions to guarantee the
+        ; attribute cleanup below runs even on assertion failure
+        ; (AHK v2 has no finally).
+        savedError := ""
+        try
+        {
+            Assert.Throws(Error, () => repo.Save(nextCfg),
+                "Backup creation failure must abort save with an error")
+
+            verifyIni := IniFile(path)
+            Assert.Equal("BaselineProfile",
+                verifyIni.Read("General", "ProfileName"),
+                "Save must NOT mutate INI when the backup couldn't be created")
+        }
+        catch as e
+        {
+            savedError := e
+        }
+
+        ; Cleanup: clear +R so CleanupAll can delete the file
+        try FileSetAttrib("-R", backupPath)
+
+        if (savedError != "")
+            throw savedError
+    }
+
+    save_failure_on_fresh_install_mid_sequence_deletes_partial_ini()
+    {
+        ; Guarantee 3 (fresh-install-cleanup): distinct from
+        ; save_failure_on_empty_ini_does_not_create_backup, which
+        ; fails on call 1 (no partial bytes ever written). This
+        ; test fails MID-sequence (call 4) on a fresh-install
+        ; path — calls 1–3 already wrote real bytes via IniWrite,
+        ; so the file exists on disk in a half-formed state. The
+        ; cleanup must delete those partial bytes so the next boot
+        ; lands on AppSettings.Defaults() rather than treating the
+        ; half-formed file as authoritative state.
+        path := Fixtures.TempPath("ini")
+        if FileExist(path)
+            FileDelete(path)
+
+        throwingIni := _ThrowingIniFile(path)
+        throwingIni.ThrowOnCall(4)   ; mid-sequence: after first 3 [General] writes
+        repo := SettingsRepository(throwingIni)
+
+        cfg := AppSettings.Defaults()
+        Assert.Throws(Error, () => repo.Save(cfg),
+            "Mid-sequence Save throw must propagate on fresh-install path")
+
+        Assert.False(FileExist(path) != "",
+            "Partial INI from fresh-install mid-sequence failure must be deleted")
+        Assert.False(FileExist(path . ".pre-save") != "",
+            "No .pre-save expected on fresh-install path")
+    }
+
+    ; ============================================================
+    ; Note on preserve-backup-on-restore-fail (Guarantee 2)
+    ; ============================================================
+    ;
+    ; The second guarantee — keep the .pre-save on disk when the
+    ; FileCopy restore itself fails — is NOT covered by an
+    ; automated test in this suite. Forcing FileCopy to fail at
+    ; that exact stage requires either intercepting the AHK
+    ; built-in or maneuvering the filesystem into a state where
+    ; the second FileCopy fails but the first didn't, which is
+    ; brittle in a unit-test context. The contract is enforced
+    ; by inspection in SettingsRepository.Save: the `restored`
+    ; flag is set ONLY after a successful FileCopy back, and
+    ; FileDelete on the backup runs ONLY if that flag is true.
 }
 
 TestRegistry.Register(SettingsRepositoryTests)

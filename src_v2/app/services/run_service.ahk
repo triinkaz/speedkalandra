@@ -50,6 +50,27 @@ class RunService
     _state     := ""    ; RunState
     _log       := ""    ; Logger (NullLogger by default) — used to warn on hook throws.
 
+    ; --- Persistence health (for UI/tray surface) ---
+    ; _persistenceDegraded flips to true on any lifecycle-persist
+    ; failure. A successful _Persist clears it. UI/tray code can
+    ; query IsPersistenceDegraded() to surface that crash recovery
+    ; may be stale until the next successful save.
+    _persistenceDegraded      := false
+    ; _persistenceTrayTipCount counts the TrayTip notifications we
+    ; actually fired (i.e. ones that passed the cooldown gate).
+    ; Tests use GetPersistenceTrayTipCount() to verify the rate-
+    ; limiting works — production code doesn't need to read it.
+    _persistenceTrayTipCount  := 0
+    ; _lastDegradedTrayTipMs holds the clock.NowMs() of the most
+    ; recent TrayTip so we can throttle to one notification per
+    ; DEGRADED_TRAYTIP_COOLDOWN_MS window. Initialized to
+    ; -DEGRADED_TRAYTIP_COOLDOWN_MS so the first failure ever —
+    ; even at clock=0 — passes the cooldown gate. (A plain 0
+    ; initializer would gate-block any failure that happens while
+    ; clock.NowMs() is still under 60000 ms.)
+    _lastDegradedTrayTipMs    := -60000
+    static DEGRADED_TRAYTIP_COOLDOWN_MS := 60000   ; 60 s
+
     ; Pre-publish hooks. "" means unwired. See the class header for
     ; the rationale. Settable post-construction (the snapshot saver
     ; they typically point at is constructed later in the composition
@@ -178,6 +199,21 @@ class RunService
     IsPaused()     => this._state.IsPaused()
     GetState()     => this._state
 
+    ; True when the most recent lifecycle-transition _Persist
+    ; threw and no later _Persist has succeeded since. UI/tray
+    ; can surface a "crash recovery may be stale" indicator while
+    ; this is true. Cleared automatically by the next successful
+    ; _Persist (which also logs an Info entry so a log tail shows
+    ; the recovery transition explicitly).
+    IsPersistenceDegraded() => this._persistenceDegraded
+
+    ; Test-facing accessor: number of TrayTip notifications fired
+    ; due to persistence degradation. Increments only when the
+    ; cooldown window has elapsed since the last notification, so
+    ; tests can verify the rate-limit by advancing a stub clock
+    ; and checking this counter.
+    GetPersistenceTrayTipCount() => this._persistenceTrayTipCount
+
     ; NewRun on an active run discards the current state (ResetRun)
     ; instead of cancelling it. CancelRun would save to history if
     ; runMs >= 3 min, which used to surprise users who just wanted
@@ -289,15 +325,55 @@ class RunService
         catch as ex
         {
             ; Lifecycle-transition persist (NewRun, FinalizeRun,
-            ; CancelRun, ResetRun). A failure here means crash
-            ; recovery will see stale data on the next boot —
-            ; warn via the log so a silent persistence drift
-            ; becomes visible. PersistTimer (every-5s tick) stays
-            ; silent on purpose: the next tick retries, and
-            ; warning per tick would flood the log if the disk is
+            ; CancelRun). A failure here means crash recovery
+            ; will see stale data on the next boot. Three things
+            ; happen, in order:
+            ;
+            ;   (a) Log Warn unconditionally. Persistent disk
+            ;       issues need a trail in the log file so a bug
+            ;       report can find the root cause.
+            ;
+            ;   (b) Set _persistenceDegraded := true so UI/tray
+            ;       can surface that crash recovery is stale.
+            ;       The flag stays set until the next successful
+            ;       _Persist clears it.
+            ;
+            ;   (c) Rate-limited TrayTip — fire at most one
+            ;       notification per DEGRADED_TRAYTIP_COOLDOWN_MS
+            ;       window. Without throttling, a transient lock
+            ;       (antivirus scan, OneDrive sync, backup app)
+            ;       could burst 3+ notifications across a
+            ;       NewRun → FinalizeRun → NewRun sequence in a
+            ;       couple of seconds.
+            ;
+            ; PersistTimer (every-5s tick) stays silent on
+            ; purpose: the next tick retries, and warning per
+            ; tick would flood the log if the disk is
             ; persistently unavailable.
             try this._log.Warn("Lifecycle persist failed: " . ex.Message
                 . " | status=" . this._state.status,
+                "RunService")
+            this._persistenceDegraded := true
+            nowMs := this._clock.NowMs()
+            if (nowMs - this._lastDegradedTrayTipMs >= RunService.DEGRADED_TRAYTIP_COOLDOWN_MS)
+            {
+                this._lastDegradedTrayTipMs   := nowMs
+                this._persistenceTrayTipCount += 1
+                try TrayTip("SpeedKalandra",
+                    "Run state save failed — crash recovery may be stale. See log.",
+                    "Iconi")
+            }
+            return
+        }
+
+        ; Success path. If we were degraded, log the recovery so a
+        ; tail of speedkalandra.log shows the transition explicitly,
+        ; then clear the flag.
+        if this._persistenceDegraded
+        {
+            this._persistenceDegraded := false
+            try this._log.Info(
+                "Lifecycle persist recovered after previous failure",
                 "RunService")
         }
     }
