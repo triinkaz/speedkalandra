@@ -85,6 +85,27 @@ class Events
     ; this event only refreshes the visual state.
     static VendorRegexesChanged := "Evt.VendorRegexesChanged" ; data: {oldRegexes, newRegexes}
 
+    ; Published by SettingsDialog._OnSave when cfg.pbDisplayMode
+    ; changed between "pb" and "avg5". Widgets that surface PB
+    ; (Steve Plus bare value, Compact Plus block sub-labels,
+    ; Compact Classic line2 chip) and widgets that use PB for the
+    ; live-timer color (every layout except Micro Classic)
+    ; subscribe and re-render their PB-related controls. The cache
+    ; of `RunAverageService` does NOT need a separate invalidation
+    ; hook here — its values are already up to date; what changes
+    ; is only WHICH service the widgets consult. No restart
+    ; required, unlike LayoutVariant.
+    static PbDisplayModeChanged := "Evt.PbDisplayModeChanged"  ; data: {oldMode, newMode}
+
+    ; --- Persistence health ---
+    ; Published by RunService on transitions of its
+    ; _persistenceDegraded flag (false↔true). UI/tray surfaces
+    ; "crash recovery may be stale" while degraded=true. Idempotent
+    ; semantics: publish ONLY when the flag actually changes, not
+    ; on every _Persist call — otherwise a burst of failing saves
+    ; would spam subscribers that just need to know the *state*.
+    static PersistenceHealthChanged := "Evt.PersistenceHealthChanged"  ; data: {degraded}
+
     ; --- App lifecycle ---
     static AppStarted  := "Evt.AppStarted"
     static AppStopping := "Evt.AppStopping"

@@ -32,11 +32,18 @@
 ;   convention as Steve Plus / Compact Plus — text never changes,
 ;   only the color tracks XpRules.
 ;
+; PB DISPLAY MODE (cfg.pbDisplayMode):
+;   No literal PB chip in this layout — only the live-timer colour
+;   uses the comparison target. cfg.pbDisplayMode = "avg5" swaps
+;   the target from PB to the latest-5-run average, so the timer
+;   colour reflects the same semantic as the larger widgets.
+;   Hot-reloadable via Evt.PbDisplayModeChanged.
+;
 ; CONSTRUCTION:
 ;   widget := MicroLayoutPlusWidget(
 ;       bus, position, onPersist,
 ;       timer, zoneTracker, xpService,
-;       zonesCatalog, personalBest)
+;       zonesCatalog, personalBest, cfg, avgService)
 
 
 class MicroLayoutPlusWidget extends LayoutWidgetBase
@@ -69,6 +76,8 @@ class MicroLayoutPlusWidget extends LayoutWidgetBase
     _xp           := ""
     _zonesCatalog := ""
     _pbService    := ""
+    _cfg          := ""   ; AppSettings (optional, only used for pbDisplayMode)
+    _avgService   := ""   ; RunAverageService (optional; required for cfg.pbDisplayMode = "avg5")
 
     ; State
     _currentZone := ""
@@ -88,11 +97,12 @@ class MicroLayoutPlusWidget extends LayoutWidgetBase
     _handlerRunStarted    := ""
     _handlerRunReset      := ""
     _handlerRunCancelled  := ""
+    _handlerPbDisplayMode := ""
 
     _highFreqTimerFn := ""
 
     __New(bus, position, onPersist, timer, zoneTracker, xp,
-          zonesCatalog := "", pbService := "")
+          zonesCatalog := "", pbService := "", cfg := "", avgService := "")
     {
         super.__New(MicroLayoutPlusWidget.WIDGET_ID,
                     MicroLayoutPlusWidget.DISPLAY_NAME,
@@ -102,6 +112,8 @@ class MicroLayoutPlusWidget extends LayoutWidgetBase
         this._xp           := xp
         this._zonesCatalog := zonesCatalog
         this._pbService    := pbService
+        this._cfg          := cfg
+        this._avgService   := avgService
 
         this._handlerTick         := (data) => this._OnTick(data)
         this._handlerZoneEntered  := (data) => this._OnZoneEntered(data)
@@ -110,6 +122,7 @@ class MicroLayoutPlusWidget extends LayoutWidgetBase
         this._handlerRunStarted   := (data) => this._OnRunStateChange()
         this._handlerRunReset     := (data) => this._OnRunStateChange()
         this._handlerRunCancelled := (data) => this._OnRunStateChange()
+        this._handlerPbDisplayMode := (data) => this._OnPbDisplayModeChanged()
 
         bus.Subscribe(Events.Tick,             this._handlerTick)
         bus.Subscribe(Events.ZoneEntered,      this._handlerZoneEntered)
@@ -118,6 +131,7 @@ class MicroLayoutPlusWidget extends LayoutWidgetBase
         bus.Subscribe(Events.RunStarted,       this._handlerRunStarted)
         bus.Subscribe(Events.RunReset,         this._handlerRunReset)
         bus.Subscribe(Events.RunCancelled,     this._handlerRunCancelled)
+        bus.Subscribe(Events.PbDisplayModeChanged, this._handlerPbDisplayMode)
     }
 
     _GetFixedSize() => Map("w", MicroLayoutPlusWidget.FIXED_W, "h", MicroLayoutPlusWidget.FIXED_H)
@@ -319,6 +333,14 @@ class MicroLayoutPlusWidget extends LayoutWidgetBase
         this._Refresh()
     }
 
+    ; Hot-reload of cfg.pbDisplayMode — only the live-timer colour
+    ; cache depends on the mode (no literal PB chip).
+    _OnPbDisplayModeChanged()
+    {
+        this._lastRunTimerColor := ""
+        this._Refresh()
+    }
+
     _ResolveInitialActZone()
     {
         if !IsObject(this._zoneTracker)
@@ -344,16 +366,36 @@ class MicroLayoutPlusWidget extends LayoutWidgetBase
     ; PB is consulted: the zone-time block was removed (see
     ; DELTAS FROM CLASSIC in the header), so _GetZonePbMs would
     ; have no caller — dropped along with it.
+    ;
+    ; cfg.pbDisplayMode = "avg5" routes the lookup through the
+    ; RunAverageService instead, so the live-timer colour reflects
+    ; the average rather than the PB — same semantics as the
+    ; larger widgets.
     ; ============================================================
+
+    _IsAvg5Mode()
+    {
+        if !IsObject(this._cfg)
+            return false
+        if !IsObject(this._avgService)
+            return false
+        return this._cfg.pbDisplayMode = "avg5"
+    }
 
     _GetRunPbMs()
     {
-        if !IsObject(this._pbService)
-            return 0
         act := this._currentAct
         if (act <= 0 && IsObject(this._zonesCatalog) && this._currentZone != "")
             act := this._zonesCatalog.GetActOfName(this._currentZone)
         if (act <= 0)
+            return 0
+        if this._IsAvg5Mode()
+        {
+            try
+                return this._avgService.GetAverageRunMsForAct(act)
+            return 0
+        }
+        if !IsObject(this._pbService)
             return 0
         try
             return this._pbService.GetRunPbForAct(act)
@@ -430,6 +472,11 @@ class MicroLayoutPlusWidget extends LayoutWidgetBase
         {
             this._bus.Unsubscribe(Events.RunCancelled, this._handlerRunCancelled)
             this._handlerRunCancelled := ""
+        }
+        if (this._handlerPbDisplayMode != "")
+        {
+            this._bus.Unsubscribe(Events.PbDisplayModeChanged, this._handlerPbDisplayMode)
+            this._handlerPbDisplayMode := ""
         }
     }
 }

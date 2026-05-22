@@ -32,10 +32,18 @@
 ;   - Deaths: muted when 0, warn (amber) when >=1
 ;   - XP: status color via XpRules
 ;
+; PB DISPLAY MODE (cfg.pbDisplayMode):
+;   No literal PB chip in this layout — only the live-timer colour
+;   uses the comparison target. cfg.pbDisplayMode = "avg5" swaps
+;   the target from PB to the latest-5-run average, so the timer
+;   colour reflects the same semantic as the larger widgets
+;   (Steve+/Compact+/Compact Classic). Hot-reloadable via
+;   Evt.PbDisplayModeChanged.
+;
 ; CONSTRUCTION:
 ;   widget := SteveLayoutWidget(bus, position, onPersist, timer,
 ;                               zoneTracker, xp, zonesCatalog,
-;                               pbService)
+;                               pbService, cfg, avgService)
 
 
 class SteveLayoutWidget extends LayoutWidgetBase
@@ -80,6 +88,8 @@ class SteveLayoutWidget extends LayoutWidgetBase
     _xp            := ""
     _zonesCatalog  := ""
     _pbService     := ""
+    _cfg           := ""   ; AppSettings (optional, only used for pbDisplayMode)
+    _avgService    := ""   ; RunAverageService (optional; required for cfg.pbDisplayMode = "avg5")
 
     ; State (replicated from Compact for robust PB resolution)
     _currentZone   := ""
@@ -102,12 +112,13 @@ class SteveLayoutWidget extends LayoutWidgetBase
     _handlerRunStarted     := ""
     _handlerRunReset       := ""
     _handlerRunCancelled   := ""
+    _handlerPbDisplayMode  := ""
 
     ; Internal SetTimer for high-frequency timer refresh.
     _highFreqTimerFn := ""
 
     __New(bus, position, onPersist, timer, zoneTracker, xp,
-          zonesCatalog := "", pbService := "")
+          zonesCatalog := "", pbService := "", cfg := "", avgService := "")
     {
         super.__New(SteveLayoutWidget.WIDGET_ID,
                     SteveLayoutWidget.DISPLAY_NAME,
@@ -117,6 +128,8 @@ class SteveLayoutWidget extends LayoutWidgetBase
         this._xp            := xp
         this._zonesCatalog  := zonesCatalog
         this._pbService     := pbService
+        this._cfg           := cfg
+        this._avgService    := avgService
 
         this._handlerTick           := (data) => this._OnTick(data)
         this._handlerZoneEntered    := (data) => this._OnZoneEntered(data)
@@ -125,6 +138,7 @@ class SteveLayoutWidget extends LayoutWidgetBase
         this._handlerRunStarted     := (data) => this._OnRunStateChange()
         this._handlerRunReset       := (data) => this._OnRunStateChange()
         this._handlerRunCancelled   := (data) => this._OnRunStateChange()
+        this._handlerPbDisplayMode  := (data) => this._OnPbDisplayModeChanged()
 
         bus.Subscribe(Events.Tick,            this._handlerTick)
         bus.Subscribe(Events.ZoneEntered,     this._handlerZoneEntered)
@@ -133,6 +147,7 @@ class SteveLayoutWidget extends LayoutWidgetBase
         bus.Subscribe(Events.RunStarted,      this._handlerRunStarted)
         bus.Subscribe(Events.RunReset,        this._handlerRunReset)
         bus.Subscribe(Events.RunCancelled,    this._handlerRunCancelled)
+        bus.Subscribe(Events.PbDisplayModeChanged, this._handlerPbDisplayMode)
     }
 
     _GetFixedSize() => Map("w", SteveLayoutWidget.FIXED_W, "h", SteveLayoutWidget.FIXED_H)
@@ -396,6 +411,14 @@ class SteveLayoutWidget extends LayoutWidgetBase
         this._Refresh()
     }
 
+    ; Hot-reload of cfg.pbDisplayMode — only the timer colour cache
+    ; depends on the mode in this layout (no literal PB chip).
+    _OnPbDisplayModeChanged()
+    {
+        this._lastTimerColor := ""
+        this._Refresh()
+    }
+
     ; Initial resync — when widget is shown, picks up active zone/act
     ; from the zoneTracker if there's a run in progress.
     _ResolveInitialActZone()
@@ -423,14 +446,34 @@ class SteveLayoutWidget extends LayoutWidgetBase
     ; ============================================================
 
     ; Safe queries to the PB service (same pattern as Compact).
+    ; cfg.pbDisplayMode = "avg5" routes the query to the
+    ; RunAverageService so the live-timer colour comparison uses
+    ; the average instead of the PB. Dual-check keeps an unwired
+    ; avg5 mode from silently breaking the colour — falls back
+    ; to PB when the service is missing.
+    _IsAvg5Mode()
+    {
+        if !IsObject(this._cfg)
+            return false
+        if !IsObject(this._avgService)
+            return false
+        return this._cfg.pbDisplayMode = "avg5"
+    }
+
     _GetRunPbMs()
     {
-        if !IsObject(this._pbService)
-            return 0
         act := this._currentAct
         if (act <= 0 && IsObject(this._zonesCatalog) && this._currentZone != "")
             act := this._zonesCatalog.GetActOfName(this._currentZone)
         if (act <= 0)
+            return 0
+        if this._IsAvg5Mode()
+        {
+            try
+                return this._avgService.GetAverageRunMsForAct(act)
+            return 0
+        }
+        if !IsObject(this._pbService)
             return 0
         try
             return this._pbService.GetRunPbForAct(act)
@@ -508,6 +551,11 @@ class SteveLayoutWidget extends LayoutWidgetBase
         {
             this._bus.Unsubscribe(Events.RunCancelled, this._handlerRunCancelled)
             this._handlerRunCancelled := ""
+        }
+        if (this._handlerPbDisplayMode != "")
+        {
+            this._bus.Unsubscribe(Events.PbDisplayModeChanged, this._handlerPbDisplayMode)
+            this._handlerPbDisplayMode := ""
         }
     }
 }

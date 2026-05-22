@@ -88,6 +88,23 @@ Not bugs — they are new behaviors covered by tests to shield against future re
 | W9.1 | `MigrateIniToUtf8` corrupted `IniRead` (latent footgun) | `text_encoding.ahk` (API removed) | `TextEncodingTests::bug2_convert_utf16_to_utf8_was_removed`, `…::bug2_migrate_ini_to_utf8_was_removed` |
 | W9.2 | `LoadingDetectionService._End` discarded timeouts (> maxMs vanished silently) | `loading_detection_service.ahk::_End` removed `> maxMs` filter | `LoadingDetectionServiceTests::tick_timeout_publishes_loading_measured`, `…::bug5_loading_100s_publishes_with_real_duration`, `…::bug5_loading_300s_publishes_with_real_duration` |
 
+### Senior-review hardening (W10.x)
+
+Catalogued from successive senior-review passes on the settings
+save path and the run-state lifecycle persist. The reviewer asked
+for four things; each one became a contract with an automated
+regression test (some of them required extracting a method as an
+override point so the failure path was reachable from a test).
+
+| #     | Symptom (would silently regress if removed)                                                        | Fix in                                                                       | Regression test                                                                                                                                                  |
+| ----- | -------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| W10.1 | Settings save mutated INI when the .pre-save backup couldn't be created                            | `settings_repository.ahk::Save` Guarantee 1 (backup-fail-abort)              | `SettingsRepositoryTests::save_aborts_when_backup_copy_fails`                                                                                                     |
+| W10.2 | Settings save deleted the .pre-save even when the restore from it failed                           | `settings_repository.ahk::Save` Guarantee 2 + `_TryRestoreFromBackup`        | `SettingsRepositoryTests::save_throws_composed_error_when_save_fails_and_restore_also_fails`, `…::save_preserves_backup_when_restore_fails`                       |
+| W10.3 | Fresh-install settings save left half-written INI on mid-sequence throw                            | `settings_repository.ahk::Save` Guarantee 3 (fresh-install-cleanup)          | `SettingsRepositoryTests::save_failure_on_fresh_install_mid_sequence_deletes_partial_ini`                                                                         |
+| W10.4 | SettingsDialog left the in-memory cfg mutated even when Save threw ("ghost values")                | `settings_dialog.ahk` snapshot/restore via `_PersistAndPublishCfg`           | `SettingsDialogTests::persist_and_publish_restores_in_memory_cfg_on_save_failure`, `…::persist_and_publish_does_not_publish_events_on_save_failure`               |
+| W10.5 | RunService lifecycle persist failure was log-only (no UI surface)                                  | `run_service.ahk` `_persistenceDegraded` + rate-limited TrayTip              | `RunServiceTests::lifecycle_persist_failure_sets_degraded_flag`, `…::lifecycle_persist_traytip_rate_limited_to_one_per_60s`                                       |
+| W10.6 | Persistence-degraded state had no persistent UI surface (only ephemeral TrayTip)                   | `Events.PersistenceHealthChanged` + `persistence_health_tray_indicator.ahk`  | `PersistenceHealthTrayIndicatorTests::*` (13 tests, full lifecycle), `RunServiceTests::lifecycle_persist_publishes_health_event_on_first_failure_only`             |
+
 ---
 
 ## AutoHotkey v2 pitfalls (not bugs, but non-obvious behaviors)

@@ -65,6 +65,18 @@ speedkalandra_gold_standard_guide_v2.md
 speedkalandra_roadmap_10_10.md
 speedkalandra_roadmap_padrao_ouro.md
 
+# === Local reference material (dev-only, not for the public repo) ===
+# ToS.txt is a local copy of the PoE2 Terms of Use used during
+# GSG §18 compliance checks. Kept out of the repo to avoid
+# redistributing GGG's copyrighted text.
+ToS.txt
+
+# === Experimental scripts (dev-only, never released) ===
+# Ad-hoc AHK files in the repo root that are not part of the
+# tracker itself — used to validate ideas before extracting them
+# into src_v2/.
+experiment_*.ahk
+
 # === AI assistant context (dev-only, never released) ===
 # CLAUDE.md is a pointer file for AI assistants reading the
 # repository between sessions. Not part of the public project.

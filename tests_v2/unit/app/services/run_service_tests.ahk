@@ -165,6 +165,9 @@ class RunServiceTests extends TestCase
         "lifecycle_persist_failure_sets_degraded_flag",
         "lifecycle_persist_success_after_failure_clears_degraded_flag",
         "lifecycle_persist_traytip_rate_limited_to_one_per_60s",
+        "lifecycle_persist_publishes_health_event_on_first_failure_only",
+        "lifecycle_persist_publishes_health_event_with_degraded_false_on_recovery",
+        "lifecycle_persist_success_when_healthy_does_not_publish_health_event",
 
         ; --- Dispose ---
         "dispose_unsubscribes_all_commands",
@@ -1026,6 +1029,97 @@ class RunServiceTests extends TestCase
         freshSvc.NewRun()
         Assert.Equal(2, freshSvc.GetPersistenceTrayTipCount(),
             "third failure after the cooldown window must fire a second TrayTip")
+
+        try freshSvc.Dispose()
+    }
+
+    lifecycle_persist_publishes_health_event_on_first_failure_only()
+    {
+        ; PersistenceHealthChanged must fire exactly ONCE on the
+        ; first failure (false→true transition) and stay silent
+        ; on subsequent failures while already degraded. UI/tray
+        ; subscribers track *state*, not *attempts* — republishing
+        ; on every failure would just spam them.
+        freshBus     := Fixtures.MakeBus()
+        freshTimer   := TimerService(this.stubClock, freshBus)
+        freshRepoP   := Fixtures.TempPath("ini")
+        throwingRepo := _ThrowingRunStateRepository(IniFile(freshRepoP))
+        memLog       := InMemoryLogger()
+        freshSvc     := RunService(this.stubClock, freshBus, freshTimer, throwingRepo, memLog)
+
+        captured := []
+        freshBus.Subscribe(Events.PersistenceHealthChanged,
+            (data) => captured.Push(data))
+
+        ; First failure → publish (false→true).
+        throwingRepo.ThrowOnNextSave()
+        freshSvc.NewRun()
+        Assert.Equal(1, captured.Length,
+            "first failure must publish PersistenceHealthChanged")
+        Assert.True(captured[1]["degraded"],
+            "first publish must carry degraded=true")
+
+        ; Second failure while already degraded → NO publish.
+        throwingRepo.ThrowOnNextSave()
+        freshSvc.FinalizeRun()
+        Assert.Equal(1, captured.Length,
+            "second failure (already degraded) must NOT republish")
+
+        try freshSvc.Dispose()
+    }
+
+    lifecycle_persist_publishes_health_event_with_degraded_false_on_recovery()
+    {
+        ; Recovery contract: when a save succeeds after a previous
+        ; failure, publish PersistenceHealthChanged{degraded:false}
+        ; so the tray-menu indicator (or widget marker) can clear.
+        freshBus     := Fixtures.MakeBus()
+        freshTimer   := TimerService(this.stubClock, freshBus)
+        freshRepoP   := Fixtures.TempPath("ini")
+        throwingRepo := _ThrowingRunStateRepository(IniFile(freshRepoP))
+        memLog       := InMemoryLogger()
+        freshSvc     := RunService(this.stubClock, freshBus, freshTimer, throwingRepo, memLog)
+
+        captured := []
+        freshBus.Subscribe(Events.PersistenceHealthChanged,
+            (data) => captured.Push(data))
+
+        ; Force first failure.
+        throwingRepo.ThrowOnNextSave()
+        freshSvc.NewRun()
+        Assert.Equal(1, captured.Length, "sanity: first failure published")
+
+        ; Next persist succeeds → recovery publish (true→false).
+        freshSvc.FinalizeRun()
+        Assert.Equal(2, captured.Length,
+            "recovery must publish PersistenceHealthChanged")
+        Assert.False(captured[2]["degraded"],
+            "recovery publish must carry degraded=false")
+
+        try freshSvc.Dispose()
+    }
+
+    lifecycle_persist_success_when_healthy_does_not_publish_health_event()
+    {
+        ; Happy path sanity: a successful save with no prior
+        ; degraded state must NOT publish anything. The event is
+        ; for transitions only.
+        freshBus     := Fixtures.MakeBus()
+        freshTimer   := TimerService(this.stubClock, freshBus)
+        freshRepoP   := Fixtures.TempPath("ini")
+        freshRepo    := RunStateRepository(IniFile(freshRepoP))   ; real repo, no throws
+        memLog       := InMemoryLogger()
+        freshSvc     := RunService(this.stubClock, freshBus, freshTimer, freshRepo, memLog)
+
+        captured := []
+        freshBus.Subscribe(Events.PersistenceHealthChanged,
+            (data) => captured.Push(data))
+
+        freshSvc.NewRun()
+        freshSvc.FinalizeRun()
+
+        Assert.Equal(0, captured.Length,
+            "successful lifecycle saves must NOT publish health events when never degraded")
 
         try freshSvc.Dispose()
     }

@@ -326,7 +326,7 @@ class RunService
         {
             ; Lifecycle-transition persist (NewRun, FinalizeRun,
             ; CancelRun). A failure here means crash recovery
-            ; will see stale data on the next boot. Three things
+            ; will see stale data on the next boot. Four things
             ; happen, in order:
             ;
             ;   (a) Log Warn unconditionally. Persistent disk
@@ -346,6 +346,13 @@ class RunService
             ;       NewRun → FinalizeRun → NewRun sequence in a
             ;       couple of seconds.
             ;
+            ;   (d) On the FIRST failure (false→true transition),
+            ;       publish PersistenceHealthChanged{degraded:true}
+            ;       so a tray-menu / widget subscriber can mark a
+            ;       persistent indicator. Repeated failures do NOT
+            ;       republish — subscribers track *state*, not
+            ;       *attempts*.
+            ;
             ; PersistTimer (every-5s tick) stays silent on
             ; purpose: the next tick retries, and warning per
             ; tick would flood the log if the disk is
@@ -353,6 +360,7 @@ class RunService
             try this._log.Warn("Lifecycle persist failed: " . ex.Message
                 . " | status=" . this._state.status,
                 "RunService")
+            wasHealthy := !this._persistenceDegraded
             this._persistenceDegraded := true
             nowMs := this._clock.NowMs()
             if (nowMs - this._lastDegradedTrayTipMs >= RunService.DEGRADED_TRAYTIP_COOLDOWN_MS)
@@ -363,18 +371,27 @@ class RunService
                     "Run state save failed — crash recovery may be stale. See log.",
                     "Iconi")
             }
+            if wasHealthy
+            {
+                try this._bus.Publish(Events.PersistenceHealthChanged, Map(
+                    "degraded", true))
+            }
             return
         }
 
         ; Success path. If we were degraded, log the recovery so a
         ; tail of speedkalandra.log shows the transition explicitly,
-        ; then clear the flag.
+        ; clear the flag, and publish PersistenceHealthChanged so
+        ; the tray indicator (or any other subscriber) can clear
+        ; its visual marker.
         if this._persistenceDegraded
         {
             this._persistenceDegraded := false
             try this._log.Info(
                 "Lifecycle persist recovered after previous failure",
                 "RunService")
+            try this._bus.Publish(Events.PersistenceHealthChanged, Map(
+                "degraded", false))
         }
     }
 

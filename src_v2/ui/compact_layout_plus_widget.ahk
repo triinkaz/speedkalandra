@@ -35,15 +35,24 @@
 ;   - Distribution footer is 4 px high without labels (Classic's
 ;     bar has inline "Map 70%" text).
 ;
-; SUBSCRIPTIONS — same 9 events as Classic. XpService.GetXpPenaltyInfo()
+; SUBSCRIPTIONS — same 9 events as Classic, plus PbDisplayModeChanged
+; (hot-reload of the PB/avg5 mode flag). XpService.GetXpPenaltyInfo()
 ; consults area level, so refreshing on AreaLevelChanged keeps the
 ; XP chip color accurate without waiting for the next tick.
+;
+; PB DISPLAY MODE (cfg.pbDisplayMode):
+;   - "pb" (default): "ZONE" / "RUN" sub-labels read "PB MM:SS"
+;     and the live-timer colour compares against zone-PB / per-act
+;     PB respectively.
+;   - "avg5": same sub-labels read "AVG MM:SS"; both timer colours
+;     compare against the latest-5-run average (per-zone / per-act).
+;     Hot-reloadable via Evt.PbDisplayModeChanged — no restart.
 ;
 ; CONSTRUCTION:
 ;   widget := CompactLayoutPlusWidget(
 ;       bus, position, onPersist,
 ;       timer, zoneTracker, xpService,
-;       zonesCatalog, loadingTotals, cfg, pbService)
+;       zonesCatalog, loadingTotals, cfg, pbService, avgService)
 
 
 class CompactLayoutPlusWidget extends LayoutWidgetBase
@@ -168,6 +177,7 @@ class CompactLayoutPlusWidget extends LayoutWidgetBase
     _loadingTotals := ""
     _cfg           := ""
     _pbService     := ""
+    _avgService    := ""   ; RunAverageService (optional; required for cfg.pbDisplayMode = "avg5")
 
     ; State
     _currentZone := ""
@@ -203,11 +213,13 @@ class CompactLayoutPlusWidget extends LayoutWidgetBase
     _handlerRunCancelled   := ""
     _handlerDeathDetected  := ""
     _handlerVendorChanged  := ""
+    _handlerPbDisplayMode  := ""   ; Evt.PbDisplayModeChanged — full refresh on toggle
 
     _highFreqTimerFn := ""
 
     __New(bus, position, onPersist, timer, zoneTracker, xp,
-          zonesCatalog := "", loadingTotals := "", cfg := "", pbService := "")
+          zonesCatalog := "", loadingTotals := "", cfg := "", pbService := "",
+          avgService := "")
     {
         super.__New(CompactLayoutPlusWidget.WIDGET_ID,
                     CompactLayoutPlusWidget.DISPLAY_NAME,
@@ -219,6 +231,7 @@ class CompactLayoutPlusWidget extends LayoutWidgetBase
         this._loadingTotals := loadingTotals
         this._cfg           := cfg
         this._pbService     := pbService
+        this._avgService    := avgService
 
         this._handlerTick           := (data) => this._OnTick(data)
         this._handlerZoneEntered    := (data) => this._OnZoneEntered(data)
@@ -229,6 +242,7 @@ class CompactLayoutPlusWidget extends LayoutWidgetBase
         this._handlerRunCancelled   := (data) => this._OnRunStateChange()
         this._handlerDeathDetected  := (data) => this._OnDeathDetected(data)
         this._handlerVendorChanged  := (data) => this._OnVendorRegexesChanged(data)
+        this._handlerPbDisplayMode  := (data) => this._OnPbDisplayModeChanged()
 
         bus.Subscribe(Events.Tick,                  this._handlerTick)
         bus.Subscribe(Events.ZoneEntered,           this._handlerZoneEntered)
@@ -239,6 +253,7 @@ class CompactLayoutPlusWidget extends LayoutWidgetBase
         bus.Subscribe(Events.RunReset,              this._handlerRunReset)
         bus.Subscribe(Events.RunCancelled,          this._handlerRunCancelled)
         bus.Subscribe(Events.VendorRegexesChanged,  this._handlerVendorChanged)
+        bus.Subscribe(Events.PbDisplayModeChanged,  this._handlerPbDisplayMode)
     }
 
     _GetFixedSize() => Map("w", CompactLayoutPlusWidget.FIXED_W, "h", CompactLayoutPlusWidget.FIXED_H)
@@ -646,18 +661,22 @@ class CompactLayoutPlusWidget extends LayoutWidgetBase
     }
 
     ; PB sub-label rendering. pb color when value present, muted
-    ; "PB --:--" when absent (spec §5: predictable structure).
+    ; "PB --:--" / "AVG --:--" when absent (spec §5: predictable
+    ; structure). Label switches between "PB" and "AVG" based on
+    ; cfg.pbDisplayMode — same value formatter either way so the
+    ; row width stays stable across modes.
     _WritePbCtrl(ctrlKey, pbMs, cacheText, cacheColor)
     {
         ctrl := this._ctrls[ctrlKey]
+        label := this._IsAvg5Mode() ? "AVG" : "PB"
         if (pbMs > 0)
         {
-            text  := "PB " CompactLayoutPlusWidget._FormatMsShort(pbMs)
+            text  := label . " " . CompactLayoutPlusWidget._FormatMsShort(pbMs)
             color := Theme.Color("pb")
         }
         else
         {
-            text  := "PB --:--"
+            text  := label . " --:--"
             color := Theme.Color("muted")
         }
         if (color != this.%cacheColor%)
@@ -916,6 +935,20 @@ class CompactLayoutPlusWidget extends LayoutWidgetBase
         this._Refresh()
     }
 
+    ; Hot-reload of cfg.pbDisplayMode — see steve_layout_plus_widget
+    ; for the rationale. Both timers AND both block sub-labels
+    ; depend on the mode, so all four derived caches reset.
+    _OnPbDisplayModeChanged()
+    {
+        this._lastZoneTimerColor := ""
+        this._lastRunTimerColor  := ""
+        this._lastZonePbText     := ""
+        this._lastZonePbColor    := ""
+        this._lastRunPbText      := ""
+        this._lastRunPbColor     := ""
+        this._Refresh()
+    }
+
     _ResolveInitialActZone()
     {
         if !IsObject(this._zoneTracker)
@@ -938,16 +971,41 @@ class CompactLayoutPlusWidget extends LayoutWidgetBase
 
     ; ============================================================
     ; PB lookups — mirror Classic so the comparison basis is identical.
+    ; cfg.pbDisplayMode routes both run-PB and zone-PB queries to
+    ; either PersonalBestService ("pb") or RunAverageService
+    ; ("avg5"). The legacy method names are preserved; the timer-
+    ; colour resolver above doesn't need to change.
     ; ============================================================
+
+    ; True iff cfg.pbDisplayMode = "avg5" AND _avgService is present.
+    ; Dual check is defensive: a future caller could construct the
+    ; widget without the avg service even with mode=avg5, and the
+    ; safer branch is PB (mode literally says "average" but no
+    ; average source available means stale data is worse than the
+    ; PB fallback).
+    _IsAvg5Mode()
+    {
+        if !IsObject(this._cfg)
+            return false
+        if !IsObject(this._avgService)
+            return false
+        return this._cfg.pbDisplayMode = "avg5"
+    }
 
     _GetRunPbMs()
     {
-        if !IsObject(this._pbService)
-            return 0
         act := this._currentAct
         if (act <= 0 && IsObject(this._zonesCatalog) && this._currentZone != "")
             act := this._zonesCatalog.GetActOfName(this._currentZone)
         if (act <= 0)
+            return 0
+        if this._IsAvg5Mode()
+        {
+            try
+                return this._avgService.GetAverageRunMsForAct(act)
+            return 0
+        }
+        if !IsObject(this._pbService)
             return 0
         try
             return this._pbService.GetRunPbForAct(act)
@@ -956,7 +1014,15 @@ class CompactLayoutPlusWidget extends LayoutWidgetBase
 
     _GetZonePbMs()
     {
-        if !IsObject(this._pbService) || this._currentZone = ""
+        if (this._currentZone = "")
+            return 0
+        if this._IsAvg5Mode()
+        {
+            try
+                return this._avgService.GetAverageZoneMs(this._currentZone)
+            return 0
+        }
+        if !IsObject(this._pbService)
             return 0
         try
             return this._pbService.GetZonePbMs(this._currentZone)
@@ -1102,6 +1168,11 @@ class CompactLayoutPlusWidget extends LayoutWidgetBase
         {
             this._bus.Unsubscribe(Events.VendorRegexesChanged, this._handlerVendorChanged)
             this._handlerVendorChanged := ""
+        }
+        if (this._handlerPbDisplayMode != "")
+        {
+            this._bus.Unsubscribe(Events.PbDisplayModeChanged, this._handlerPbDisplayMode)
+            this._handlerPbDisplayMode := ""
         }
     }
 }

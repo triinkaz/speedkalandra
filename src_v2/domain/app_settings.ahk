@@ -12,6 +12,7 @@
 ;   [VendorRegexes] Slot1, Slot2, Slot3 (max 250 chars each)
 ;   [Diagnostics]   EventTracingEnabled (opt-in)
 ;   [Layouts]       Variant (classic | plus)
+;   [Display]       PbMode (pb | avg5)
 ;   [Disclaimer]    Acknowledged (do-not-show-again flag)
 ;   [Hotkeys]       <action> = keyBind
 ;   [Window]        → WindowState (composite)
@@ -77,6 +78,34 @@ class AppSettings
     ; Read once at boot by the composition root; switching requires a
     ; restart. See PLUS_LAYOUTS_SPEC.md.
     layoutVariant := "classic"
+
+    ; --- Display ---
+    ; Toggles what the PB display surfaces show (Steve Plus bare
+    ; value, Compact Plus block sub-label, Compact Classic line2
+    ; chip) AND what the live-timer color compares against. Two
+    ; values:
+    ;   "pb"   — the all-time PersonalBestService values. Default.
+    ;            Original behavior; widgets render "PB MM:SS" / a
+    ;            bare teal value, and the live timer turns green
+    ;            when current <= PB.
+    ;   "avg5" — average across the latest five completed runs from
+    ;            data\runs\*.ini, computed by RunAverageService.
+    ;            Widgets render "AVG MM:SS" (or a tilde-prefixed
+    ;            bare value for the Steve Plus chip) and the live
+    ;            timer turns green when current <= avg5. "Below
+    ;            target" still means green either way, so the
+    ;            comparison semantics stay consistent across modes.
+    ;
+    ; Hot-reload: SettingsDialog publishes Evt.PbDisplayModeChanged
+    ; on save; widgets subscribe and re-render without restart
+    ; (unlike layoutVariant, which rebuilds widget GUIs).
+    ;
+    ; Defensive default: any value that isn't recognizably "avg5"
+    ; normalizes to "pb" in FromMap and in SettingsRepository—so a
+    ; hand-edited INI with a typo lands on the safe original
+    ; behavior rather than an undefined runtime branch. See
+    ; PLUS_LAYOUTS_SPEC.md §13 for the full feature spec.
+    pbDisplayMode := "pb"
 
     ; --- Auto-finalize ---
     autoFinalizeRegex := ""
@@ -172,6 +201,18 @@ class AppSettings
         {
             v := String(data["layoutVariant"])
             cfg.layoutVariant := (v = "plus") ? "plus" : "classic"
+        }
+
+        ; --- Display (PB mode) ---
+        ; Same normalization pattern as layoutVariant: anything that
+        ; isn't recognizably "avg5" falls back to the safe "pb"
+        ; default. AHK v2 `=` is case-insensitive, so "AVG5" / "Avg5"
+        ; / "avg5" all load as the average mode (matching the
+        ; tolerance applied to "plus" / "Plus" / "PLUS" above).
+        if data.Has("pbDisplayMode")
+        {
+            v := String(data["pbDisplayMode"])
+            cfg.pbDisplayMode := (v = "avg5") ? "avg5" : "pb"
         }
 
         ; --- Auto-finalize ---

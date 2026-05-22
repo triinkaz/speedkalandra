@@ -188,6 +188,7 @@ SkTestOnError(err, mode) {
 #Include ..\src_v2\app\services\act_checkpoint_tracker.ahk
 #Include ..\src_v2\app\services\run_stats_recorder.ahk
 #Include ..\src_v2\app\services\personal_best_service.ahk
+#Include ..\src_v2\app\services\run_average_service.ahk
 #Include ..\src_v2\app\services\run_stats_plot_builder.ahk
 #Include ..\src_v2\app\services\death_stats_service.ahk
 #Include ..\src_v2\app\services\death_log_scanner.ahk
@@ -241,6 +242,12 @@ SpeedKalandraTrayAddUndoItem() {
 SpeedKalandraTrayRemoveUndoItem() {
     ; no-op in headless
 }
+SpeedKalandraTrayAddPersistenceWarning() {
+    ; no-op in headless
+}
+SpeedKalandraTrayRemovePersistenceWarning() {
+    ; no-op in headless
+}
 SpeedKalandraMsgBox(text, title := "", options := "") {
     ; no-op in headless — returns "Cancel" so code that expects
     ; "Yes" treats it as a denial (destructive path doesn't run in tests)
@@ -251,6 +258,7 @@ SpeedKalandraMsgBox(text, title := "", options := "") {
 #Include ..\src_v2\app\run_snapshot_saver.ahk
 #Include ..\src_v2\app\run_state_persister.ahk
 #Include ..\src_v2\app\live_reconfiguration_handlers.ahk
+#Include ..\src_v2\app\persistence_health_tray_indicator.ahk
 
 #Include ..\src_v2\app\app.ahk
 
@@ -309,6 +317,7 @@ SpeedKalandraMsgBox(text, title := "", options := "") {
 #Include unit\app\services\run_stats_recorder_tests.ahk
 #Include unit\app\services\personal_best_service_tests.ahk
 #Include unit\app\services\personal_best_service_warning_sink_tests.ahk
+#Include unit\app\services\run_average_service_tests.ahk
 #Include unit\app\services\run_stats_plot_builder_tests.ahk
 #Include unit\app\services\death_stats_service_tests.ahk
 #Include unit\app\services\death_log_scanner_tests.ahk
@@ -333,6 +342,7 @@ SpeedKalandraMsgBox(text, title := "", options := "") {
 #Include unit\app\run_snapshot_saver_tests.ahk
 #Include unit\app\run_state_persister_tests.ahk
 #Include unit\app\live_reconfiguration_handlers_tests.ahk
+#Include unit\app\persistence_health_tray_indicator_tests.ahk
 
 ; ------------------------------------------------------------
 ; Suites - ui/

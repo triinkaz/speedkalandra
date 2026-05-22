@@ -39,6 +39,7 @@ class AppSettingsTests extends TestCase
         "defaults_disclaimer_not_acknowledged",
         "defaults_event_tracing_disabled_by_default",
         "defaults_layout_variant_is_classic",
+        "defaults_pb_display_mode_is_pb",
         "defaults_auto_finalize_regex_empty",
         "defaults_auto_start_regex_is_wounded_man_line",
 
@@ -60,6 +61,9 @@ class AppSettingsTests extends TestCase
         "from_map_reads_layout_variant_plus",
         "from_map_layout_variant_invalid_falls_back_to_classic",
         "from_map_layout_variant_accepts_case_variations_as_plus",
+        "from_map_reads_pb_display_mode_avg5",
+        "from_map_pb_display_mode_invalid_falls_back_to_pb",
+        "from_map_pb_display_mode_accepts_case_variations_as_avg5",
         "from_map_reads_auto_finalize_regex",
         "from_map_reads_auto_start_regex_allowing_empty",
         "from_map_strict_string_treats_empty_as_missing",
@@ -170,6 +174,14 @@ class AppSettingsTests extends TestCase
         ; Plus is opt-in BETA. A fresh install boots the Classic
         ; widgets. See PLUS_LAYOUTS_SPEC.md §1.
         Assert.Equal("classic", AppSettings.Defaults().layoutVariant)
+    }
+
+    defaults_pb_display_mode_is_pb()
+    {
+        ; A fresh install keeps the original PB-driven behavior.
+        ; "avg5" is opt-in via the Display section in Settings.
+        ; See PLUS_LAYOUTS_SPEC.md §13.
+        Assert.Equal("pb", AppSettings.Defaults().pbDisplayMode)
     }
 
     defaults_auto_finalize_regex_empty()
@@ -350,6 +362,48 @@ class AppSettingsTests extends TestCase
             cfg := AppSettings.FromMap(Map("layoutVariant", variant))
             Assert.Equal("plus", cfg.layoutVariant,
                 "Case variation '" variant "' must load as plus")
+        }
+    }
+
+    from_map_reads_pb_display_mode_avg5()
+    {
+        cfg := AppSettings.FromMap(Map("pbDisplayMode", "avg5"))
+        Assert.Equal("avg5", cfg.pbDisplayMode)
+
+        ; Missing key keeps the default
+        cfg2 := AppSettings.FromMap(Map())
+        Assert.Equal("pb", cfg2.pbDisplayMode)
+
+        ; Explicit "pb" round-trips too
+        cfg3 := AppSettings.FromMap(Map("pbDisplayMode", "pb"))
+        Assert.Equal("pb", cfg3.pbDisplayMode)
+    }
+
+    from_map_pb_display_mode_invalid_falls_back_to_pb()
+    {
+        ; Same defensive normalization as layoutVariant: anything
+        ; other than the literal "avg5" normalizes to "pb". Hand-
+        ; edited INI typos, future-mode names, or stray whitespace
+        ; land on the safe original behavior rather than an
+        ; undefined runtime branch.
+        for _, badValue in ["average", "avg10", "", " avg5 ", "random", "av5"]
+        {
+            cfg := AppSettings.FromMap(Map("pbDisplayMode", badValue))
+            Assert.Equal("pb", cfg.pbDisplayMode,
+                "Invalid value '" badValue "' must normalize to pb")
+        }
+    }
+
+    from_map_pb_display_mode_accepts_case_variations_as_avg5()
+    {
+        ; AHK v2 `=` is case-insensitive (mirroring the layoutVariant
+        ; tolerance). The Settings dialog writes lowercase "avg5";
+        ; this only covers hand-edited INIs with "Avg5" / "AVG5".
+        for _, variant in ["Avg5", "AVG5", "aVg5"]
+        {
+            cfg := AppSettings.FromMap(Map("pbDisplayMode", variant))
+            Assert.Equal("avg5", cfg.pbDisplayMode,
+                "Case variation '" variant "' must load as avg5")
         }
     }
 

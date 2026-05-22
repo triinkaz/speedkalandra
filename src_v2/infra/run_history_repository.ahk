@@ -458,6 +458,41 @@ class RunHistoryRepository
             }
             summary["totals"] := totals
 
+            ; actCheckpoints — Map<actNum, ms> from the [checkpoints]
+            ; section. Same regex + filtering as Load() so the
+            ; summary path stays consistent with the full read.
+            ; Cheap to parse (handful of integer entries per run) and
+            ; required by RunAverageService.GetAverageRunMsForAct,
+            ; which is the natural consumer of the summary surface.
+            ; Old runs persisted before [checkpoints] existed Load
+            ; with an empty Map.
+            checkpoints := Map()
+            try
+            {
+                ckptMap := ini.ReadSectionAsMap("checkpoints")
+                if IsObject(ckptMap)
+                {
+                    for k, v in ckptMap
+                    {
+                        keyStr := String(k)
+                        if !RegExMatch(keyStr, "i)^Act(\d+)Ms$", &m)
+                            continue
+                        actNum := Integer(m[1] + 0)
+                        if (actNum <= 0)
+                            continue
+                        try
+                        {
+                            ms := Integer(v + 0)
+                            if (ms > 0)
+                                checkpoints[actNum] := ms
+                        }
+                        catch
+                            continue
+                    }
+                }
+            }
+            summary["actCheckpoints"] := checkpoints
+
             result.Push(summary)
         }
         return result

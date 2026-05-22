@@ -37,6 +37,22 @@ class _ThrowingIniFile extends IniFile
     }
 }
 
+; Test helper: SettingsRepository subclass whose
+; _TryRestoreFromBackup always reports failure. Combined with
+; _ThrowingIniFile (mid-sequence save throw), this drives the
+; rare second-failure branch where the save fails AND the
+; rollback also fails. Previously the guarantee was review-only
+; because there was no clean way to intercept AHK's FileCopy;
+; extracting _TryRestoreFromBackup made it testable.
+class _RestoreFailingSettingsRepository extends SettingsRepository
+{
+    _TryRestoreFromBackup(iniPath, backupPath)
+    {
+        return {restored: false,
+            error: Error("_RestoreFailingSettingsRepository: forced restore failure")}
+    }
+}
+
 class SettingsRepositoryTests extends TestCase
 {
     Teardown()
@@ -67,6 +83,8 @@ class SettingsRepositoryTests extends TestCase
         "save_load_preserves_diagnostics_event_tracing",
         "save_load_preserves_layout_variant_plus",
         "load_layout_variant_falls_back_to_classic_on_invalid_ini",
+        "save_load_preserves_pb_display_mode_avg5",
+        "load_pb_display_mode_falls_back_to_pb_on_invalid_ini",
         "save_load_preserves_hotkeys",
         "save_load_preserves_window_micro_locked",
         "save_load_preserves_window_steve_locked",
@@ -97,6 +115,8 @@ class SettingsRepositoryTests extends TestCase
         "save_failure_on_empty_ini_does_not_create_backup",
         "save_aborts_when_backup_copy_fails",
         "save_failure_on_fresh_install_mid_sequence_deletes_partial_ini",
+        "save_throws_composed_error_when_save_fails_and_restore_also_fails",
+        "save_preserves_backup_when_restore_fails",
     ]
 
     ; ============================================================
@@ -347,6 +367,48 @@ class SettingsRepositoryTests extends TestCase
 
         Assert.Equal("classic", loaded.layoutVariant,
             "Unknown variant in INI normalizes to classic on load")
+    }
+
+    save_load_preserves_pb_display_mode_avg5()
+    {
+        ; cfg.pbDisplayMode toggles widgets between PB and the
+        ; latest-5-run average. A user who opted in must find the
+        ; same choice after a restart — [Display].PbMode round-trips
+        ; through the INI like every other persisted flag.
+        mainIni := IniFile(Fixtures.TempPath("ini"))
+        repo := SettingsRepository(mainIni)
+
+        cfg := AppSettings.Defaults()
+        Assert.Equal("pb", cfg.pbDisplayMode, "sanity: default is pb")
+
+        cfg.pbDisplayMode := "avg5"
+        repo.Save(cfg)
+
+        loaded := repo.Load()
+        Assert.Equal("avg5", loaded.pbDisplayMode,
+            "[Display].PbMode round-trips through INI")
+
+        ; Flip back to pb and confirm that also persists
+        loaded.pbDisplayMode := "pb"
+        repo.Save(loaded)
+        reloaded := repo.Load()
+        Assert.Equal("pb", reloaded.pbDisplayMode,
+            "Flipping back to pb also persists")
+    }
+
+    load_pb_display_mode_falls_back_to_pb_on_invalid_ini()
+    {
+        ; Same defense-in-depth as layoutVariant: a hand-edited INI
+        ; with a typo or unknown future mode must load as the safe
+        ; default rather than enter an undefined runtime branch.
+        mainIni := IniFile(Fixtures.TempPath("ini"))
+        mainIni.Write("average_of_10", "Display", "PbMode")
+
+        repo := SettingsRepository(mainIni)
+        loaded := repo.Load()
+
+        Assert.Equal("pb", loaded.pbDisplayMode,
+            "Unknown PbMode in INI normalizes to pb on load")
     }
 
     save_load_preserves_hotkeys()
@@ -766,20 +828,100 @@ class SettingsRepositoryTests extends TestCase
             "No .pre-save expected on fresh-install path")
     }
 
+    save_throws_composed_error_when_save_fails_and_restore_also_fails()
+    {
+        ; Guarantee 2 (composed error): when the mid-sequence
+        ; save throws AND the rollback FileCopy also fails, the
+        ; caller must see a COMPOSED error that names both
+        ; failures and the preserved backup path — not just the
+        ; original save error, which would imply the everyday
+        ; "retry; the previous INI was restored" outcome.
+        ;
+        ; Setup: pre-existing INI (so backup is created), then
+        ; the next Save fails mid-sequence (ThrowOnCall on the
+        ; throwing IniFile), and the overridden
+        ; _TryRestoreFromBackup reports failure.
+        path := Fixtures.TempPath("ini")
+        baselineIni := IniFile(path)
+        baselineRepo := SettingsRepository(baselineIni)
+        baseline := AppSettings.Defaults()
+        baseline.profileName := "BaselineProfile"
+        baselineRepo.Save(baseline)
+
+        throwingIni := _ThrowingIniFile(path)
+        throwingIni.ThrowOnCall(4)   ; mid-sequence: real bytes already written
+        restoreFailingRepo := _RestoreFailingSettingsRepository(throwingIni)
+
+        next := AppSettings.Defaults()
+        next.profileName := "NewProfile"
+
+        capturedMsg := ""
+        try
+        {
+            restoreFailingRepo.Save(next)
+            Assert.Fail("Save must throw when both save and restore fail")
+        }
+        catch as ex
+        {
+            capturedMsg := ex.Message
+        }
+
+        ; Composed error must call out both failures.
+        Assert.True(InStr(capturedMsg, "AND automatic rollback also failed") != 0,
+            "composed error must say both save and rollback failed; got: " . capturedMsg)
+        ; Composed error must point at the .pre-save backup path.
+        Assert.True(InStr(capturedMsg, path . ".pre-save") != 0,
+            "composed error must name the preserved .pre-save path; got: " . capturedMsg)
+        ; Composed error must also surface the rollback root cause.
+        Assert.True(InStr(capturedMsg, "forced restore failure") != 0,
+            "composed error must include the rollback root cause; got: " . capturedMsg)
+    }
+
+    save_preserves_backup_when_restore_fails()
+    {
+        ; Companion to the composed-error test. The .pre-save
+        ; file must STILL EXIST on disk after the composed throw,
+        ; because that's the recovery handle we're naming in the
+        ; error message. If we ever start FileDelete-ing it on the
+        ; restore-fail path again, this catches the regression.
+        path := Fixtures.TempPath("ini")
+        baselineIni := IniFile(path)
+        baselineRepo := SettingsRepository(baselineIni)
+        baseline := AppSettings.Defaults()
+        baseline.profileName := "BaselineProfile"
+        baselineRepo.Save(baseline)
+
+        throwingIni := _ThrowingIniFile(path)
+        throwingIni.ThrowOnCall(4)
+        restoreFailingRepo := _RestoreFailingSettingsRepository(throwingIni)
+        Fixtures.RegisterTempPath(path . ".pre-save")   ; ensure cleanup
+
+        next := AppSettings.Defaults()
+        next.profileName := "NewProfile"
+
+        Assert.Throws(Error, () => restoreFailingRepo.Save(next),
+            "Save must throw when both save and restore fail")
+
+        Assert.True(FileExist(path . ".pre-save") != "",
+            ".pre-save backup must remain on disk after a restore-failure path "
+            . "(it's the recovery handle named in the composed error)")
+    }
+
     ; ============================================================
-    ; Note on preserve-backup-on-restore-fail (Guarantee 2)
+    ; Note on automated coverage of Guarantee 2
     ; ============================================================
     ;
-    ; The second guarantee — keep the .pre-save on disk when the
-    ; FileCopy restore itself fails — is NOT covered by an
-    ; automated test in this suite. Forcing FileCopy to fail at
-    ; that exact stage requires either intercepting the AHK
-    ; built-in or maneuvering the filesystem into a state where
-    ; the second FileCopy fails but the first didn't, which is
-    ; brittle in a unit-test context. The contract is enforced
-    ; by inspection in SettingsRepository.Save: the `restored`
-    ; flag is set ONLY after a successful FileCopy back, and
-    ; FileDelete on the backup runs ONLY if that flag is true.
+    ; Both branches of Guarantee 2 are now covered by automated
+    ; tests:
+    ;
+    ;   - the composed-error message is verified by
+    ;     save_throws_composed_error_when_save_fails_and_restore_also_fails
+    ;   - the .pre-save preservation is verified by
+    ;     save_preserves_backup_when_restore_fails
+    ;
+    ; The override-point (_TryRestoreFromBackup) is what made this
+    ; testable — without it, the only way to force a restore-fail
+    ; was to intercept FileCopy, which AHK doesn't allow.
 }
 
 TestRegistry.Register(SettingsRepositoryTests)

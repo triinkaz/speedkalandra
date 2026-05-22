@@ -69,8 +69,21 @@
 ;   xp            — XpService
 ;   zonesCatalog  — ZonesCatalog (optional)
 ;   loadingTotals — LoadingTotalsService (optional)
-;   cfg           — AppSettings (optional, used by the V1/V2/V3 buttons)
+;   cfg           — AppSettings (optional, used by the V1/V2/V3 buttons
+;                   and to route the PB chip / timer colour between
+;                   PB and avg5 mode — see cfg.pbDisplayMode)
 ;   pbService     — PersonalBestService (optional)
+;   avgService    — RunAverageService (optional; required only when
+;                   cfg.pbDisplayMode = "avg5")
+;
+; PB DISPLAY MODE (cfg.pbDisplayMode):
+;   - "pb" (default): LINE2 right chip reads "PB ZZ:ZZ / TT:TT"
+;     (zone PB / per-act run PB); LINE1 timer colours compare
+;     against the same PB values.
+;   - "avg5": LINE2 right chip reads "AVG ZZ:ZZ / TT:TT" sourced
+;     from the latest-5-run average; LINE1 timer colours compare
+;     against the average. Hot-reloadable via
+;     Evt.PbDisplayModeChanged — no restart.
 
 class CompactLayoutWidget extends LayoutWidgetBase
 {
@@ -154,8 +167,9 @@ class CompactLayoutWidget extends LayoutWidgetBase
     _xp            := ""
     _zonesCatalog  := ""
     _loadingTotals := ""
-    _cfg           := ""    ; AppSettings (drives the V1/V2/V3 buttons)
+    _cfg           := ""    ; AppSettings (drives the V1/V2/V3 buttons + pbDisplayMode)
     _pbService     := ""    ; PersonalBestService
+    _avgService    := ""    ; RunAverageService (optional; required for cfg.pbDisplayMode = "avg5")
 
     ; State cache for render. The _last* fields exist to skip SetFont /
     ; control writes when the value didn't change tick-to-tick.
@@ -183,8 +197,9 @@ class CompactLayoutWidget extends LayoutWidgetBase
     _handlerRunCancelled   := ""
     _handlerDeathDetected  := ""
     _handlerVendorChanged  := ""
+    _handlerPbDisplayMode  := ""
 
-    __New(bus, position, onPersist, timer, zoneTracker, xp, zonesCatalog := "", loadingTotals := "", cfg := "", pbService := "")
+    __New(bus, position, onPersist, timer, zoneTracker, xp, zonesCatalog := "", loadingTotals := "", cfg := "", pbService := "", avgService := "")
     {
         super.__New(CompactLayoutWidget.WIDGET_ID,
                     CompactLayoutWidget.DISPLAY_NAME,
@@ -196,6 +211,7 @@ class CompactLayoutWidget extends LayoutWidgetBase
         this._loadingTotals := loadingTotals
         this._cfg           := cfg
         this._pbService     := pbService
+        this._avgService    := avgService
 
         ; Subscribes
         this._handlerTick           := (data) => this._OnTick(data)
@@ -212,6 +228,11 @@ class CompactLayoutWidget extends LayoutWidgetBase
         ; is already up to date — only the visual state (filled
         ; "1"/"2"/"3" vs empty "·") needed wiring.
         this._handlerVendorChanged  := (data) => this._OnVendorRegexesChanged(data)
+        ; Hot-reload of cfg.pbDisplayMode. Both LINE1 timer colours
+        ; AND the LINE2 PB chip text depend on the mode — every
+        ; derived cache must reset so the next Refresh writes the
+        ; new mode's values.
+        this._handlerPbDisplayMode  := (data) => this._OnPbDisplayModeChanged()
 
         bus.Subscribe(Events.Tick,              this._handlerTick)
         bus.Subscribe(Events.ZoneEntered,       this._handlerZoneEntered)
@@ -222,6 +243,7 @@ class CompactLayoutWidget extends LayoutWidgetBase
         bus.Subscribe(Events.RunCancelled,      this._handlerRunCancelled)
         bus.Subscribe(Events.DeathDetected,     this._handlerDeathDetected)
         bus.Subscribe(Events.VendorRegexesChanged, this._handlerVendorChanged)
+        bus.Subscribe(Events.PbDisplayModeChanged, this._handlerPbDisplayMode)
     }
 
     _GetFixedSize() => Map("w", CompactLayoutWidget.FIXED_W, "h", CompactLayoutWidget.FIXED_H)
@@ -534,12 +556,32 @@ class CompactLayoutWidget extends LayoutWidgetBase
     ; deriving the act from _currentZone via the catalog. Without
     ; that fallback, the PB stays empty during an in-progress run
     ; whenever the widget missed the initial ZoneEntered.
+    ;
+    ; cfg.pbDisplayMode = "avg5" routes both lookups to the
+    ; RunAverageService instead. _IsAvg5Mode performs the dual
+    ; check (cfg set + service injected); without the service the
+    ; safer fallback is PB.
+    _IsAvg5Mode()
+    {
+        if !IsObject(this._cfg)
+            return false
+        if !IsObject(this._avgService)
+            return false
+        return this._cfg.pbDisplayMode = "avg5"
+    }
+
     _GetRunPbMs()
     {
-        if !IsObject(this._pbService)
-            return 0
         act := this._ResolveCurrentAct()
         if (act <= 0)
+            return 0
+        if this._IsAvg5Mode()
+        {
+            try
+                return this._avgService.GetAverageRunMsForAct(act)
+            return 0
+        }
+        if !IsObject(this._pbService)
             return 0
         try
             return this._pbService.GetRunPbForAct(act)
@@ -548,7 +590,15 @@ class CompactLayoutWidget extends LayoutWidgetBase
 
     _GetZonePbMs()
     {
-        if !IsObject(this._pbService) || this._currentZone = ""
+        if (this._currentZone = "")
+            return 0
+        if this._IsAvg5Mode()
+        {
+            try
+                return this._avgService.GetAverageZoneMs(this._currentZone)
+            return 0
+        }
+        if !IsObject(this._pbService)
             return 0
         try
             return this._pbService.GetZonePbMs(this._currentZone)
@@ -605,6 +655,12 @@ class CompactLayoutWidget extends LayoutWidgetBase
     ; show up and doesn't think the feature is broken before saving
     ; their first run. Color is fixed (PB_COLOR, set in _BuildGui)
     ; so we only touch Value; _lastPbText avoids redundant writes.
+    ;
+    ; Label switches between "PB" (default) and "AVG" based on
+    ; cfg.pbDisplayMode — same MM:SS formatter either way so the
+    ; chip width stays stable. The em-dash fallback for absent
+    ; values reads identically in both modes; only the prefix
+    ; reveals which mode the user picked.
     _RefreshPbDisplay()
     {
         if !this._ctrls.Has("line2_pb")
@@ -615,7 +671,8 @@ class CompactLayoutWidget extends LayoutWidgetBase
 
         zStr := zonePb > 0 ? this._FormatMs(zonePb) : "—"
         rStr := runPb  > 0 ? this._FormatMs(runPb)  : "—"
-        text := "PB " zStr " / " rStr
+        label := this._IsAvg5Mode() ? "AVG" : "PB"
+        text := label " " zStr " / " rStr
 
         if (text != this._lastPbText)
         {
@@ -948,6 +1005,18 @@ class CompactLayoutWidget extends LayoutWidgetBase
         this._Refresh()
     }
 
+    ; Hot-reload of cfg.pbDisplayMode. The LINE1 timer-colour caches
+    ; AND the LINE2 PB chip text cache all depend on the mode; reset
+    ; them so the next Refresh writes the new mode's values rather
+    ; than short-circuiting on a stale cache hit.
+    _OnPbDisplayModeChanged()
+    {
+        this._lastZoneTimerColor := ""
+        this._lastRunTimerColor  := ""
+        this._lastPbText         := ""
+        this._Refresh()
+    }
+
     ; Renders line2_left as "✗ N". Color is muted at 0, warn (amber)
     ; from 1 upward — a subtle signal you've already died. Deaths
     ; are rare per tick, so the _lastDeathColor cache keeps SetFont
@@ -1020,6 +1089,11 @@ class CompactLayoutWidget extends LayoutWidgetBase
         {
             this._bus.Unsubscribe(Events.VendorRegexesChanged, this._handlerVendorChanged)
             this._handlerVendorChanged := ""
+        }
+        if (this._handlerPbDisplayMode != "")
+        {
+            this._bus.Unsubscribe(Events.PbDisplayModeChanged, this._handlerPbDisplayMode)
+            this._handlerPbDisplayMode := ""
         }
     }
 }

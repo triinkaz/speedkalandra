@@ -59,6 +59,7 @@ class SettingsDialogTests extends TestCase
         "persist_and_publish_publishes_log_file_change_on_success",
         "persist_and_publish_publishes_hotkeys_change_on_success",
         "persist_and_publish_publishes_vendor_regexes_change_on_success",
+        "persist_and_publish_publishes_pb_display_mode_change_on_success",
         "persist_and_publish_no_publish_when_unchanged",
 
         ; --- PersistAndPublishCfg: failure path ---
@@ -129,6 +130,7 @@ class SettingsDialogTests extends TestCase
         cfg.deathPenaltyEnabled := true
         cfg.deathPenaltyMs      := 12345
         cfg.layoutVariant       := "plus"
+        cfg.pbDisplayMode       := "avg5"
         cfg.hotkeys["test"]     := "F1"
 
         snap := SettingsDialog._SnapshotMutableCfg(cfg)
@@ -142,6 +144,7 @@ class SettingsDialogTests extends TestCase
         Assert.True(snap["deathPenaltyEnabled"])
         Assert.Equal(12345,               snap["deathPenaltyMs"])
         Assert.Equal("plus",              snap["layoutVariant"])
+        Assert.Equal("avg5",              snap["pbDisplayMode"])
         Assert.Equal("F1",                snap["hotkeys"]["test"])
     }
 
@@ -203,6 +206,7 @@ class SettingsDialogTests extends TestCase
         cfg.deathPenaltyEnabled := false
         cfg.deathPenaltyMs      := 10000
         cfg.layoutVariant       := "classic"
+        cfg.pbDisplayMode       := "pb"
         cfg.hotkeys["k"]        := "F1"
 
         snap := SettingsDialog._SnapshotMutableCfg(cfg)
@@ -217,6 +221,7 @@ class SettingsDialogTests extends TestCase
         cfg.deathPenaltyEnabled := true
         cfg.deathPenaltyMs      := 99999
         cfg.layoutVariant       := "plus"
+        cfg.pbDisplayMode       := "avg5"
         cfg.hotkeys             := Map("other", "F9")
 
         d._RestoreCfgFromSnapshot(snap)
@@ -228,6 +233,7 @@ class SettingsDialogTests extends TestCase
         Assert.False(cfg.deathPenaltyEnabled)
         Assert.Equal(10000,               cfg.deathPenaltyMs)
         Assert.Equal("classic",           cfg.layoutVariant)
+        Assert.Equal("pb",                cfg.pbDisplayMode)
         Assert.Equal("F1",                cfg.hotkeys["k"])
         Assert.False(cfg.hotkeys.Has("other"),
             "restore must replace hotkeys entirely (not merge with post-snapshot keys)")
@@ -293,6 +299,29 @@ class SettingsDialogTests extends TestCase
 
         Assert.Equal(1, captured.Length,
             "VendorRegexesChanged must fire when array differs from snapshot")
+    }
+
+    persist_and_publish_publishes_pb_display_mode_change_on_success()
+    {
+        ; Flipping cfg.pbDisplayMode (PB ↔ avg5) must publish
+        ; Evt.PbDisplayModeChanged so widgets re-render against
+        ; the new source without a restart. Without this, the
+        ; checkbox saves to disk but the live overlays keep
+        ; showing the old value until a full app reload.
+        ctx := this._MakeDialog()
+        captured := []
+        ctx.bus.Subscribe(Events.PbDisplayModeChanged,
+            (data) => captured.Push(data))
+
+        snap := SettingsDialog._SnapshotMutableCfg(ctx.cfg)
+        ctx.cfg.pbDisplayMode := "avg5"
+
+        ctx.dialog._PersistAndPublishCfg(ctx.cfg, snap)
+
+        Assert.Equal(1, captured.Length,
+            "PbDisplayModeChanged must fire when the mode differs from snapshot")
+        Assert.Equal("pb",   captured[1]["oldMode"])
+        Assert.Equal("avg5", captured[1]["newMode"])
     }
 
     persist_and_publish_no_publish_when_unchanged()

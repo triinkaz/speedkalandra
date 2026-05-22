@@ -14,6 +14,7 @@
 ;   [Disclaimer]     Acknowledged
 ;   [Diagnostics]    EventTracingEnabled (opt-in; off by default)
 ;   [Layouts]        Variant (classic | plus; opt-in BETA)
+;   [Display]        PbMode (pb | avg5; toggles PB chip / live-timer color target)
 ;   [Hotkeys]        <action> -> keyBind
 ;   [Window]         MicroLocked, SteveLocked
 ;   [Overlay]        <widgetId>.{left,top,scale,visible,centered} + hoverHide
@@ -55,6 +56,7 @@ class SettingsRepository
         this._LoadDisclaimer(cfg)
         this._LoadDiagnostics(cfg)
         this._LoadLayouts(cfg)
+        this._LoadDisplay(cfg)
         this._LoadHotkeys(cfg)
         cfg.window  := this._LoadWindow()
         cfg.overlay := this._LoadOverlay()
@@ -75,10 +77,14 @@ class SettingsRepository
     ;
     ;   2. PRESERVE-BACKUP-ON-RESTORE-FAIL. If a mid-sequence
     ;      save throws AND the subsequent FileCopy restore from
-    ;      .pre-save also fails, KEEP the .pre-save on disk. The
-    ;      user (or a future boot) can copy it back manually.
-    ;      Deleting the only known-good copy because the restore
-    ;      failed would compound the failure.
+    ;      .pre-save also fails, KEEP the .pre-save on disk and
+    ;      throw a COMPOSED error that names both failures and
+    ;      the preserved backup path. The user (or a future boot)
+    ;      can copy it back manually. Deleting the only known-
+    ;      good copy because the restore failed would compound
+    ;      the failure; suppressing the rollback error and re-
+    ;      throwing the original save error would hide a more
+    ;      serious condition than the user thinks they're seeing.
     ;
     ;   3. FRESH-INSTALL-CLEANUP. Fresh install (INI didn't exist
     ;      before this Save): a mid-sequence failure deletes the
@@ -129,6 +135,7 @@ class SettingsRepository
             this._SaveDisclaimer(cfg)
             this._SaveDiagnostics(cfg)
             this._SaveLayouts(cfg)
+            this._SaveDisplay(cfg)
             this._SaveHotkeys(cfg)
             this._SaveWindow(cfg.window)
             this._SaveOverlay(cfg.overlay)
@@ -138,24 +145,53 @@ class SettingsRepository
             if hadFile
             {
                 ; --- Guarantee 2: preserve-backup-on-restore-fail ---
-                ; Track restore success: ONLY delete the .pre-save
-                ; backup after a confirmed-OK restore. If the
-                ; restore throws, the .pre-save stays on disk for
-                ; manual recovery.
-                restored := false
+                ; Restore via _TryRestoreFromBackup (extracted for
+                ; testability — the subclass in the test suite
+                ; overrides it to force the restore-failure branch
+                ; without needing to intercept FileCopy). Only
+                ; delete the .pre-save after a confirmed-OK
+                ; restore. If the restore also fails, the
+                ; .pre-save stays on disk AND we throw a composed
+                ; error so the caller knows both failures happened
+                ; and where the backup is.
                 if FileExist(backupPath)
                 {
-                    try
-                    {
-                        FileCopy(backupPath, iniPath, true)
-                        restored := true
-                    }
+                    restoreResult := this._TryRestoreFromBackup(iniPath, backupPath)
                 }
-                if restored
+                else
+                {
+                    ; Defensive: backup vanished between FileCopy
+                    ; and this point (e.g. another process raced
+                    ; us). Guarantee 1 already aborted if backup
+                    ; couldn't be created in the first place, so
+                    ; this is an unusual second-failure path.
+                    restoreResult := {restored: false,
+                        error: Error("pre-save backup file missing at catch time")}
+                }
+                if restoreResult.restored
                 {
                     try FileDelete(backupPath)
+                    ; Restore succeeded — fall through to throw the
+                    ; original save error so the caller sees the
+                    ; familiar message.
                 }
-                ; else: .pre-save preserved on disk for manual recovery
+                else
+                {
+                    ; Restore also failed — compose an error that
+                    ; names both failures and points at the
+                    ; preserved .pre-save for manual recovery.
+                    ; This branch matters because "save failed" is
+                    ; an everyday condition the user is expected
+                    ; to retry; "save failed AND rollback failed"
+                    ; means the INI on disk is in an unknown state
+                    ; and the user needs to act, not just retry.
+                    throw Error(
+                        "Settings save failed AND automatic rollback also failed. "
+                        . "The pre-save backup was preserved at: " . backupPath
+                        . " (restore manually by renaming over the INI). "
+                        . "Save error: " . ex.Message
+                        . " | Rollback error: " . restoreResult.error.Message)
+                }
             }
             else
             {
@@ -169,9 +205,11 @@ class SettingsRepository
                     try FileDelete(iniPath)
                 }
             }
-            ; Rethrow so the caller can react (SettingsDialog
-            ; shows an error MsgBox and restores its in-memory
-            ; snapshot; programmatic callers see the exception).
+            ; Rethrow the original save error (the restore-failure
+            ; branch above already threw a composed error and
+            ; bypassed this point). SettingsDialog shows the error
+            ; in a MsgBox and restores its in-memory snapshot;
+            ; programmatic callers see the exception.
             throw ex
         }
 
@@ -179,6 +217,33 @@ class SettingsRepository
         if FileExist(backupPath)
         {
             try FileDelete(backupPath)
+        }
+    }
+
+    ; Restore from .pre-save backup. Extracted for testability:
+    ; a test subclass overrides this to force the restore-failure
+    ; branch (the alternative — intercepting AHK's FileCopy —
+    ; isn't possible without monkey-patching, and the
+    ; preserve-backup-on-restore-fail guarantee was previously
+    ; review-only because of that gap).
+    ;
+    ; Returns an object with two fields:
+    ;   restored - true if the FileCopy succeeded; false otherwise
+    ;   error    - the caught exception when restored=false; ""
+    ;              when restored=true
+    ;
+    ; Callers must check `restored` before assuming the INI bytes
+    ; have been rolled back.
+    _TryRestoreFromBackup(iniPath, backupPath)
+    {
+        try
+        {
+            FileCopy(backupPath, iniPath, true)
+            return {restored: true, error: ""}
+        }
+        catch as ex
+        {
+            return {restored: false, error: ex}
         }
     }
 
@@ -407,6 +472,32 @@ class SettingsRepository
     {
         v := (cfg.layoutVariant = "plus") ? "plus" : "classic"
         this._ini.Write(v, "Layouts", "Variant")
+    }
+
+    ; ============================================================
+    ; [Display]
+    ;
+    ; PbMode toggles what the PB display surfaces (Steve Plus bare
+    ; value, Compact Plus block sub-labels, Compact Classic line2
+    ; chip) show, AND what the live-timer color comparison uses as a
+    ; target. "pb" (default) keeps the original PersonalBestService-
+    ; driven behavior; "avg5" routes both through RunAverageService
+    ; (average of the latest five runs in data\runs\). Any value
+    ; other than the literal "avg5" normalizes to "pb" so a typo in
+    ; a hand-edited INI lands on the safe branch — same pattern as
+    ; _LoadLayouts. See AppSettings.pbDisplayMode and
+    ; PLUS_LAYOUTS_SPEC.md §13.
+    ; ============================================================
+    _LoadDisplay(cfg)
+    {
+        v := this._ini.Read("Display", "PbMode", "pb")
+        cfg.pbDisplayMode := (v = "avg5") ? "avg5" : "pb"
+    }
+
+    _SaveDisplay(cfg)
+    {
+        v := (cfg.pbDisplayMode = "avg5") ? "avg5" : "pb"
+        this._ini.Write(v, "Display", "PbMode")
     }
 
     ; ============================================================

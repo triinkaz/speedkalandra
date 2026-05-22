@@ -62,6 +62,7 @@ class SpeedKalandraApp
     loadingDetection := ""
     loadingTotals    := ""
     personalBest     := ""
+    runAverage       := ""
     actCheckpoints   := ""
     statsRecorder    := ""
     plotBuilder      := ""
@@ -129,6 +130,14 @@ class SpeedKalandraApp
     ; update, hotkey rebind, PB reset). Each is subscribed in
     ; _WireEventHandlers via a one-line delegate.
     _reconfig := ""
+
+    ; Tray-menu indicator that mirrors RunService's
+    ; _persistenceDegraded flag. Subscribes to
+    ; Evt.PersistenceHealthChanged in __New and toggles a disabled
+    ; menu item via the global tray helpers in speedkalandra.ahk.
+    ; Disposed in Stop() so a Reload cycle doesn't carry a stale
+    ; indicator into the next instance.
+    _persistenceTrayIndicator := ""
 
     _started   := false
     _stopped   := false   ; Terminal flag. Once Stop() runs (even on an
@@ -224,6 +233,18 @@ class SpeedKalandraApp
                 . this.personalBest.GetRunPbMs() . " ms ("
                 . this.personalBest.GetRunPbRunId() . ")", "App")
         }
+
+        ; Latest-5-run average alternative to PersonalBestService.
+        ; Sources from the SAME runHistory the PB rebuild uses, so
+        ; the two surfaces always see a consistent on-disk set of
+        ; runs. Pull-based: no extra subscriptions wired here — the
+        ; service subscribes to Evt.RunCompleted / Evt.RunCancelled
+        ; in its own constructor for cache invalidation.
+        ;
+        ; ToS (GSG §18): reads ONLY data\runs\*.ini (tracker-owned
+        ; files). Zero game interaction. No risk.
+        avgSink := LogServiceWarningSink(this.log, "RunAverage")
+        this.runAverage := RunAverageService(this.runHistory, this.bus, avgSink)
 
         this.runState   := RunStateRepository(ini, runStateSink)
         this.timer      := TimerService(this.clock, this.bus)
@@ -367,14 +388,16 @@ class SpeedKalandraApp
 
         ; Compact widget: Classic vs Plus chosen by cfg.layoutVariant.
         ; Both share WIDGET_ID and constructor signature, so Plus is
-        ; a drop-in replacement at this site.
+        ; a drop-in replacement at this site. The avgService is
+        ; passed as the final positional arg so cfg.pbDisplayMode =
+        ; "avg5" can route through it without a widget rebuild.
         if (this._cfg.layoutVariant = "plus")
         {
             this.compactWidget := CompactLayoutPlusWidget(
                 this.bus, compactPos, this._persistFn,
                 this.timer, this.zoneTracker, this.xpService,
                 this.zonesCatalog, this.loadingTotals, this._cfg,
-                this.personalBest
+                this.personalBest, this.runAverage
             )
         }
         else
@@ -383,7 +406,7 @@ class SpeedKalandraApp
                 this.bus, compactPos, this._persistFn,
                 this.timer, this.zoneTracker, this.xpService,
                 this.zonesCatalog, this.loadingTotals, this._cfg,
-                this.personalBest
+                this.personalBest, this.runAverage
             )
         }
 
@@ -395,7 +418,7 @@ class SpeedKalandraApp
             this.microWidget := MicroLayoutPlusWidget(
                 this.bus, microPos, this._persistFn,
                 this.timer, this.zoneTracker, this.xpService,
-                this.zonesCatalog, this.personalBest
+                this.zonesCatalog, this.personalBest, this._cfg, this.runAverage
             )
         }
         else
@@ -415,7 +438,7 @@ class SpeedKalandraApp
                 this.bus, stevePos, this._persistFn,
                 this.timer, this.zoneTracker, this.xpService,
                 this.zonesCatalog, this.personalBest,
-                this.loadingTotals, this._cfg
+                this.loadingTotals, this._cfg, this.runAverage
             )
         }
         else
@@ -423,7 +446,7 @@ class SpeedKalandraApp
             this.steveWidget := SteveLayoutWidget(
                 this.bus, stevePos, this._persistFn,
                 this.timer, this.zoneTracker, this.xpService,
-                this.zonesCatalog, this.personalBest
+                this.zonesCatalog, this.personalBest, this._cfg, this.runAverage
             )
         }
 
@@ -498,6 +521,15 @@ class SpeedKalandraApp
             this.personalBest,
             headless
         )
+
+        ; Persistence-health tray indicator. Subscribes here (so it
+        ; catches the very first PersistenceHealthChanged that the
+        ; hydrate-time Persist below could fire). Disposed in Stop()
+        ; so a Reload doesn't leave a stale warning in the tray.
+        ; Headless tests skip the real tray by injecting no-op
+        ; callables; the production path uses the global helpers
+        ; defined in speedkalandra.ahk.
+        this._persistenceTrayIndicator := PersistenceHealthTrayIndicator(this.bus)
 
         this._WireEventHandlers()
 
@@ -705,6 +737,13 @@ class SpeedKalandraApp
             try this.log.Warn("Stop: full run-data flush failed: " . ex.Message, "App")
         }
         try this.log.Flush()
+
+        ; Dispose the persistence-health indicator last among
+        ; subscribers — by this point the bus has stopped
+        ; publishing meaningful work, but Dispose() also removes
+        ; any lingering tray-menu warning so a Reload doesn't
+        ; carry visual cruft into the next instance.
+        try this._persistenceTrayIndicator.Dispose()
     }
 
     ToggleOverlay()
@@ -1101,7 +1140,7 @@ class SpeedKalandraApp
             "timer", "runState", "runService", "actCheckpoints",
             "xpService", "logMonitor", "zoneTracker",
             "loadingDetection", "loadingTotals",
-            "personalBest", "runHistory",
+            "personalBest", "runAverage", "runHistory",
             "deathLog", "deathStatsService", "deathLogScanner",
             "statsRecorder", "plotBuilder",
             "autoFinalize", "autoStart",
@@ -1118,7 +1157,8 @@ class SpeedKalandraApp
             ; Import / export
             "runExportService", "runImportService",
             ; Extracted cross-cutting handlers
-            "_bootPrompts", "_snapshotSaver", "_persister", "_reconfig"
+            "_bootPrompts", "_snapshotSaver", "_persister", "_reconfig",
+            "_persistenceTrayIndicator"
         ]
 
         for _, fieldName in objectFields

@@ -46,6 +46,36 @@ SpeedKalandraTrayRemoveUndoItem()
 }
 
 ; ============================================================
+; Tray helpers: persistence-health warning indicator
+;
+; Toggled by PersistenceHealthTrayIndicator in response to
+; Evt.PersistenceHealthChanged (published by RunService when its
+; lifecycle-persist save fails or recovers). The item is purely
+; informational — disabled, no click handler — so it can sit in
+; the menu without offering an action the user might mis-press.
+; Inserted ABOVE "Settings" for visual prominence; removed after
+; the next successful lifecycle save.
+; ============================================================
+SpeedKalandraTrayAddPersistenceWarning()
+{
+    ; Label is owned by PersistenceHealthTrayIndicator.ITEM_LABEL
+    ; (single source of truth) so the indicator's Dispose-time
+    ; cleanup uses the exact same string. Don't inline; if these
+    ; ever drift, the Delete in RemovePersistenceWarning would
+    ; silently fail to clear the lingering item.
+    label := PersistenceHealthTrayIndicator.ITEM_LABEL
+    ; Idempotent: delete first in case a previous Add lingered.
+    try A_TrayMenu.Delete(label)
+    try A_TrayMenu.Insert("Settings", label, (*) => 0)
+    try A_TrayMenu.Disable(label)
+}
+
+SpeedKalandraTrayRemovePersistenceWarning()
+{
+    try A_TrayMenu.Delete(PersistenceHealthTrayIndicator.ITEM_LABEL)
+}
+
+; ============================================================
 ; SpeedKalandraMsgBox - MsgBox wrapper with TopMost
 ;
 ; PROBLEM IT SOLVES:
@@ -123,6 +153,7 @@ SpeedKalandraMsgBox(text, title := "", options := "")
 #Include "src_v2\app\services\loading_detection_service.ahk"
 #Include "src_v2\app\services\loading_totals_service.ahk"
 #Include "src_v2\app\services\personal_best_service.ahk"
+#Include "src_v2\app\services\run_average_service.ahk"
 #Include "src_v2\app\services\act_checkpoint_tracker.ahk"
 #Include "src_v2\app\services\run_stats_recorder.ahk"
 #Include "src_v2\app\services\run_stats_plot_builder.ahk"
@@ -160,6 +191,7 @@ SpeedKalandraMsgBox(text, title := "", options := "")
 #Include "src_v2\app\run_snapshot_saver.ahk"
 #Include "src_v2\app\run_state_persister.ahk"
 #Include "src_v2\app\live_reconfiguration_handlers.ahk"
+#Include "src_v2\app\persistence_health_tray_indicator.ahk"
 
 #Include "src_v2\app\app.ahk"
 

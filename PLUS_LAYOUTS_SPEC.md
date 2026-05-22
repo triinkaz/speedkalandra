@@ -124,7 +124,7 @@ absorbed by the two blocks (larger timer font + more padding).
 +---------------------------------------------------------------+
 | ACT 1 · Clearfell                                             |
 |                                            03:33.42           |  <- timer mono giant
-| × 0   XP   PB 03:33                  RUN · PB 03:33           |
+| × 0   XP                                            03:33     |
 | ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓░░░░░░░░░▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓  |  <- 4px footer
 +---------------------------------------------------------------+
 ```
@@ -132,13 +132,36 @@ absorbed by the two blocks (larger timer font + more padding).
 **Fields:**
 - `ACT N · zoneName` (single line, left-aligned)
 - **Run timer** (mono, ~32pt at scale 1.0, conditional color)
-- Sub-label below timer: `RUN · PB MM:SS` (PB = full run PB)
-- **Chips**: `× N`, `XP`, `PB MM:SS` (PB of the current act)
+- **Chips**: `× N` (deaths), `XP`
+- **Bare PB value** (right-aligned, teal): the per-act PB of the
+  current act, no `PB` or `RUN` label. Shows `—` (em-dash) if no PB
+  exists for the act yet.
 - **Distribution bar**: 4px high footer (no labels, just colors)
 
-**Note on the third chip:** `PB MM:SS` here is the **PB time to complete the current act**,
-queried via `PersonalBestService` (verified: the service already exposes per-act PBs because
-Steve Classic uses them for conditional timer color). Shows `--:--` if no PB exists for the act yet.
+**Note on the PB value:** the right-aligned teal `MM:SS` reads from
+`pbService.GetRunPbForAct(currentAct)` — the same per-act PB the LINE1
+timer compares against for its goodStrong/danger color. The teal
+colour against the muted chips on the left is what signals "this is
+a PB-related value" — no `PB` label is needed and would just compete
+with the digits for attention. The bare value rolls forward as the
+runner advances through acts (PB at end of Act 1, then end of Act 2,
+and so on). If a future iteration wants the literal overall-run PB
+instead, `pbService.GetRunPbMs()` already exists and is populated by
+`UpdateFromRun`; the swap is a one-line change in `_GetRunPbMs`.
+
+**Label-iteration history (post-implementation).** This single slot
+went through three labels before landing on "no label":
+1. `PB MM:SS` chip on the left, next to the XP chip. Plus an
+   identical `RUN · PB MM:SS` sublabel on the right — same per-act
+   source on both, so they rendered the same number twice.
+2. `PB MM:SS` chip only (left chip alone). Removed the sublabel
+   because of the duplication.
+3. `RUN · PB MM:SS` sublabel only (right alone). Removed the chip
+   to keep the surface where the "RUN" framing was, but the framing
+   was misleading on a per-act value.
+4. Bare `MM:SS` value, right-aligned, teal-coloured (current). The
+   teal colour already says "this is a PB"; the label was either
+   redundant or actively misleading.
 
 ### 4.3 Micro Plus
 
@@ -274,3 +297,114 @@ Each step is one session. Don't combine.
 None at spec finalization. If new questions surface during steps 1–7,
 they should be appended here as `### Q-N: <question>` blocks and answered
 explicitly before the affected step lands.
+
+---
+
+## 13. PB display mode
+
+Feature added after the initial Plus rollout. Toggles every PB-related
+surface (display + timer-color comparison target) between the all-time
+PB and the average of the latest five completed runs.
+
+### 13.1 Feature flag
+
+```ahk
+; src_v2/domain/app_settings.ahk
+cfg.pbDisplayMode := "pb"   ; "pb" | "avg5" — default "pb"
+```
+
+INI mapping:
+```
+[Display]
+PbMode=pb
+```
+
+Settings dialog gains one checkbox under a new **DISPLAY** section:
+`☐ Show average of last 5 runs instead of PB`. Unlike `layoutVariant`,
+the change is **hot-reloadable** — `SettingsDialog._OnSave` publishes
+`Evt.PbDisplayModeChanged` and every widget re-renders without a
+restart. Section header in the dialog sits between LAYOUTS (BETA) and
+HOTKEYS so the user sees both display knobs grouped together.
+
+Any value other than the literal `"avg5"` normalizes to `"pb"` in both
+`AppSettings.FromMap` and `SettingsRepository._LoadDisplay` — same
+defense-in-depth pattern `layoutVariant` uses (§1).
+
+### 13.2 Scope
+
+Applies to **every widget that consults `_pbService`**, Classic and
+Plus alike. Five widgets touched (Micro Classic is the only PB-using
+layout excluded — it doesn't read PB at all):
+
+| Widget | PB literal display? | Timer color uses PB? | Visual differentiation in avg5 mode |
+|---|---|---|---|
+| Steve Plus       | yes (bare value)      | yes | `~ MM:SS` prefix (tilde = average) |
+| Compact Plus     | yes (`PB MM:SS` chip) | yes | label swaps to `AVG MM:SS` |
+| Compact Classic  | yes (`PB ZZ:ZZ / TT:TT`) | yes | label swaps to `AVG ZZ:ZZ / TT:TT` |
+| Steve Classic    | no                    | yes | (none — color-only) |
+| Micro Plus       | no                    | yes | (none — color-only) |
+
+The display value AND the color comparison target both follow the
+same source. "Current below target" still reads green either way —
+the semantic stays consistent across modes.
+
+### 13.3 Data source
+
+New service `RunAverageService` (`src_v2/app/services/run_average_service.ahk`).
+Pull-based mirror of `PersonalBestService` over `RunHistoryRepository`:
+
+```ahk
+GetAverageRunMs()              ; ← mean of summary.totalMs across latest 5 runs
+GetAverageRunMsForAct(actNum)  ; ← mean of actCheckpoints[actNum] across runs that reached that act
+GetAverageZoneMs(zoneName)     ; ← mean of (sum of visits) across runs that visited the zone
+```
+
+- `N_RECENT := 5` constant. Not exposed in the UI yet — the user
+  asked for "average of the last 5", so 5 is hard-wired here with a
+  single edit point for future surfacing.
+- Per-act denominator counts **only runs that reached the act**.
+  An Act-1-only run contributes to Act 1's average, not Act 3's.
+- Per-zone denominator counts **only runs that visited the zone**.
+  Multiple visits within one run are summed before averaging across
+  runs — same shape as `ZoneTrackingService.GetZoneTotalWithActive`,
+  which is what the PB service compares against.
+- Categories `loading` and `morte` are excluded from zone averages,
+  matching the filter `PersonalBestService.RebuildFromHistory` uses.
+
+### 13.4 Caching
+
+Two caches with separate lifetimes:
+
+- **Run + per-act averages**: built from `LoadSummaries(5)` (fast —
+  meta + totals + checkpoints, no details). Invalidated on
+  `Evt.RunCompleted` / `Evt.RunCancelled`.
+- **Per-zone averages**: built lazily on first `GetAverageZoneMs`
+  after an invalidation, via `ListRunIds(5)` + `Load(runId)` per
+  run. Slow path (5 INI reads) but bound to N_RECENT runs and
+  cached until the next dirty flip.
+
+The service subscribes to both events in its constructor and exposes
+a manual `Invalidate()` hook for callers that change runs outside
+the finalize flow (run-history delete, run import).
+
+### 13.5 Widget integration
+
+Every PB-using widget gained two optional ctor params at the end of
+the signature: `cfg` (already present in some) and `avgService`. A
+`_IsAvg5Mode()` helper performs a **dual check** — `cfg` set AND
+`avgService` injected AND `cfg.pbDisplayMode = "avg5"`. When the
+service is missing, the helper returns false and the widget falls
+back to PB rather than render stale/empty values.
+
+Widgets subscribe to `Evt.PbDisplayModeChanged` and reset every
+derived cache (timer color, PB chip text) before calling `_Refresh`.
+The other caches (act/zone state, deaths count) are mode-independent
+and stay intact.
+
+### 13.6 ToS compliance (GSG §18)
+
+`RunAverageService` reads ONLY `data\runs\*.ini` — files written by
+this tracker. Zero game interaction: no Client.txt read, no input
+simulation, no GGG API or website access. **No risk** under PoE2
+Terms of Use clauses 7(b–f, i).
+

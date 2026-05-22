@@ -12,6 +12,7 @@
 ;   VendorRegexes     3 slots (max 250 chars each) for V1/V2/V3 shortcuts
 ;   Rules             AutoPauseOnFocus, DeathPenaltyEnabled + seconds
 ;   Layouts (BETA)    LayoutVariant (classic | plus)
+;   Display           PbDisplayMode (pb | avg5; live-reloadable)
 ;   Hotkeys           Every action registered in cfg.hotkeys
 ;
 ; AHK v2 gotcha on Gui.Add: "s<size>" and "c<hex>" inline options are
@@ -203,6 +204,19 @@ class SettingsDialog
             'Use experimental "Plus" layouts (requires restart)')
         y += 32
 
+        ; ============ Display ============
+        ; Toggle between the all-time PB and the latest-5-run
+        ; average for every widget that surfaces a PB-related
+        ; value. Hot-reloadable via Evt.PbDisplayModeChanged on
+        ; save — no restart, unlike layoutVariant.
+        this._SectionHeader(g, y, "DISPLAY")
+        y += 22
+        g.SetFont("s9 c" Theme.Color("text"), Theme.FONT_UI)
+        this._ctrls["pbDisplayModeAvg5"] := g.Add("Checkbox",
+            "x180 y" y (this._cfg.pbDisplayMode = "avg5" ? " Checked" : ""),
+            "Show average of last 5 runs instead of PB")
+        y += 32
+
         ; ============ Hotkeys ============
         this._SectionHeader(g, y, "HOTKEYS")
         y += 22
@@ -354,6 +368,12 @@ class SettingsDialog
         cfg.layoutVariant := (this._ctrls.Has("layoutVariantPlus")
             && this._ctrls["layoutVariantPlus"].Value = 1) ? "plus" : "classic"
 
+        ; Display mode: "avg5" when the box is checked, "pb"
+        ; otherwise. Same defensive ternary pattern as above so an
+        ; un-built dialog (headless) lands on the safe default.
+        cfg.pbDisplayMode := (this._ctrls.Has("pbDisplayModeAvg5")
+            && this._ctrls["pbDisplayModeAvg5"].Value = 1) ? "avg5" : "pb"
+
         ; Hotkeys: user types in human format ("Ctrl+Alt+F");
         ; HotkeyFormatter.ToAhk converts to internal syntax ("^!f")
         ; before persisting. Old-format input passes through as-is.
@@ -414,6 +434,7 @@ class SettingsDialog
             "deathPenaltyEnabled",  cfg.deathPenaltyEnabled,
             "deathPenaltyMs",       cfg.deathPenaltyMs,
             "layoutVariant",        cfg.layoutVariant,
+            "pbDisplayMode",        cfg.pbDisplayMode,
             "hotkeys",              SettingsDialog._CloneStringMap(cfg.hotkeys)
         )
     }
@@ -430,6 +451,7 @@ class SettingsDialog
         cfg.deathPenaltyEnabled := snapshot["deathPenaltyEnabled"]
         cfg.deathPenaltyMs      := snapshot["deathPenaltyMs"]
         cfg.layoutVariant       := snapshot["layoutVariant"]
+        cfg.pbDisplayMode       := snapshot["pbDisplayMode"]
         cfg.hotkeys             := snapshot["hotkeys"]          ; the deep clone from snapshot
     }
 
@@ -457,8 +479,10 @@ class SettingsDialog
                 . "Reason: " . ex.Message . "`n`n"
                 . "Your changes were NOT persisted, and in-memory "
                 . "state has been restored to its pre-save values. "
-                . "Try again, or check that speedkalandra.ini isn't "
-                . "locked by another process. Details in "
+                . "See the Reason above for next steps — most save "
+                . "failures resolve with a retry, but a rollback "
+                . "failure (rare) names a preserved .pre-save file "
+                . "and requires manual recovery. Details in "
                 . "data\\speedkalandra.log.",
                 "Save failed",
                 "IconX")
@@ -508,6 +532,18 @@ class SettingsDialog
                 . "Restart SpeedKalandra to apply.",
                 "Layout change",
                 "Iconi")
+        }
+        ; PB display mode change → publish so every widget that
+        ; surfaces a PB-related value re-renders against the new
+        ; source. Unlike layoutVariant, this is hot-reloadable:
+        ; widgets keep their GUI handles and only reset their
+        ; derived caches (timer colour, PB chip text) before the
+        ; next Refresh writes the new mode's values.
+        if (snapshot["pbDisplayMode"] != cfg.pbDisplayMode)
+        {
+            try this._bus.Publish(Events.PbDisplayModeChanged, Map(
+                "oldMode", snapshot["pbDisplayMode"],
+                "newMode", cfg.pbDisplayMode))
         }
 
         try TrayTip("SpeedKalandra", "Settings saved.", "Mute")

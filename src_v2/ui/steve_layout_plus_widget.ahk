@@ -12,7 +12,7 @@
 ;
 ;   +-------------------------------------------------------+
 ;   | Act 1 · The Riverbank              02:31.234         |  ← LINE1
-;   | ✗ 3   XP   PB 2:15           RUN · PB 4:23           |  ← LINE2
+;   | ✗ 3   XP                                   4:23      |  ← LINE2
 ;   | [Map][Loading][Town]                                 |  ← 4px footer
 ;   +-------------------------------------------------------+
 ;
@@ -21,22 +21,36 @@
 ; fonts shift the colon-second alignment every other frame.
 ;
 ; DELTAS FROM CLASSIC:
-;   - Adds a per-act PB chip on LINE2 ("PB MM:SS"), reading
-;     pbService.GetRunPbForAct(currentAct) — same path Classic
-;     already uses for the timer's color comparison.
-;   - Adds a RUN · PB sublabel showing the FULL run PB (the same
-;     value chained PBs converge to), so the user can see both
-;     act-PB and run-PB without toggling layouts.
+;   - Adds a right-aligned bare PB value (MM:SS, teal-coloured) on
+;     LINE2, reading the per-act PB (pbService.GetRunPbForAct of
+;     the current act) — same source the LINE1 timer compares
+;     against for its goodStrong/danger color. NO "PB" or "RUN"
+;     label: the teal colour already signals "this is a PB-related
+;     value" against the muted chips on the left, and the bare
+;     number reads faster mid-run than a labelled chip. Iterations
+;     with "PB MM:SS" chip / "RUN · PB MM:SS" sublabel labels were
+;     dropped because the labels either (a) lied ("RUN ·" framing
+;     on a per-act value) or (b) added visual noise without info.
 ;   - 4 px distribution footer (no labels) using the colors from
 ;     theme aliases map/loading/town.
 ;   - Re-injects loadingTotals (needed for the distribution footer)
 ;     and cfg (plumbed for future Plus-only settings).
 ;
+; PB DISPLAY MODE (cfg.pbDisplayMode):
+;   - "pb" (default): bare value sources `pbService.GetRunPbForAct`
+;     and the LINE1 timer color compares vs the same per-act PB.
+;   - "avg5": bare value prefixed with a tilde ("~ MM:SS") to
+;     differentiate visually from PB; the source is the latest-5-run
+;     average from `avgService.GetAverageRunMsForAct`. The LINE1
+;     timer color compares vs the same avg5 target, so "current
+;     below target" still reads green either way. Hot-reloadable
+;     via Evt.PbDisplayModeChanged (no restart).
+;
 ; CONSTRUCTION:
 ;   widget := SteveLayoutPlusWidget(
 ;       bus, position, onPersist,
 ;       timer, zoneTracker, xpService,
-;       zonesCatalog, pbService, loadingTotals, cfg)
+;       zonesCatalog, pbService, loadingTotals, cfg, avgService)
 
 
 class SteveLayoutPlusWidget extends LayoutWidgetBase
@@ -63,14 +77,22 @@ class SteveLayoutPlusWidget extends LayoutWidgetBase
     static TIMER_W       := 200   ; wide enough for "1:23:45" in Consolas at scale 1.0
     static ACT_ZONE_GAP  := 6
 
-    ; LINE2: chips (left) + RUN · PB sublabel (right)
+    ; LINE2: chips (left, deaths + XP) + bare PB value (right).
+    ; The single PB surface is right-aligned, teal-coloured, with
+    ; NO "PB" or "RUN" label — just the MM:SS (or H:MM:SS) value.
+    ; History: this slot iterated through "PB MM:SS" (label was
+    ; redundant against the colour) and "RUN · PB MM:SS" (the
+    ; "RUN" framing implied overall-run PB but the value is
+    ; per-act). The bare value is what the runner actually reads.
+    ; If a future iteration wants two PB surfaces, the second one
+    ; needs a meaningfully different source (e.g. zone-PB or
+    ; overall-run-PB via pbService.GetRunPbMs).
     static LINE2_Y       := 36
     static LINE2_H       := 16
     static CHIP_DEATHS_W := 36
     static CHIP_XP_W     := 22
-    static CHIP_PB_W     := 80
     static CHIP_GAP      := 6
-    static RUN_PB_W      := 110
+    static PB_W          := 64    ; bare "MM:SS" or "H:MM:SS" up to ~1:23:45 in 9pt
 
     ; Distribution footer
     static BAR_Y := 56
@@ -83,7 +105,8 @@ class SteveLayoutPlusWidget extends LayoutWidgetBase
                                   ; mono is wider per char and we
                                   ; cap timer width at TIMER_W
     static FONT_CHIP     := 8
-    static FONT_RUN_PB   := 8
+    static FONT_PB       := 9     ; one pt bigger than chips so the
+                                  ; bare PB value reads at a glance
 
     ; High-frequency timer refresh — same as Classic, kept inline
     ; (the SetTimer pattern doesn't generalize well into the base).
@@ -97,6 +120,7 @@ class SteveLayoutPlusWidget extends LayoutWidgetBase
     _pbService     := ""
     _loadingTotals := ""
     _cfg           := ""
+    _avgService    := ""   ; RunAverageService (optional; required for cfg.pbDisplayMode = "avg5")
 
     ; State
     _currentZone := ""
@@ -110,8 +134,7 @@ class SteveLayoutPlusWidget extends LayoutWidgetBase
     _lastDeathsText     := ""
     _lastDeathsColor    := ""
     _lastXpColor        := ""
-    _lastActPbText      := ""
-    _lastRunPbText      := ""
+    _lastPbText         := ""
     _lastRenderMs       := 0
 
     ; Handler refs — same pattern as Classic, kept as fields so
@@ -123,11 +146,13 @@ class SteveLayoutPlusWidget extends LayoutWidgetBase
     _handlerRunStarted     := ""
     _handlerRunReset       := ""
     _handlerRunCancelled   := ""
+    _handlerPbDisplayMode  := ""   ; Evt.PbDisplayModeChanged — forces a full refresh on toggle
 
     _highFreqTimerFn := ""
 
     __New(bus, position, onPersist, timer, zoneTracker, xp,
-          zonesCatalog := "", pbService := "", loadingTotals := "", cfg := "")
+          zonesCatalog := "", pbService := "", loadingTotals := "", cfg := "",
+          avgService := "")
     {
         super.__New(SteveLayoutPlusWidget.WIDGET_ID,
                     SteveLayoutPlusWidget.DISPLAY_NAME,
@@ -139,6 +164,7 @@ class SteveLayoutPlusWidget extends LayoutWidgetBase
         this._pbService     := pbService
         this._loadingTotals := loadingTotals
         this._cfg           := cfg
+        this._avgService    := avgService
 
         this._handlerTick           := (data) => this._OnTick(data)
         this._handlerZoneEntered    := (data) => this._OnZoneEntered(data)
@@ -147,6 +173,10 @@ class SteveLayoutPlusWidget extends LayoutWidgetBase
         this._handlerRunStarted     := (data) => this._OnRunStateChange()
         this._handlerRunReset       := (data) => this._OnRunStateChange()
         this._handlerRunCancelled   := (data) => this._OnRunStateChange()
+        ; Force a full re-render when the user flips the PB display
+        ; mode in Settings — the cached colour and text of the bare
+        ; PB chip + the timer-vs-PB colour both depend on the mode.
+        this._handlerPbDisplayMode  := (data) => this._OnPbDisplayModeChanged()
 
         bus.Subscribe(Events.Tick,             this._handlerTick)
         bus.Subscribe(Events.ZoneEntered,      this._handlerZoneEntered)
@@ -155,6 +185,7 @@ class SteveLayoutPlusWidget extends LayoutWidgetBase
         bus.Subscribe(Events.RunStarted,       this._handlerRunStarted)
         bus.Subscribe(Events.RunReset,         this._handlerRunReset)
         bus.Subscribe(Events.RunCancelled,     this._handlerRunCancelled)
+        bus.Subscribe(Events.PbDisplayModeChanged, this._handlerPbDisplayMode)
     }
 
     _GetFixedSize() => Map("w", SteveLayoutPlusWidget.FIXED_W, "h", SteveLayoutPlusWidget.FIXED_H)
@@ -187,8 +218,7 @@ class SteveLayoutPlusWidget extends LayoutWidgetBase
 
         chipDeathsW := Round(SteveLayoutPlusWidget.CHIP_DEATHS_W * s)
         chipXpW     := Round(SteveLayoutPlusWidget.CHIP_XP_W * s)
-        chipPbW     := Round(SteveLayoutPlusWidget.CHIP_PB_W * s)
-        runPbW      := Round(SteveLayoutPlusWidget.RUN_PB_W * s)
+        pbW         := Round(SteveLayoutPlusWidget.PB_W * s)
 
         ; Distribution footer pins to the bottom edge of the rendered
         ; container.
@@ -198,7 +228,7 @@ class SteveLayoutPlusWidget extends LayoutWidgetBase
         fontActZone := Max(7, Round(SteveLayoutPlusWidget.FONT_ACT_ZONE * s))
         fontTimer   := Max(12, Round(SteveLayoutPlusWidget.FONT_TIMER * s))
         fontChip    := Max(6, Round(SteveLayoutPlusWidget.FONT_CHIP * s))
-        fontRunPb   := Max(6, Round(SteveLayoutPlusWidget.FONT_RUN_PB * s))
+        fontPb      := Max(7, Round(SteveLayoutPlusWidget.FONT_PB * s))
 
         ; Background + top accent stripe (shared visual signature
         ; with Compact/Classic).
@@ -257,24 +287,17 @@ class SteveLayoutPlusWidget extends LayoutWidgetBase
             "XP")
         x += chipXpW + chipGap
 
-        ; PB chip — current act's PB ("PB MM:SS"), teal color so it
-        ; doesn't share the green/red palette used by the live timer.
-        wg.SetFont("s" fontChip " c" Theme.Color("pb") " bold", Theme.FONT_UI)
-        this._ctrls["line2_act_pb"] := wg.Add("Text",
-            "x" x " y" line2Y
-            " w" chipPbW " h" line2H
-            " Left"
-            " Background" Theme.Color("surface"),
-            "")
-
-        ; RUN · PB sublabel — right-aligned, teal. Shows the FULL
-        ; run PB (currently the same as act-N PB because PBs are
-        ; per-act only; placeholder for a future overall-run PB).
-        runPbX := w - marginX - runPbW
-        wg.SetFont("s" fontRunPb " c" Theme.Color("pb"), Theme.FONT_UI)
-        this._ctrls["line2_run_pb"] := wg.Add("Text",
-            "x" runPbX " y" line2Y
-            " w" runPbW " h" line2H
+        ; Bare PB value — right-aligned, teal so the colour
+        ; signals "this is PB-related" against the muted chips on
+        ; the left without needing a "PB" label prefix. Reads the
+        ; per-act PB (pbService.GetRunPbForAct of the current act)
+        ; — see header for the full rationale on why this slot has
+        ; no label.
+        pbX := w - marginX - pbW
+        wg.SetFont("s" fontPb " c" Theme.Color("pb") " bold", Theme.FONT_UI)
+        this._ctrls["line2_pb"] := wg.Add("Text",
+            "x" pbX " y" line2Y
+            " w" pbW " h" line2H
             " Right"
             " Background" Theme.Color("surface"),
             "")
@@ -315,8 +338,7 @@ class SteveLayoutPlusWidget extends LayoutWidgetBase
         this._lastDeathsText  := ""
         this._lastDeathsColor := ""
         this._lastXpColor     := ""
-        this._lastActPbText   := ""
-        this._lastRunPbText   := ""
+        this._lastPbText      := ""
 
         this._Refresh()
 
@@ -360,8 +382,7 @@ class SteveLayoutPlusWidget extends LayoutWidgetBase
         this._RefreshTimerOnly()
         this._RefreshDeaths()
         this._RefreshXp()
-        this._RefreshActPb()
-        this._RefreshRunPb()
+        this._RefreshPb()
         this._RefreshBar()
     }
 
@@ -465,38 +486,35 @@ class SteveLayoutPlusWidget extends LayoutWidgetBase
         }
     }
 
-    _RefreshActPb()
+    _RefreshPb()
     {
-        if !this._ctrls.Has("line2_act_pb")
+        if !this._ctrls.Has("line2_pb")
             return
 
-        pbMs := this._GetRunPbMs()
-        text := pbMs > 0 ? ("PB " SteveLayoutPlusWidget._FormatMsShort(pbMs)) : "PB " Chr(0x2014)
-
-        if (text != this._lastActPbText)
+        ; Source + format depend on cfg.pbDisplayMode. "pb" keeps
+        ; the original bare value (sourced from PB); "avg5" prefixes
+        ; the value with a tilde ("~ MM:SS") to make the change of
+        ; semantics visible at a glance without needing a colour
+        ; difference. See header "PB DISPLAY MODE" block.
+        ;
+        ; Em-dash alone is the placeholder when no PB / no average
+        ; exists yet — same in both modes so the chip slot still
+        ; reserves visual space predictably.
+        targetMs := this._GetTargetMs()
+        if (targetMs > 0)
         {
-            try this._ctrls["line2_act_pb"].Value := text
-            this._lastActPbText := text
+            formatted := SteveLayoutPlusWidget._FormatMsShort(targetMs)
+            text := this._IsAvg5Mode() ? ("~ " . formatted) : formatted
         }
-    }
-
-    _RefreshRunPb()
-    {
-        if !this._ctrls.Has("line2_run_pb")
-            return
-
-        ; Currently maps to the same per-act PB the chip shows; kept
-        ; as a separate method so a future "overall run PB" surface
-        ; only changes _GetOverallRunPbMs().
-        pbMs := this._GetRunPbMs()
-        text := pbMs > 0
-            ? ("RUN " Chr(0x00B7) " PB " SteveLayoutPlusWidget._FormatMsShort(pbMs))
-            : ("RUN " Chr(0x00B7) " PB " Chr(0x2014))
-
-        if (text != this._lastRunPbText)
+        else
         {
-            try this._ctrls["line2_run_pb"].Value := text
-            this._lastRunPbText := text
+            text := Chr(0x2014)
+        }
+
+        if (text != this._lastPbText)
+        {
+            try this._ctrls["line2_pb"].Value := text
+            this._lastPbText := text
         }
     }
 
@@ -611,6 +629,19 @@ class SteveLayoutPlusWidget extends LayoutWidgetBase
         this._Refresh()
     }
 
+    ; Hot-reload of cfg.pbDisplayMode (Evt.PbDisplayModeChanged).
+    ; Caches that capture *derived* state (text, colour) must be
+    ; cleared so the next Refresh writes the new mode's values
+    ; instead of short-circuiting on a stale cache hit. The other
+    ; caches (act/zone, deaths) are independent of the mode and
+    ; aren't touched.
+    _OnPbDisplayModeChanged()
+    {
+        this._lastTimerColor := ""
+        this._lastPbText     := ""
+        this._Refresh()
+    }
+
     _ResolveInitialActZone()
     {
         if !IsObject(this._zoneTracker)
@@ -636,19 +667,58 @@ class SteveLayoutPlusWidget extends LayoutWidgetBase
     ; basis stays identical between Steve variants.
     ; ============================================================
 
-    _GetRunPbMs()
+    ; True when the config opts into the latest-5-run average via
+    ; cfg.pbDisplayMode = "avg5" AND the avg service is present.
+    ; The dual check keeps mode=avg5 with no service from silently
+    ; falling into a misleading branch — it falls back to PB.
+    _IsAvg5Mode()
     {
-        if !IsObject(this._pbService)
-            return 0
+        if !IsObject(this._cfg)
+            return false
+        if !IsObject(this._avgService)
+            return false
+        return this._cfg.pbDisplayMode = "avg5"
+    }
+
+    ; Resolves the act to use for the per-act lookup. Same cascade
+    ; as the previous _GetRunPbMs: prefer _currentAct, fall back to
+    ; the zones catalog by zone name. Extracted so the PB-mode and
+    ; avg5-mode branches share one act resolution.
+    _ResolveActForLookup()
+    {
         act := this._currentAct
         if (act <= 0 && IsObject(this._zonesCatalog) && this._currentZone != "")
             act := this._zonesCatalog.GetActOfName(this._currentZone)
+        return act
+    }
+
+    ; "Target" = the per-act ms value that both the timer colour
+    ; comparison and the LINE2 bare value source from. Routes to
+    ; PB or avg5 based on cfg.pbDisplayMode. The legacy
+    ; _GetRunPbMs name is preserved below as a thin alias so
+    ; existing call sites (timer colour) don't need a sweep.
+    _GetTargetMs()
+    {
+        act := this._ResolveActForLookup()
         if (act <= 0)
+            return 0
+        if this._IsAvg5Mode()
+        {
+            try
+                return this._avgService.GetAverageRunMsForAct(act)
+            return 0
+        }
+        if !IsObject(this._pbService)
             return 0
         try
             return this._pbService.GetRunPbForAct(act)
         return 0
     }
+
+    ; Backwards-compatible alias — the timer-colour path used to
+    ; call _GetRunPbMs directly. Now both call _GetTargetMs so the
+    ; comparison basis follows cfg.pbDisplayMode.
+    _GetRunPbMs() => this._GetTargetMs()
 
     static _ResolveTimerColor(currentMs, pbMs)
     {
@@ -756,6 +826,11 @@ class SteveLayoutPlusWidget extends LayoutWidgetBase
         {
             this._bus.Unsubscribe(Events.RunCancelled, this._handlerRunCancelled)
             this._handlerRunCancelled := ""
+        }
+        if (this._handlerPbDisplayMode != "")
+        {
+            this._bus.Unsubscribe(Events.PbDisplayModeChanged, this._handlerPbDisplayMode)
+            this._handlerPbDisplayMode := ""
         }
     }
 }
