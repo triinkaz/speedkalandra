@@ -18,9 +18,9 @@ A minimalist Path of Exile 2 speedrun tracker for Windows.
 - Auto-finalize on configurable regex trigger (e.g. last-boss kill line)
 - Crash recovery — re-hydrates run state on relaunch
 
-## Screenshots
+## Visual Showcase
 
-*Visual showcase — actual rendering uses native Windows controls; the compositions below are illustrative.*
+*Actual rendering uses native Windows controls; the compositions below are illustrative.*
 
 ### Overlay
 
