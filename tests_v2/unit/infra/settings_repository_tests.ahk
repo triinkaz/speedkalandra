@@ -85,6 +85,8 @@ class SettingsRepositoryTests extends TestCase
         "load_layout_variant_falls_back_to_classic_on_invalid_ini",
         "save_load_preserves_pb_display_mode_avg5",
         "load_pb_display_mode_falls_back_to_pb_on_invalid_ini",
+        "save_load_preserves_show_outcome_banner",
+        "load_show_outcome_banner_defaults_true_when_key_missing",
         "save_load_preserves_hotkeys",
         "save_load_preserves_window_micro_locked",
         "save_load_preserves_window_steve_locked",
@@ -409,6 +411,48 @@ class SettingsRepositoryTests extends TestCase
 
         Assert.Equal("pb", loaded.pbDisplayMode,
             "Unknown PbMode in INI normalizes to pb on load")
+    }
+
+    save_load_preserves_show_outcome_banner()
+    {
+        ; cfg.showOutcomeBanner is the opt-out flag for the
+        ; transient run-outcome banner. Default true, flipping to
+        ; false must survive across app restarts — same round-trip
+        ; contract as every other persisted flag.
+        mainIni := IniFile(Fixtures.TempPath("ini"))
+        repo := SettingsRepository(mainIni)
+
+        cfg := AppSettings.Defaults()
+        Assert.True(cfg.showOutcomeBanner, "sanity: default is true")
+
+        cfg.showOutcomeBanner := false
+        repo.Save(cfg)
+
+        loaded := repo.Load()
+        Assert.False(loaded.showOutcomeBanner,
+            "[Display].ShowOutcomeBanner round-trips through INI")
+
+        ; Flip back to true and confirm that also persists.
+        loaded.showOutcomeBanner := true
+        repo.Save(loaded)
+        reloaded := repo.Load()
+        Assert.True(reloaded.showOutcomeBanner,
+            "Flipping back to true also persists")
+    }
+
+    load_show_outcome_banner_defaults_true_when_key_missing()
+    {
+        ; Older INIs predating this key must load with the banner ON
+        ; (opt-out semantic). Without this defaulting, an upgrade
+        ; would silently disable the feature for every existing user.
+        mainIni := IniFile(Fixtures.TempPath("ini"))
+        ; Deliberately do NOT write [Display].ShowOutcomeBanner.
+
+        repo := SettingsRepository(mainIni)
+        loaded := repo.Load()
+
+        Assert.True(loaded.showOutcomeBanner,
+            "Missing ShowOutcomeBanner key must load as true (opt-out default)")
     }
 
     save_load_preserves_hotkeys()

@@ -97,6 +97,36 @@ class Events
     ; required, unlike LayoutVariant.
     static PbDisplayModeChanged := "Evt.PbDisplayModeChanged"  ; data: {oldMode, newMode}
 
+    ; --- Run outcome (UI-facing fact: what happened to the run) ---
+    ; Published by RunSnapshotSaver (after the save attempt resolves
+    ; with a verdict — saved / saved-as-DNF / discarded-as-too-short)
+    ; and by RunService.ResetRun (when the user resets an active run).
+    ; The four outcomes below are what the user actually experienced;
+    ; they intentionally do NOT mirror the lifecycle events 1:1.
+    ; Lifecycle (RunCompleted/RunCancelled/RunReset) says "how the
+    ; run ended"; RunOutcomeReported says "what the user got".
+    ;
+    ;   outcome="saved"     run was completed, written to history,
+    ;                       and pbChanged tells whether PBs moved.
+    ;   outcome="dnf"       run was cancelled but long enough to save
+    ;                       as DNF (history yes, PB no).
+    ;   outcome="too_short" any reason, runMs < threshold; not saved,
+    ;                       no PB update.
+    ;   outcome="reset"     user reset an active run (no save, no PB).
+    ;
+    ; durationMs is the runMs that was *measured* at the moment the
+    ; outcome was decided (after timer.Stop / before timer.Reset).
+    ; pbChanged is meaningful only for outcome="saved"; the other
+    ; three are always false.
+    static RunOutcomeReported := "Evt.RunOutcomeReported"   ; data: {outcome, durationMs, runId, pbChanged}
+
+    ; Published by SettingsDialog._OnSave when cfg.showOutcomeBanner
+    ; flips (true ↔ false). RunOutcomeBannerWidget uses it to clear
+    ; any banner that happens to be on screen the moment the user
+    ; turns the feature off, so the user gets immediate confirmation
+    ; that the setting took effect.
+    static ShowOutcomeBannerChanged := "Evt.ShowOutcomeBannerChanged"  ; data: {oldValue, newValue}
+
     ; --- Persistence health ---
     ; Published by RunService on transitions of its
     ; _persistenceDegraded flag (false↔true). UI/tray surfaces

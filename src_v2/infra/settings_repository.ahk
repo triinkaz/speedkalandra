@@ -14,7 +14,7 @@
 ;   [Disclaimer]     Acknowledged
 ;   [Diagnostics]    EventTracingEnabled (opt-in; off by default)
 ;   [Layouts]        Variant (classic | plus; opt-in BETA)
-;   [Display]        PbMode (pb | avg5; toggles PB chip / live-timer color target)
+;   [Display]        PbMode (pb | avg5; toggles PB chip / live-timer color target), ShowOutcomeBanner (bool)
 ;   [Hotkeys]        <action> -> keyBind
 ;   [Window]         MicroLocked, SteveLocked
 ;   [Overlay]        <widgetId>.{left,top,scale,visible,centered} + hoverHide
@@ -492,12 +492,21 @@ class SettingsRepository
     {
         v := this._ini.Read("Display", "PbMode", "pb")
         cfg.pbDisplayMode := (v = "avg5") ? "avg5" : "pb"
+
+        ; ShowOutcomeBanner defaults to "1" so a fresh install —
+        ; or any INI that predates this key — starts with the
+        ; banner on, matching the AppSettings default. The opt-out
+        ; lives here (not in a separate section) to keep the
+        ; settings-dialog DISPLAY group cohesive: every "how does
+        ; the overlay surface results to me?" flag is in [Display].
+        cfg.showOutcomeBanner := this._ini.Read("Display", "ShowOutcomeBanner", "1") = "1"
     }
 
     _SaveDisplay(cfg)
     {
         v := (cfg.pbDisplayMode = "avg5") ? "avg5" : "pb"
         this._ini.Write(v, "Display", "PbMode")
+        this._ini.Write(cfg.showOutcomeBanner ? 1 : 0, "Display", "ShowOutcomeBanner")
     }
 
     ; ============================================================

@@ -292,12 +292,35 @@ class RunService
 
     ResetRun()
     {
+        ; Capture pre-reset facts so the outcome event can carry the
+        ; real duration. Once timer.Reset() runs, GetRunMs() returns
+        ; 0 and the banner would show "RESET · 00:00" — unhelpful.
+        ; Skipped (no outcome event) when there was no active run
+        ; in the first place, since a ResetRun on idle state has no
+        ; user-meaningful outcome to report — it's just an idempotent
+        ; cleanup. The RunReset lifecycle event still fires either
+        ; way, since subscribers may have their own idle-state
+        ; cleanup to do.
+        wasActive := this._state.IsActive()
+        runMsBeforeReset := wasActive && IsObject(this._timer)
+            ? this._timer.GetRunMs()
+            : 0
         currentRunId := this._state.runId
+
         this._timer.Reset()
         this._state := RunState.Empty()
         this._stateRepo.Clear()
 
         this._bus.Publish(Events.RunReset, Map("runId", currentRunId))
+        if wasActive
+        {
+            this._bus.Publish(Events.RunOutcomeReported, Map(
+                "outcome",    "reset",
+                "durationMs", Integer(runMsBeforeReset),
+                "runId",      String(currentRunId),
+                "pbChanged",  false
+            ))
+        }
         return true
     }
 

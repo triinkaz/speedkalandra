@@ -151,6 +151,13 @@ class _SaverStubStatsRecorder
     runId   := "20260518_120000_000"
     firstTs := "2026-05-18 12:00:00"
 
+    ; Mirrors RunStatsRecorder.GetRunId. The saver now reads this
+    ; early (before the too_short branch returns) so it can stamp
+    ; the outcome event with a runId. Tests that didn't need this
+    ; before now do; the stub method was added alongside the new
+    ; saver behaviour.
+    GetRunId() => this.runId
+
     GetSnapshot(zoneTotalsMap, runMs, firstEnteredAtMap)
     {
         return Map(
@@ -182,6 +189,35 @@ class _SaverStubPlotBuilder
             "totals",  Map(),
             "details", []
         )
+    }
+}
+
+
+; Variant of _SaverStubPersonalBest whose UpdateFromRun returns
+; true — used by the outcome_published_saved_carries_pb_changed_flag
+; test to drive the pbChanged=true branch end-to-end. Declared at
+; top level because AHK v2 forbids `class` inside a function body.
+class _SaverPbReturnsTrue extends _SaverStubPersonalBest
+{
+    UpdateFromRun(runMs, runId, zoneTotalsMap, actCheckpointsMap)
+    {
+        super.UpdateFromRun(runMs, runId, zoneTotalsMap, actCheckpointsMap)
+        return true
+    }
+}
+
+
+; Variant of _SaverStubRunHistory whose Save returns false — used
+; by outcome_silent_when_run_history_save_returns_false to drive
+; the "runHistory didn't land the write" branch without throwing.
+; Same top-level-class reason as above.
+class _SaverHistoryReturnsFalse extends _SaverStubRunHistory
+{
+    Save(buildResult)
+    {
+        this.saveCalls += 1
+        this._lastSaved := buildResult
+        return false
     }
 }
 
@@ -265,6 +301,15 @@ class RunSnapshotSaverTests extends TestCase
         "save_drops_zone_from_pb_when_visit_exceeds_total",
         "save_injects_interrupted_keys_in_buildresult",
         "save_cancelled_does_not_call_update_from_run",
+
+        ; --- RunOutcomeReported publishing ---
+        "outcome_published_too_short_for_completed_below_threshold",
+        "outcome_published_too_short_for_cancelled_below_threshold",
+        "outcome_published_saved_for_completed_above_threshold",
+        "outcome_published_saved_carries_pb_changed_flag",
+        "outcome_published_dnf_for_cancelled_above_threshold",
+        "outcome_silent_when_bus_missing",
+        "outcome_silent_when_run_history_save_returns_false",
 
         ; --- Undo state machine ---
         "undo_no_op_when_no_save_marked",
@@ -353,6 +398,27 @@ class RunSnapshotSaverTests extends TestCase
             this.runHistory, this.zoneTracker, this.timer,
             this.statsRecorder, this.plotBuilder, this.actCheckpoints,
             this.personalBest, this.log, true
+        )
+    }
+
+    ; Same as _MakeFullSaver but wires a real EventBus so the
+    ; outcome-event publishing path can be observed by subscribers.
+    ; The subscriber is a single Array that captures the payloads
+    ; in order; tests assert on its contents.
+    _MakeFullSaverWithBus(busOut)
+    {
+        ; busOut is an Array (passed by reference) that will hold
+        ; the captured payloads. The closure pushes into it on
+        ; every Evt.RunOutcomeReported publish. Two callers need
+        ; to mutate the same list (the closure and the test
+        ; assertions), which is why the array is owned by the
+        ; test method rather than by this helper.
+        bus := EventBus(NullLogger())
+        bus.Subscribe(Events.RunOutcomeReported, (data) => busOut.Push(data))
+        return RunSnapshotSaver(
+            this.runHistory, this.zoneTracker, this.timer,
+            this.statsRecorder, this.plotBuilder, this.actCheckpoints,
+            this.personalBest, this.log, true, bus
         )
     }
 
@@ -491,6 +557,131 @@ class RunSnapshotSaverTests extends TestCase
 
         Assert.Equal(0, this.personalBest.updateCalls,
             "Cancelled save never calls UpdateFromRun")
+    }
+
+    ; ============================================================
+    ; RunOutcomeReported publishing
+    ; ============================================================
+    ;
+    ; Every Save() call ends in exactly one Evt.RunOutcomeReported
+    ; publish that names what actually happened: "too_short",
+    ; "saved", or "dnf". The event payload carries the duration the
+    ; saver measured (so the banner doesn't have to recompute) and a
+    ; pbChanged flag (meaningful only for "saved"; always false
+    ; otherwise). The widget renders from this single fact source.
+    ;
+    ; Tests use a real EventBus so the publish/subscribe wiring is
+    ; exercised end-to-end — a publish that didn't fire would be
+    ; invisible to a mock-bus assertion that checks call counts.
+
+    outcome_published_too_short_for_completed_below_threshold()
+    {
+        this.timer.SetRunMs(90000)                 ; below the 3-min cap
+        this.statsRecorder.runId := "20260518_120000_001"
+        captured := []
+        this._MakeFullSaverWithBus(captured).Save("completed")
+
+        Assert.Equal(1, captured.Length, "Exactly one outcome event per Save")
+        Assert.Equal("too_short", captured[1]["outcome"])
+        Assert.Equal(90000,        captured[1]["durationMs"])
+        Assert.Equal("20260518_120000_001", captured[1]["runId"])
+        Assert.False(captured[1]["pbChanged"])
+    }
+
+    outcome_published_too_short_for_cancelled_below_threshold()
+    {
+        ; Same too_short outcome regardless of reason — the threshold
+        ; gate is reason-agnostic.
+        this.timer.SetRunMs(45000)
+        this.statsRecorder.runId := "20260518_120000_002"
+        captured := []
+        this._MakeFullSaverWithBus(captured).Save("cancelled")
+
+        Assert.Equal(1, captured.Length)
+        Assert.Equal("too_short", captured[1]["outcome"])
+        Assert.Equal(45000,        captured[1]["durationMs"])
+    }
+
+    outcome_published_saved_for_completed_above_threshold()
+    {
+        ; Above threshold, completed reason, no PB shift — outcome
+        ; "saved" with pbChanged=false.
+        this.timer.SetRunMs(300000)
+        this.zoneTracker.SetTotals(Map("Mud Burrow", 60000))
+        ; _SaverStubPersonalBest.UpdateFromRun returns false.
+        captured := []
+        this._MakeFullSaverWithBus(captured).Save("completed")
+
+        Assert.Equal(1, captured.Length)
+        Assert.Equal("saved", captured[1]["outcome"])
+        Assert.Equal(300000, captured[1]["durationMs"])
+        Assert.False(captured[1]["pbChanged"])
+    }
+
+    outcome_published_saved_carries_pb_changed_flag()
+    {
+        ; Same as above but the PB stub flips a flag so the saver
+        ; sees pbChanged=true. The widget paints a different colour
+        ; based on this field, so it has to round-trip cleanly.
+        ; _SaverPbReturnsTrue is defined at file scope above.
+        this.timer.SetRunMs(450000)
+        this.zoneTracker.SetTotals(Map("Mud Burrow", 60000))
+        this.personalBest := _SaverPbReturnsTrue()
+        captured := []
+        this._MakeFullSaverWithBus(captured).Save("completed")
+
+        Assert.Equal(1, captured.Length)
+        Assert.Equal("saved", captured[1]["outcome"])
+        Assert.True(captured[1]["pbChanged"], "pbChanged round-trips from PB service")
+    }
+
+    outcome_published_dnf_for_cancelled_above_threshold()
+    {
+        ; Cancelled + above threshold = history yes, PB no = "dnf".
+        ; pbChanged is always false for this outcome since the PB
+        ; path is gated on reason="completed" upstream.
+        this.timer.SetRunMs(600000)
+        this.zoneTracker.SetTotals(Map("Mud Burrow", 60000))
+        captured := []
+        this._MakeFullSaverWithBus(captured).Save("cancelled")
+
+        Assert.Equal(1, captured.Length)
+        Assert.Equal("dnf", captured[1]["outcome"])
+        Assert.Equal(600000, captured[1]["durationMs"])
+        Assert.False(captured[1]["pbChanged"])
+    }
+
+    outcome_silent_when_bus_missing()
+    {
+        ; The bus is optional. Existing test setups that don't pass
+        ; one still work — _PublishOutcome short-circuits on the
+        ; IsObject guard. This is the test that pins that
+        ; back-compat: a saver constructed without a bus must not
+        ; throw and must not crash the save path.
+        this.timer.SetRunMs(300000)
+        this.zoneTracker.SetTotals(Map("Mud Burrow", 60000))
+        this._MakeFullSaver().Save("completed")
+        ; No assertions on captured events — just no throw + Save
+        ; ran to completion.
+        Assert.Equal(1, this.runHistory.saveCalls)
+    }
+
+    outcome_silent_when_run_history_save_returns_false()
+    {
+        ; If runHistory.Save returns false (rare — the repo normally
+        ; throws), the saver does NOT publish a "saved" outcome.
+        ; Falsely signalling success when the file didn't land would
+        ; mislead the banner; the TrayTip on the catch path already
+        ; surfaces the problem. _SaverHistoryReturnsFalse lives at
+        ; file scope above.
+        this.runHistory := _SaverHistoryReturnsFalse()
+        this.timer.SetRunMs(300000)
+        this.zoneTracker.SetTotals(Map("Mud Burrow", 60000))
+        captured := []
+        this._MakeFullSaverWithBus(captured).Save("completed")
+
+        Assert.Equal(0, captured.Length,
+            "No outcome event when Save reports a non-success")
     }
 
     ; ============================================================

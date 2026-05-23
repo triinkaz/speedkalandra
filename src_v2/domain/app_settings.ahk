@@ -12,7 +12,7 @@
 ;   [VendorRegexes] Slot1, Slot2, Slot3 (max 250 chars each)
 ;   [Diagnostics]   EventTracingEnabled (opt-in)
 ;   [Layouts]       Variant (classic | plus)
-;   [Display]       PbMode (pb | avg5)
+;   [Display]       PbMode (pb | avg5), ShowOutcomeBanner (bool)
 ;   [Disclaimer]    Acknowledged (do-not-show-again flag)
 ;   [Hotkeys]       <action> = keyBind
 ;   [Window]        → WindowState (composite)
@@ -106,6 +106,15 @@ class AppSettings
     ; behavior rather than an undefined runtime branch. See
     ; PLUS_LAYOUTS_SPEC.md §13 for the full feature spec.
     pbDisplayMode := "pb"
+
+    ; Toggles the transient run-outcome banner (top-center, ~4 s)
+    ; that surfaces after every Finalize / Cancel / Reset of an
+    ; active run. Default true — the banner is opt-out so the
+    ; "did it save?" feedback gap that prompted the feature is
+    ; closed by default. Speedrunners who find the banner
+    ; distracting can flip it off in Settings → DISPLAY. See
+    ; RunOutcomeBannerWidget for the full lifecycle.
+    showOutcomeBanner := true
 
     ; --- Auto-finalize ---
     autoFinalizeRegex := ""
@@ -214,6 +223,9 @@ class AppSettings
             v := String(data["pbDisplayMode"])
             cfg.pbDisplayMode := (v = "avg5") ? "avg5" : "pb"
         }
+
+        ; --- Display (outcome banner) ---
+        cfg.showOutcomeBanner := AppSettings._GetBool(data, "showOutcomeBanner", cfg.showOutcomeBanner)
 
         ; --- Auto-finalize ---
         cfg.autoFinalizeRegex := AppSettings._GetStr(data, "autoFinalizeRegex", cfg.autoFinalizeRegex)

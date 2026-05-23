@@ -12,7 +12,7 @@
 ;   VendorRegexes     3 slots (max 250 chars each) for V1/V2/V3 shortcuts
 ;   Rules             AutoPauseOnFocus, DeathPenaltyEnabled + seconds
 ;   Layouts (BETA)    LayoutVariant (classic | plus)
-;   Display           PbDisplayMode (pb | avg5; live-reloadable)
+;   Display           PbDisplayMode (pb | avg5; live-reloadable), ShowOutcomeBanner (live-reloadable)
 ;   Hotkeys           Every action registered in cfg.hotkeys
 ;
 ; AHK v2 gotcha on Gui.Add: "s<size>" and "c<hex>" inline options are
@@ -215,6 +215,15 @@ class SettingsDialog
         this._ctrls["pbDisplayModeAvg5"] := g.Add("Checkbox",
             "x180 y" y (this._cfg.pbDisplayMode = "avg5" ? " Checked" : ""),
             "Show average of last 5 runs instead of PB")
+        y += 24
+        ; Opt-out for the transient run-outcome banner. Default
+        ; checked so the "did it save?" feedback gap is closed for
+        ; new users; speedrunners who find the banner distracting
+        ; flip it off here. Live-reloadable via
+        ; Evt.ShowOutcomeBannerChanged on save — no restart.
+        this._ctrls["showOutcomeBanner"] := g.Add("Checkbox",
+            "x180 y" y (this._cfg.showOutcomeBanner ? " Checked" : ""),
+            "Show run-outcome banner after each run")
         y += 32
 
         ; ============ Hotkeys ============
@@ -374,6 +383,13 @@ class SettingsDialog
         cfg.pbDisplayMode := (this._ctrls.Has("pbDisplayModeAvg5")
             && this._ctrls["pbDisplayModeAvg5"].Value = 1) ? "avg5" : "pb"
 
+        ; Outcome banner opt-out: defaults to true on a headless
+        ; (no-ctrls) save so a programmatic caller doesn't silently
+        ; flip the user's preference off. Same defensive pattern.
+        cfg.showOutcomeBanner := this._ctrls.Has("showOutcomeBanner")
+            ? (this._ctrls["showOutcomeBanner"].Value = 1)
+            : cfg.showOutcomeBanner
+
         ; Hotkeys: user types in human format ("Ctrl+Alt+F");
         ; HotkeyFormatter.ToAhk converts to internal syntax ("^!f")
         ; before persisting. Old-format input passes through as-is.
@@ -435,6 +451,7 @@ class SettingsDialog
             "deathPenaltyMs",       cfg.deathPenaltyMs,
             "layoutVariant",        cfg.layoutVariant,
             "pbDisplayMode",        cfg.pbDisplayMode,
+            "showOutcomeBanner",    cfg.showOutcomeBanner,
             "hotkeys",              SettingsDialog._CloneStringMap(cfg.hotkeys)
         )
     }
@@ -452,6 +469,7 @@ class SettingsDialog
         cfg.deathPenaltyMs      := snapshot["deathPenaltyMs"]
         cfg.layoutVariant       := snapshot["layoutVariant"]
         cfg.pbDisplayMode       := snapshot["pbDisplayMode"]
+        cfg.showOutcomeBanner   := snapshot["showOutcomeBanner"]
         cfg.hotkeys             := snapshot["hotkeys"]          ; the deep clone from snapshot
     }
 
@@ -544,6 +562,18 @@ class SettingsDialog
             try this._bus.Publish(Events.PbDisplayModeChanged, Map(
                 "oldMode", snapshot["pbDisplayMode"],
                 "newMode", cfg.pbDisplayMode))
+        }
+        ; Outcome banner toggle — the widget subscribes so it can
+        ; clear any banner that happens to be on screen when the
+        ; user turns the feature OFF. Turning it ON has no
+        ; immediate visible effect (next outcome surfaces it); we
+        ; still publish on either direction so subscribers can
+        ; rely on the event as a state-change signal.
+        if (!!snapshot["showOutcomeBanner"] != !!cfg.showOutcomeBanner)
+        {
+            try this._bus.Publish(Events.ShowOutcomeBannerChanged, Map(
+                "oldValue", !!snapshot["showOutcomeBanner"],
+                "newValue", !!cfg.showOutcomeBanner))
         }
 
         try TrayTip("SpeedKalandra", "Settings saved.", "Mute")

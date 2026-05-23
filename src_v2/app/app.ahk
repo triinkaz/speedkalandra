@@ -99,6 +99,14 @@ class SpeedKalandraApp
     steveWidget   := ""
     widgets       := ""
 
+    ; Transient run-outcome banner shown for ~4 s after every
+    ; Finalize / Cancel / Reset of an active run. Lives outside the
+    ; layout-mode widget map (compactWidget/microWidget/steveWidget)
+    ; because it isn't user-positionable and doesn't participate in
+    ; mode switching — it's a notification, not an overlay panel.
+    ; See RunOutcomeBannerWidget for the lifecycle and opt-out flag.
+    runOutcomeBanner := ""
+
     settingsDialog     := ""
     plotDialog         := ""
     runHistoryDialog   := ""
@@ -497,8 +505,19 @@ class SpeedKalandraApp
             this.actCheckpoints,
             this.personalBest,
             this.log,
-            headless
+            headless,
+            this.bus
         )
+
+        ; Outcome banner: subscribes to Evt.RunOutcomeReported (from
+        ; the snapshot saver above and RunService.ResetRun) and to
+        ; Evt.RunStarted (so it clears as soon as the next run
+        ; begins). Constructed AFTER the saver because both attach
+        ; to the same bus and the widget is logically downstream of
+        ; the publisher — the order is incidental for correctness
+        ; (the bus doesn't fan-out before Publish) but makes the
+        ; dependency direction obvious to readers.
+        this.runOutcomeBanner := RunOutcomeBannerWidget(this.bus, this._cfg, headless)
 
         ; Wire the run-finalization save through RunService's
         ; pre-publish hooks instead of as a bus subscriber. This sees
@@ -719,6 +738,7 @@ class SpeedKalandraApp
         try this.compactWidget.Hide()
         try this.microWidget.Hide()
         try this.steveWidget.Hide()
+        try this.runOutcomeBanner.Dispose()
 
         try
         {
@@ -1150,6 +1170,7 @@ class SpeedKalandraApp
             "tickEmitter", "eventTracer",
             ; Widgets
             "compactWidget", "microWidget", "steveWidget", "widgets",
+            "runOutcomeBanner",
             ; Dialogs
             "settingsDialog", "plotDialog", "runHistoryDialog",
             "deathStatsDialog",

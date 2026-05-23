@@ -29,6 +29,14 @@
 ;         clears the timer and tray item.
 ;   3b. 60 s elapse                          → _ExpireUndoable()
 ;       — clears the runId and the tray item.
+;
+; Outcome reporting:
+;   Every Save() call ends in exactly one Events.RunOutcomeReported
+;   publish: "saved" / "dnf" / "too_short". The bus is optional so
+;   narrow test setups that only exercise the persistence side can
+;   skip it (IsObject check before each publish). The widget that
+;   surfaces this to the user is RunOutcomeBannerWidget; the saver
+;   itself doesn't know about UI.
 
 
 class RunSnapshotSaver
@@ -47,6 +55,7 @@ class RunSnapshotSaver
     _personalBest   := ""
     _log            := ""
     _headless       := false
+    _bus            := ""
 
     ; runId of the most recent save that can still be undone via the
     ; tray menu. Cleared after 60 s or once undo runs.
@@ -54,12 +63,15 @@ class RunSnapshotSaver
     _undoTimerFn    := ""
 
     __New(runHistory, zoneTracker, timer, statsRecorder, plotBuilder,
-          actCheckpoints, personalBest, log, headless)
+          actCheckpoints, personalBest, log, headless, bus := "")
     {
         ; Lenient on individual service references — Save() and the
         ; undo path guard with IsObject() so the class can still be
         ; constructed in narrow test setups that only exercise one
-        ; collaborator at a time.
+        ; collaborator at a time. Same leniency applies to the bus:
+        ; the saver publishes RunOutcomeReported when a bus is
+        ; available and silently skips otherwise. Production wires
+        ; one; persistence-only tests can leave it empty.
         this._runHistory     := runHistory
         this._zoneTracker    := zoneTracker
         this._timer          := timer
@@ -69,6 +81,7 @@ class RunSnapshotSaver
         this._personalBest   := personalBest
         this._log            := log
         this._headless       := !!headless
+        this._bus            := bus
     }
 
     ; Persists a finished/cancelled run to history. The
@@ -113,6 +126,12 @@ class RunSnapshotSaver
             }
             runMs := IsObject(this._timer) ? this._timer.GetRunMs() : 0
 
+            ; Captured early so the too_short branch (which returns
+            ; before buildResult exists) can still report a runId in
+            ; the outcome event. Falls back to "" if the stats
+            ; recorder isn't wired.
+            rid := IsObject(this._statsRecorder) ? this._statsRecorder.GetRunId() : ""
+
             ; Uniform threshold for completed and cancelled.
             if (runMs < RunSnapshotSaver.MIN_SAVE_MS)
             {
@@ -130,6 +149,7 @@ class RunSnapshotSaver
                         "Run too short (" Duration.FormatMs(runMs)
                         "), not saved.", "Mute")
                 }
+                this._PublishOutcome("too_short", runMs, rid, false)
                 return
             }
 
@@ -180,7 +200,7 @@ class RunSnapshotSaver
             buildResult["interruptedZoneVisitMs"] := interruptedZoneVisitMs
 
             saved := this._runHistory.Save(buildResult)
-            rid := buildResult.Has("runId") ? buildResult["runId"] : ""
+            rid := buildResult.Has("runId") ? buildResult["runId"] : rid
             if (saved && IsObject(this._log))
             {
                 this._log.Info("Run saved to history (" . reason . "): " . rid
@@ -247,6 +267,21 @@ class RunSnapshotSaver
                     : "Saved (" durStr "). Tray menu has Undo (60s)."
                 try TrayTip("SpeedKalandra", msg, "Mute")
                 this._MarkUndoable(rid)
+            }
+
+            ; --- Outcome event ---
+            ; Published exactly once per Save() call that crossed the
+            ; threshold. Completed runs report "saved" with the real
+            ; pbChanged; cancelled runs that crossed the threshold
+            ; report "dnf" (history yes, PB no). If runHistory.Save
+            ; returned false (rare — the repository normally throws),
+            ; we stay silent here: no banner, no false signal of
+            ; success. The TrayTip on the save-failure catch already
+            ; surfaces the problem.
+            if saved
+            {
+                outcome := (reason = "completed") ? "saved" : "dnf"
+                this._PublishOutcome(outcome, runMs, rid, pbChanged)
             }
         }
         catch as ex
@@ -333,6 +368,24 @@ class RunSnapshotSaver
     }
 
     ; ---- Private helpers ----
+
+    ; Publishes Events.RunOutcomeReported when a bus was wired.
+    ; Silent no-op otherwise (narrow tests construct the saver
+    ; without a bus). Wrapped in try because the bus subscriber
+    ; chain shouldn't be able to fail the save — a misbehaving
+    ; widget that throws on RunOutcomeReported shouldn't make the
+    ; run vanish.
+    _PublishOutcome(outcome, durationMs, runId, pbChanged)
+    {
+        if !IsObject(this._bus)
+            return
+        try this._bus.Publish(Events.RunOutcomeReported, Map(
+            "outcome",    outcome,
+            "durationMs", Integer(durationMs),
+            "runId",      String(runId),
+            "pbChanged",  !!pbChanged
+        ))
+    }
 
     _MarkUndoable(runId)
     {

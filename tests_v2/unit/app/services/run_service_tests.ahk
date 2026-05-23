@@ -132,6 +132,11 @@ class RunServiceTests extends TestCase
         "reset_publishes_run_reset_event",
         "reset_event_includes_previous_run_id",
         "reset_when_no_active_run_still_works",
+        "reset_publishes_run_outcome_when_active",
+        "reset_outcome_carries_pre_reset_duration",
+        "reset_outcome_pb_changed_is_always_false",
+        "reset_does_not_publish_outcome_when_idle",
+        "reset_outcome_runs_after_run_reset_in_order",
 
         ; --- Hydrate ---
         "hydrate_throws_on_non_run_state",
@@ -624,6 +629,98 @@ class RunServiceTests extends TestCase
         result := this.svc.ResetRun()
         Assert.True(result, "ResetRun always returns true (idempotent)")
         Assert.Equal(1, capturedEvents.Length)
+    }
+
+    ; ----- RunOutcomeReported on reset -----
+    ; ResetRun on an active run publishes Evt.RunOutcomeReported
+    ; with outcome="reset" so the banner can surface "RESET ·
+    ; NOT SAVED" to the user. The duration is captured BEFORE
+    ; timer.Reset clears it, so the event reflects what the run
+    ; actually was — not the post-reset zero. On idle state the
+    ; event is NOT published, since a reset-of-nothing has no
+    ; user-meaningful outcome.
+
+    reset_publishes_run_outcome_when_active()
+    {
+        this.svc.NewRun()
+        captured := this._CaptureEvents(Events.RunOutcomeReported)
+        this.svc.ResetRun()
+
+        Assert.Equal(1, captured.Length,
+            "Active reset must publish exactly one outcome event")
+        Assert.Equal("reset", captured[1]["outcome"])
+    }
+
+    reset_outcome_carries_pre_reset_duration()
+    {
+        ; The duration on the event is the runMs measured BEFORE
+        ; timer.Reset() clears it. Without this, the banner would
+        ; render "RESET · 00:00" — useless for the speedrunner who
+        ; wants to know how much time they dropped.
+        this.svc.NewRun()
+        this.stubClock.AdvanceMs(12500)
+        captured := this._CaptureEvents(Events.RunOutcomeReported)
+
+        this.svc.ResetRun()
+
+        Assert.Equal(12500, captured[1]["durationMs"],
+            "outcome carries the runMs measured just before reset")
+    }
+
+    reset_outcome_pb_changed_is_always_false()
+    {
+        ; pbChanged is meaningful only for outcome="saved". The
+        ; other three (dnf, too_short, reset) are always false.
+        ; Documents the contract so widgets can rely on the field
+        ; existing on every outcome event.
+        this.svc.NewRun()
+        captured := this._CaptureEvents(Events.RunOutcomeReported)
+        this.svc.ResetRun()
+
+        Assert.False(captured[1]["pbChanged"],
+            "reset outcome must always carry pbChanged=false")
+    }
+
+    reset_does_not_publish_outcome_when_idle()
+    {
+        ; ResetRun on idle state is a defensive no-op (state was
+        ; already empty). No user-meaningful outcome to report —
+        ; surfacing "RESET" when nothing was actually reset would
+        ; be a UI lie. The RunReset lifecycle event still fires
+        ; because subscribers may have idle-state cleanup to do.
+        capturedOutcome := this._CaptureEvents(Events.RunOutcomeReported)
+        capturedReset   := this._CaptureEvents(Events.RunReset)
+
+        this.svc.ResetRun()
+
+        Assert.Equal(0, capturedOutcome.Length,
+            "Idle reset must NOT publish an outcome event")
+        Assert.Equal(1, capturedReset.Length,
+            "Idle reset still publishes the RunReset lifecycle event")
+    }
+
+    reset_outcome_runs_after_run_reset_in_order()
+    {
+        ; Publish order: Evt.RunReset first, then
+        ; Evt.RunOutcomeReported. Subscribers that listen to both
+        ; (rare — the banner only listens to the outcome) will see
+        ; the lifecycle fact before the user-facing summary.
+        ; Pinned because a reordering refactor that publishes
+        ; outcome first would break any future subscriber that
+        ; reads runId from the lifecycle event before clearing
+        ; downstream state on the outcome.
+        this.svc.NewRun()
+        callOrder := []
+        this.bus.Subscribe(Events.RunReset,
+            (data) => callOrder.Push("reset"))
+        this.bus.Subscribe(Events.RunOutcomeReported,
+            (data) => callOrder.Push("outcome"))
+
+        this.svc.ResetRun()
+
+        Assert.Equal(2, callOrder.Length, "both events fired")
+        Assert.Equal("reset",   callOrder[1], "RunReset publishes first")
+        Assert.Equal("outcome", callOrder[2], "RunOutcomeReported publishes second")
     }
 
     ; ============================================================

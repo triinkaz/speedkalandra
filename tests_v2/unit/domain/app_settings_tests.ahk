@@ -40,6 +40,7 @@ class AppSettingsTests extends TestCase
         "defaults_event_tracing_disabled_by_default",
         "defaults_layout_variant_is_classic",
         "defaults_pb_display_mode_is_pb",
+        "defaults_show_outcome_banner_is_true",
         "defaults_auto_finalize_regex_empty",
         "defaults_auto_start_regex_is_wounded_man_line",
 
@@ -64,6 +65,8 @@ class AppSettingsTests extends TestCase
         "from_map_reads_pb_display_mode_avg5",
         "from_map_pb_display_mode_invalid_falls_back_to_pb",
         "from_map_pb_display_mode_accepts_case_variations_as_avg5",
+        "from_map_reads_show_outcome_banner",
+        "from_map_show_outcome_banner_defaults_true_when_missing",
         "from_map_reads_auto_finalize_regex",
         "from_map_reads_auto_start_regex_allowing_empty",
         "from_map_strict_string_treats_empty_as_missing",
@@ -182,6 +185,17 @@ class AppSettingsTests extends TestCase
         ; "avg5" is opt-in via the Display section in Settings.
         ; See PLUS_LAYOUTS_SPEC.md §13.
         Assert.Equal("pb", AppSettings.Defaults().pbDisplayMode)
+    }
+
+    defaults_show_outcome_banner_is_true()
+    {
+        ; Opt-out feature: default true so the "did it save?"
+        ; feedback gap that prompted the banner is closed on a
+        ; fresh install. Speedrunners who find it distracting flip
+        ; the checkbox off; absent that, it's on. Mirrors the
+        ; SettingsRepository default ("1") so a fresh INI and a
+        ; FromMap(empty) land on the same value.
+        Assert.True(AppSettings.Defaults().showOutcomeBanner)
     }
 
     defaults_auto_finalize_regex_empty()
@@ -405,6 +419,35 @@ class AppSettingsTests extends TestCase
             Assert.Equal("avg5", cfg.pbDisplayMode,
                 "Case variation '" variant "' must load as avg5")
         }
+    }
+
+    from_map_reads_show_outcome_banner()
+    {
+        ; Explicit false honored
+        cfg := AppSettings.FromMap(Map("showOutcomeBanner", false))
+        Assert.False(cfg.showOutcomeBanner)
+
+        ; Explicit true honored
+        cfg2 := AppSettings.FromMap(Map("showOutcomeBanner", true))
+        Assert.True(cfg2.showOutcomeBanner)
+
+        ; String coercion (how SettingsRepository delivers the value
+        ; after IniRead returns "1" / "0")
+        cfg3 := AppSettings.FromMap(Map("showOutcomeBanner", "0"))
+        Assert.False(cfg3.showOutcomeBanner)
+
+        cfg4 := AppSettings.FromMap(Map("showOutcomeBanner", "1"))
+        Assert.True(cfg4.showOutcomeBanner)
+    }
+
+    from_map_show_outcome_banner_defaults_true_when_missing()
+    {
+        ; Missing key keeps the AppSettings default (true). Lock-in
+        ; test for the opt-out semantic: a fresh install or an
+        ; older INI that predates the key must NOT silently turn
+        ; the banner off.
+        cfg := AppSettings.FromMap(Map())
+        Assert.True(cfg.showOutcomeBanner)
     }
 
     from_map_reads_auto_finalize_regex()
