@@ -13,9 +13,7 @@
 ;   ResetRun         -> Cmd.ResetRunRequested
 ;   FinalizeRun      -> Cmd.FinalizeRunRequested
 ;   Settings         -> Cmd.OpenSettingsRequested
-;   ToggleOverlay    -> Cmd.ToggleOverlayRequested
-;   ToggleMicroLock  -> Cmd.ToggleMicroLockRequested
-;   ToggleSteveLock  -> Cmd.ToggleSteveLockRequested
+;   CycleLayout      -> Cmd.CycleOverlayLayoutRequested
 ;   PlotRunStats     -> Cmd.OpenRunStatsPlotRequested
 ;
 ; FocusChangingActions (Settings, PlotRunStats) have modifier cleanup
@@ -55,9 +53,10 @@ class HotkeyServiceTests extends TestCase
         "hydrate_replaces_previous_hotkeys",
 
         ; --- ActionToCommand mapping ---
-        "action_to_command_includes_all_9_actions",
+        "action_to_command_includes_all_7_actions",
         "action_to_command_start_pause_maps_to_timer_toggle",
         "action_to_command_new_run_maps_to_new_run_requested",
+        "action_to_command_cycle_layout_maps_to_cycle_command",
 
         ; --- FocusChangingActions ---
         "focus_changing_actions_includes_settings",
@@ -88,7 +87,7 @@ class HotkeyServiceTests extends TestCase
         "trigger_action_with_known_returns_true",
         "trigger_action_event_includes_source_hotkey",
         "trigger_action_event_includes_action_name",
-        "trigger_action_all_9_actions_publish_correctly"
+        "trigger_action_all_7_actions_publish_correctly"
     ]
 
     ; ============================================================
@@ -104,16 +103,18 @@ class HotkeyServiceTests extends TestCase
 
     _StandardHotkeyMap()
     {
+        ; Mirrors the seven actions registered after the layout-control
+        ; collapse: the trio of ToggleOverlay / ToggleMicroLock /
+        ; ToggleSteveLock became the single CycleLayout. Used by Start
+        ; tests that need a full, realistic Hydrate payload.
         return Map(
-            "StartPause",      "^!t",
-            "NewRun",          "^!n",
-            "ResetRun",        "^!r",
-            "FinalizeRun",     "^!f",
-            "Settings",        "^!s",
-            "ToggleOverlay",   "^!o",
-            "ToggleMicroLock", "^!m",
-            "ToggleSteveLock", "^!w",
-            "PlotRunStats",    "^!p"
+            "StartPause",   "^!t",
+            "NewRun",       "^!n",
+            "ResetRun",     "^!r",
+            "FinalizeRun",  "^!f",
+            "Settings",     "^!s",
+            "CycleLayout",  "^!o",
+            "PlotRunStats", "^!p"
         )
     }
 
@@ -179,9 +180,13 @@ class HotkeyServiceTests extends TestCase
     ; ActionToCommand mapping
     ; ============================================================
 
-    action_to_command_includes_all_9_actions()
+    action_to_command_includes_all_7_actions()
     {
-        Assert.Equal(9, HotkeyService.ActionToCommand.Count)
+        ; Down from nine: the trio of ToggleOverlay / ToggleMicroLock
+        ; / ToggleSteveLock collapsed into the single CycleLayout.
+        ; This count pins the new shape so a regression that drops or
+        ; double-adds an action surfaces here, not at runtime.
+        Assert.Equal(7, HotkeyService.ActionToCommand.Count)
     }
 
     action_to_command_start_pause_maps_to_timer_toggle()
@@ -194,6 +199,16 @@ class HotkeyServiceTests extends TestCase
     {
         Assert.Equal(Commands.NewRunRequested,
             HotkeyService.ActionToCommand["NewRun"])
+    }
+
+    action_to_command_cycle_layout_maps_to_cycle_command()
+    {
+        ; The new single layout-control action must route to the
+        ; cycle command published to OverlayModeService. Locking the
+        ; wiring here so a future rename doesn't silently break the
+        ; only user-facing layout hotkey.
+        Assert.Equal(Commands.CycleOverlayLayoutRequested,
+            HotkeyService.ActionToCommand["CycleLayout"])
     }
 
     ; ============================================================
@@ -224,7 +239,7 @@ class HotkeyServiceTests extends TestCase
     {
         this.svc.Hydrate(this._StandardHotkeyMap())
         this.svc.Start()
-        Assert.Equal(9, this.svc.Count())
+        Assert.Equal(7, this.svc.Count())
     }
 
     start_skips_unknown_actions()
@@ -364,19 +379,20 @@ class HotkeyServiceTests extends TestCase
         Assert.Equal("NewRun", capturedEvents[1]["action"])
     }
 
-    trigger_action_all_9_actions_publish_correctly()
+    trigger_action_all_7_actions_publish_correctly()
     {
-        ; Verifies that each action publishes to the correct command
+        ; Verifies that each of the seven actions registered after
+        ; the layout-control collapse publishes to the correct
+        ; command. The previous trio of ToggleOverlay / ToggleMicroLock
+        ; / ToggleSteveLock cases dropped out with the collapse.
         cases := [
-            ["StartPause",      Commands.TimerToggleRequested],
-            ["NewRun",          Commands.NewRunRequested],
-            ["ResetRun",        Commands.ResetRunRequested],
-            ["FinalizeRun",     Commands.FinalizeRunRequested],
-            ["Settings",        Commands.OpenSettingsRequested],
-            ["ToggleOverlay",   Commands.ToggleOverlayRequested],
-            ["ToggleMicroLock", Commands.ToggleMicroLockRequested],
-            ["ToggleSteveLock", Commands.ToggleSteveLockRequested],
-            ["PlotRunStats",    Commands.OpenRunStatsPlotRequested]
+            ["StartPause",   Commands.TimerToggleRequested],
+            ["NewRun",       Commands.NewRunRequested],
+            ["ResetRun",     Commands.ResetRunRequested],
+            ["FinalizeRun",  Commands.FinalizeRunRequested],
+            ["Settings",     Commands.OpenSettingsRequested],
+            ["CycleLayout",  Commands.CycleOverlayLayoutRequested],
+            ["PlotRunStats", Commands.OpenRunStatsPlotRequested]
         ]
         for _, pair in cases
         {

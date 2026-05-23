@@ -269,10 +269,15 @@ class AppSettings
 
     static _DefaultHotkeys()
     {
+        ; Default of CycleLayout reuses ^F8 (the slot that ToggleSteveLock
+        ; used to occupy by default). Existing INIs that had ToggleSteveLock
+        ; or ToggleMicroLock bound get their value migrated to CycleLayout
+        ; in SettingsRepository._LoadHotkeys, so a returning user keeps
+        ; whatever bind they were already pressing. ToggleOverlay was
+        ; removed entirely — see Commands.CycleOverlayLayoutRequested for
+        ; the rationale.
         return Map(
-            "ToggleOverlay",   "F8",
-            "ToggleMicroLock", "^F9",
-            "ToggleSteveLock", "^F8",
+            "CycleLayout",     "^F8",
             "StartPause",      "^3",
             "NewRun",          "^!n",
             "ResetRun",        "^5",

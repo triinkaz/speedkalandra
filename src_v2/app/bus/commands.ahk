@@ -28,9 +28,26 @@ class Commands
     static OpenRunStatsPlotRequested := "Cmd.OpenRunStatsPlotRequested"
     static OpenRunHistoryRequested   := "Cmd.OpenRunHistoryRequested"
     static OpenDeathStatsRequested   := "Cmd.OpenDeathStatsRequested"
-    static ToggleOverlayRequested    := "Cmd.ToggleOverlayRequested"
-    static ToggleMicroLockRequested  := "Cmd.ToggleMicroLockRequested"
-    static ToggleSteveLockRequested  := "Cmd.ToggleSteveLockRequested"
+
+    ; Single user-facing layout control: published by the
+    ; CycleLayout hotkey (HotkeyService). Cycles the overlay mode
+    ; STEVE -> COMPACT -> MICRO -> STEVE; handled by
+    ; OverlayModeService.CycleLayout.
+    ;
+    ; Replaced the earlier ToggleMicroLockRequested /
+    ; ToggleSteveLockRequested / ToggleOverlayRequested trio.
+    ; The two Toggle*Lock commands gave the user two separate
+    ; hotkeys for the same conceptual action ("pick a layout");
+    ; ToggleOverlay (hide/show the overlay) was redundant with
+    ; the hover-dim that already drops opacity to ~10% when the
+    ; mouse passes over the overlay. Old INI binds on the Toggle*
+    ; actions are migrated to CycleLayout in SettingsRepository
+    ; ._LoadHotkeys so existing users don't lose their muscle
+    ; memory after the upgrade.
+    static CycleOverlayLayoutRequested := "Cmd.CycleOverlayLayoutRequested"
+
+    ; Programmatic API — kept for direct mode targeting from code
+    ; (tests, hydrate paths). Not bound to any default hotkey.
     static SetOverlayModeRequested   := "Cmd.SetOverlayModeRequested"
 
     ; --- Personal Bests ---

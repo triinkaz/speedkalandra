@@ -88,6 +88,15 @@ class SettingsRepositoryTests extends TestCase
         "save_load_preserves_show_outcome_banner",
         "load_show_outcome_banner_defaults_true_when_key_missing",
         "save_load_preserves_hotkeys",
+
+        ; --- Hotkey migration (ToggleSteveLock / ToggleMicroLock / ToggleOverlay) ---
+        "load_migrates_toggle_steve_lock_bind_to_cycle_layout",
+        "load_migrates_toggle_micro_lock_bind_when_no_steve_bind",
+        "load_prefers_steve_lock_over_micro_lock_in_migration",
+        "load_keeps_explicit_cycle_layout_over_legacy_binds",
+        "load_ignores_toggle_overlay_silently",
+        "load_ignores_empty_legacy_bind_in_migration",
+        "save_after_load_does_not_resurrect_legacy_keys",
         "save_load_preserves_window_micro_locked",
         "save_load_preserves_window_steve_locked",
         "save_load_preserves_window_both_locks_independently",
@@ -468,6 +477,156 @@ class SettingsRepositoryTests extends TestCase
         loaded := repo.Load()
         Assert.Equal("F1", loaded.hotkeys["pause"])
         Assert.Equal("F2", loaded.hotkeys["finalize"])
+    }
+
+    ; ============================================================
+    ; Hotkey migration: ToggleSteveLock / ToggleMicroLock /
+    ; ToggleOverlay -> CycleLayout
+    ;
+    ; The three legacy actions collapsed into the single user-
+    ; facing CycleLayout. Existing INIs need to keep working
+    ; without forcing the user to rebind — _LoadHotkeys reads
+    ; the legacy keys and routes the appropriate one onto
+    ; CycleLayout. Save then writes only CycleLayout back, so the
+    ; legacy keys disappear from disk on the next Save (covered
+    ; by save_after_load_does_not_resurrect_legacy_keys below).
+    ; ============================================================
+
+    load_migrates_toggle_steve_lock_bind_to_cycle_layout()
+    {
+        ; A returning user with ToggleSteveLock=^F12 in their INI
+        ; must see CycleLayout bound to ^F12 after Load — their
+        ; muscle memory survives the upgrade.
+        mainIni := IniFile(Fixtures.TempPath("ini"))
+        mainIni.Write("^F12", "Hotkeys", "ToggleSteveLock")
+
+        repo := SettingsRepository(mainIni)
+        loaded := repo.Load()
+
+        Assert.Equal("^F12", loaded.hotkeys["CycleLayout"],
+            "ToggleSteveLock bind migrated to CycleLayout")
+        Assert.False(loaded.hotkeys.Has("ToggleSteveLock"),
+            "Legacy ToggleSteveLock entry must not survive in cfg.hotkeys")
+    }
+
+    load_migrates_toggle_micro_lock_bind_when_no_steve_bind()
+    {
+        ; Steve absent, Micro present — Micro provides the migrated
+        ; bind. Covers the case where the user only ever used the
+        ; Micro toggle.
+        mainIni := IniFile(Fixtures.TempPath("ini"))
+        mainIni.Write("^F11", "Hotkeys", "ToggleMicroLock")
+
+        repo := SettingsRepository(mainIni)
+        loaded := repo.Load()
+
+        Assert.Equal("^F11", loaded.hotkeys["CycleLayout"],
+            "ToggleMicroLock bind migrated to CycleLayout when Steve absent")
+        Assert.False(loaded.hotkeys.Has("ToggleMicroLock"))
+    }
+
+    load_prefers_steve_lock_over_micro_lock_in_migration()
+    {
+        ; Both legacy binds present — Steve wins. Matches the same
+        ; precedence the Hydrate path applies (Steve over Micro)
+        ; when both window locks are true in the INI.
+        mainIni := IniFile(Fixtures.TempPath("ini"))
+        mainIni.Write("^F10", "Hotkeys", "ToggleMicroLock")
+        mainIni.Write("^F8",  "Hotkeys", "ToggleSteveLock")
+
+        repo := SettingsRepository(mainIni)
+        loaded := repo.Load()
+
+        Assert.Equal("^F8", loaded.hotkeys["CycleLayout"],
+            "Steve takes precedence over Micro in migration")
+    }
+
+    load_keeps_explicit_cycle_layout_over_legacy_binds()
+    {
+        ; User who already migrated (or wrote CycleLayout by hand)
+        ; keeps that bind even if stale Toggle* keys are still
+        ; sitting in the INI. The explicit CycleLayout entry wins.
+        mainIni := IniFile(Fixtures.TempPath("ini"))
+        mainIni.Write("^F9",  "Hotkeys", "CycleLayout")
+        mainIni.Write("^F8",  "Hotkeys", "ToggleSteveLock")
+        mainIni.Write("^F10", "Hotkeys", "ToggleMicroLock")
+
+        repo := SettingsRepository(mainIni)
+        loaded := repo.Load()
+
+        Assert.Equal("^F9", loaded.hotkeys["CycleLayout"],
+            "Explicit CycleLayout bind wins over legacy migration sources")
+    }
+
+    load_ignores_toggle_overlay_silently()
+    {
+        ; ToggleOverlay was removed entirely — it never migrates
+        ; anywhere and must NOT pollute cfg.hotkeys. Verifies the
+        ; "discarded silently" branch in _LoadHotkeys.
+        mainIni := IniFile(Fixtures.TempPath("ini"))
+        mainIni.Write("F8", "Hotkeys", "ToggleOverlay")
+
+        repo := SettingsRepository(mainIni)
+        loaded := repo.Load()
+
+        Assert.False(loaded.hotkeys.Has("ToggleOverlay"),
+            "ToggleOverlay must NOT be present in cfg.hotkeys after Load")
+        ; And it must NOT have leaked onto CycleLayout — only the
+        ; explicit lock toggles do that.
+        Assert.NotEqual("F8", loaded.hotkeys["CycleLayout"],
+            "ToggleOverlay must NOT silently take over CycleLayout")
+    }
+
+    load_ignores_empty_legacy_bind_in_migration()
+    {
+        ; A legacy key bound to the empty string is "effectively
+        ; disabled" and shouldn't replace the CycleLayout default.
+        ; Without this guard, an upgrade from a user who had cleared
+        ; both lock toggles in Settings would silently lose the
+        ; default ^F8 bind.
+        mainIni := IniFile(Fixtures.TempPath("ini"))
+        mainIni.Write("", "Hotkeys", "ToggleSteveLock")
+        mainIni.Write("", "Hotkeys", "ToggleMicroLock")
+
+        repo := SettingsRepository(mainIni)
+        loaded := repo.Load()
+
+        ; CycleLayout falls back to the AppSettings default (^F8).
+        Assert.Equal("^F8", loaded.hotkeys["CycleLayout"],
+            "Empty legacy binds must NOT shadow the CycleLayout default")
+    }
+
+    save_after_load_does_not_resurrect_legacy_keys()
+    {
+        ; Full migration round-trip: Load picks up a legacy bind,
+        ; Save writes only the new key set, the next Load comes back
+        ; clean. Locks the entire migration cycle so the legacy keys
+        ; can't sneak back in on disk.
+        path := Fixtures.TempPath("ini")
+        mainIni := IniFile(path)
+        mainIni.Write("^F12", "Hotkeys", "ToggleSteveLock")
+        mainIni.Write("^F11", "Hotkeys", "ToggleMicroLock")
+        mainIni.Write("F8",   "Hotkeys", "ToggleOverlay")
+
+        repo := SettingsRepository(mainIni)
+        loaded := repo.Load()
+
+        ; Sanity: migration took.
+        Assert.Equal("^F12", loaded.hotkeys["CycleLayout"])
+
+        ; Save the migrated cfg back.
+        repo.Save(loaded)
+
+        ; Re-read the raw INI: legacy keys must be gone.
+        verifyIni := IniFile(path)
+        Assert.Equal("", verifyIni.Read("Hotkeys", "ToggleSteveLock"),
+            "ToggleSteveLock must NOT survive on disk after a Save")
+        Assert.Equal("", verifyIni.Read("Hotkeys", "ToggleMicroLock"),
+            "ToggleMicroLock must NOT survive on disk after a Save")
+        Assert.Equal("", verifyIni.Read("Hotkeys", "ToggleOverlay"),
+            "ToggleOverlay must NOT survive on disk after a Save")
+        Assert.Equal("^F12", verifyIni.Read("Hotkeys", "CycleLayout"),
+            "CycleLayout with the migrated bind must survive on disk")
     }
 
     save_load_preserves_window_micro_locked()

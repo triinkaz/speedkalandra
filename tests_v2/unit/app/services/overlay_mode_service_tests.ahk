@@ -3,11 +3,12 @@
 ; ============================================================
 ;
 ; State machine with 3 modes: COMPACT (default), MICRO, STEVE.
-; Locked modes (microLocked/steveLocked) are mutually exclusive.
+; Single user-facing layout action (CycleLayout) walks STEVE ->
+; COMPACT -> MICRO -> STEVE. SetMode stays as a programmatic API.
 ;
-; Subscribes to 3 Commands. Publishes OverlayModeChanged on
-; transitions. Hydrate reads window.{microLocked,steveLocked} from
-; AppSettings.
+; Hydrate reads window.{microLocked,steveLocked} from AppSettings;
+; mode flags stay mutually exclusive at runtime so the persisted
+; "what was the last layout" is consistent across reloads.
 
 class OverlayModeServiceTests extends TestCase
 {
@@ -33,7 +34,7 @@ class OverlayModeServiceTests extends TestCase
         ; --- Constructor ---
         "constructor_throws_when_bus_not_event_bus",
         "constructor_throws_when_cfg_not_app_settings",
-        "constructor_subscribes_to_3_commands",
+        "constructor_subscribes_to_2_commands",
         "constructor_default_mode_is_compact",
         "constructor_no_locks_active",
 
@@ -44,23 +45,19 @@ class OverlayModeServiceTests extends TestCase
         "hydrate_no_locks_sets_compact_mode",
         "hydrate_with_missing_window_settings_defaults_to_compact",
 
-        ; --- ToggleMicroLock ---
-        "toggle_micro_lock_from_compact_activates_micro",
-        "toggle_micro_lock_from_micro_back_to_compact",
-        "toggle_micro_lock_clears_steve_when_active",
-        "toggle_micro_lock_returns_true",
-        "toggle_micro_lock_publishes_overlay_mode_changed",
-        "toggle_micro_lock_syncs_to_settings_window",
+        ; --- CycleLayout (STEVE -> COMPACT -> MICRO -> STEVE) ---
+        "cycle_from_compact_goes_to_micro",
+        "cycle_from_micro_goes_to_steve",
+        "cycle_from_steve_goes_to_compact",
+        "cycle_three_times_returns_to_starting_mode",
+        "cycle_returns_true",
+        "cycle_publishes_overlay_mode_changed",
+        "cycle_syncs_to_settings_window_steve_locked",
+        "cycle_syncs_to_settings_window_micro_locked",
+        "cycle_syncs_to_settings_window_no_locks_on_compact",
+        "cycle_keeps_lock_flags_mutually_exclusive",
 
-        ; --- ToggleSteveLock ---
-        "toggle_steve_lock_from_compact_activates_steve",
-        "toggle_steve_lock_from_steve_back_to_compact",
-        "toggle_steve_lock_clears_micro_when_active",
-        "toggle_steve_lock_returns_true",
-        "toggle_steve_lock_publishes_overlay_mode_changed",
-        "toggle_steve_lock_syncs_to_settings_window",
-
-        ; --- SetMode ---
+        ; --- SetMode (programmatic API) ---
         "set_mode_throws_on_invalid_target",
         "set_mode_to_micro_sets_micro_locked",
         "set_mode_to_steve_sets_steve_locked",
@@ -70,8 +67,8 @@ class OverlayModeServiceTests extends TestCase
         "set_mode_does_not_publish_when_idempotent",
 
         ; --- Commands subscribers ---
-        "toggle_micro_lock_requested_triggers_toggle",
-        "toggle_steve_lock_requested_triggers_toggle",
+        "cycle_overlay_layout_requested_triggers_cycle",
+        "cycle_overlay_layout_requested_publishes_event",
         "set_overlay_mode_requested_with_mode_data_triggers_set_mode",
         "set_overlay_mode_requested_ignores_non_object_data",
         "set_overlay_mode_requested_ignores_missing_mode_key",
@@ -112,10 +109,12 @@ class OverlayModeServiceTests extends TestCase
         Assert.Throws(TypeError, () => OverlayModeService(b, "not cfg"))
     }
 
-    constructor_subscribes_to_3_commands()
+    constructor_subscribes_to_2_commands()
     {
-        Assert.Equal(1, this.bus.Subscribers(Commands.ToggleMicroLockRequested))
-        Assert.Equal(1, this.bus.Subscribers(Commands.ToggleSteveLockRequested))
+        ; Cycle (single user-facing action) + SetMode (programmatic).
+        ; Down from three after the Toggle* trio was collapsed into
+        ; CycleLayout.
+        Assert.Equal(1, this.bus.Subscribers(Commands.CycleOverlayLayoutRequested))
         Assert.Equal(1, this.bus.Subscribers(Commands.SetOverlayModeRequested))
     }
 
@@ -153,7 +152,9 @@ class OverlayModeServiceTests extends TestCase
 
     hydrate_steve_takes_precedence_over_micro()
     {
-        ; Defensive against conflicting manual edit in the INI
+        ; Defensive against a conflicting manual edit in the INI \u2014
+        ; mode flags are mutually exclusive at runtime so the
+        ; persisted state can never be both.
         this.cfg.window.microLocked := true
         this.cfg.window.steveLocked := true
         this.svc.Hydrate()
@@ -180,100 +181,114 @@ class OverlayModeServiceTests extends TestCase
     }
 
     ; ============================================================
-    ; ToggleMicroLock
+    ; CycleLayout
+    ;
+    ; The cycle order is fixed: STEVE -> COMPACT -> MICRO -> STEVE.
+    ; Picked to walk from densest to lightest layout (Steve = full
+    ; SteveTheHappyWhale layout; Micro = minimal bar) so a user
+    ; cycling through finds the smaller layouts via successive
+    ; presses rather than having to remember individual hotkeys.
     ; ============================================================
 
-    toggle_micro_lock_from_compact_activates_micro()
+    cycle_from_compact_goes_to_micro()
     {
-        this.svc.ToggleMicroLock()
+        ; Default mode is COMPACT \u2014 next stop is MICRO.
+        this.svc.CycleLayout()
         Assert.Equal(OverlayModes.MICRO, this.svc.GetMode())
         Assert.True(this.svc.IsMicroLocked())
-    }
-
-    toggle_micro_lock_from_micro_back_to_compact()
-    {
-        this.svc.ToggleMicroLock()   ; -> micro
-        this.svc.ToggleMicroLock()   ; -> compact
-        Assert.Equal(OverlayModes.COMPACT, this.svc.GetMode())
-        Assert.False(this.svc.IsMicroLocked())
-    }
-
-    toggle_micro_lock_clears_steve_when_active()
-    {
-        this.svc.SetMode(OverlayModes.STEVE)
-        this.svc.ToggleMicroLock()
-        Assert.True(this.svc.IsMicroLocked())
-        Assert.False(this.svc.IsSteveLocked(),
-            "Steve deactivated when activating micro (mutually exclusive)")
-    }
-
-    toggle_micro_lock_returns_true()
-    {
-        Assert.True(this.svc.ToggleMicroLock())
-    }
-
-    toggle_micro_lock_publishes_overlay_mode_changed()
-    {
-        capturedEvents := this._CaptureEvents(Events.OverlayModeChanged)
-        this.svc.ToggleMicroLock()
-        Assert.Equal(1, capturedEvents.Length)
-        Assert.Equal(OverlayModes.MICRO, capturedEvents[1]["mode"])
-    }
-
-    toggle_micro_lock_syncs_to_settings_window()
-    {
-        this.svc.ToggleMicroLock()
-        Assert.True(this.cfg.window.microLocked,
-            "Flag written to settings.window to persist across runs")
-    }
-
-    ; ============================================================
-    ; ToggleSteveLock
-    ; ============================================================
-
-    toggle_steve_lock_from_compact_activates_steve()
-    {
-        this.svc.ToggleSteveLock()
-        Assert.Equal(OverlayModes.STEVE, this.svc.GetMode())
-        Assert.True(this.svc.IsSteveLocked())
-    }
-
-    toggle_steve_lock_from_steve_back_to_compact()
-    {
-        this.svc.ToggleSteveLock()
-        this.svc.ToggleSteveLock()
-        Assert.Equal(OverlayModes.COMPACT, this.svc.GetMode())
         Assert.False(this.svc.IsSteveLocked())
     }
 
-    toggle_steve_lock_clears_micro_when_active()
+    cycle_from_micro_goes_to_steve()
     {
         this.svc.SetMode(OverlayModes.MICRO)
-        this.svc.ToggleSteveLock()
+        this.svc.CycleLayout()
+        Assert.Equal(OverlayModes.STEVE, this.svc.GetMode())
         Assert.True(this.svc.IsSteveLocked())
         Assert.False(this.svc.IsMicroLocked())
     }
 
-    toggle_steve_lock_returns_true()
+    cycle_from_steve_goes_to_compact()
     {
-        Assert.True(this.svc.ToggleSteveLock())
+        this.svc.SetMode(OverlayModes.STEVE)
+        this.svc.CycleLayout()
+        Assert.Equal(OverlayModes.COMPACT, this.svc.GetMode())
+        Assert.False(this.svc.IsSteveLocked())
+        Assert.False(this.svc.IsMicroLocked())
     }
 
-    toggle_steve_lock_publishes_overlay_mode_changed()
+    cycle_three_times_returns_to_starting_mode()
+    {
+        ; The cycle is a closed loop of length 3. Three presses from
+        ; any starting mode land back on the same mode.
+        this.svc.SetMode(OverlayModes.STEVE)
+        this.svc.CycleLayout()    ; -> COMPACT
+        this.svc.CycleLayout()    ; -> MICRO
+        this.svc.CycleLayout()    ; -> STEVE
+        Assert.Equal(OverlayModes.STEVE, this.svc.GetMode())
+    }
+
+    cycle_returns_true()
+    {
+        ; Cycle always changes mode (one of three values), so always
+        ; returns true. Symmetric with SetMode for non-idempotent
+        ; transitions.
+        Assert.True(this.svc.CycleLayout())
+    }
+
+    cycle_publishes_overlay_mode_changed()
     {
         capturedEvents := this._CaptureEvents(Events.OverlayModeChanged)
-        this.svc.ToggleSteveLock()
+        this.svc.CycleLayout()
         Assert.Equal(1, capturedEvents.Length)
+        Assert.Equal(OverlayModes.MICRO, capturedEvents[1]["mode"])
+        Assert.Equal(OverlayModes.COMPACT, capturedEvents[1]["prevMode"])
     }
 
-    toggle_steve_lock_syncs_to_settings_window()
+    cycle_syncs_to_settings_window_steve_locked()
     {
-        this.svc.ToggleSteveLock()
-        Assert.True(this.cfg.window.steveLocked)
+        ; Land on STEVE via the cycle (MICRO -> STEVE) and check
+        ; the persistence-bound flag flipped accordingly.
+        this.svc.SetMode(OverlayModes.MICRO)
+        this.svc.CycleLayout()
+        Assert.True(this.cfg.window.steveLocked,
+            "STEVE lock written to settings.window")
+        Assert.False(this.cfg.window.microLocked,
+            "MICRO lock cleared when leaving MICRO mode")
+    }
+
+    cycle_syncs_to_settings_window_micro_locked()
+    {
+        this.svc.CycleLayout()    ; COMPACT -> MICRO
+        Assert.True(this.cfg.window.microLocked)
+        Assert.False(this.cfg.window.steveLocked)
+    }
+
+    cycle_syncs_to_settings_window_no_locks_on_compact()
+    {
+        ; Cycle from STEVE lands on COMPACT \u2014 both lock flags clear.
+        this.svc.SetMode(OverlayModes.STEVE)
+        this.svc.CycleLayout()
+        Assert.False(this.cfg.window.steveLocked)
+        Assert.False(this.cfg.window.microLocked)
+    }
+
+    cycle_keeps_lock_flags_mutually_exclusive()
+    {
+        ; Walk the whole cycle and assert that at every step at most
+        ; one lock flag is set. This is the invariant that the rest
+        ; of the system (Hydrate path, AppSettings.window persist)
+        ; depends on.
+        for _, _ in [1, 2, 3, 4, 5]
+        {
+            this.svc.CycleLayout()
+            both := this.svc.IsMicroLocked() && this.svc.IsSteveLocked()
+            Assert.False(both, "lock flags must remain mutually exclusive at every step")
+        }
     }
 
     ; ============================================================
-    ; SetMode
+    ; SetMode (programmatic API)
     ; ============================================================
 
     set_mode_throws_on_invalid_target()
@@ -330,16 +345,24 @@ class OverlayModeServiceTests extends TestCase
     ; Commands subscribers
     ; ============================================================
 
-    toggle_micro_lock_requested_triggers_toggle()
+    cycle_overlay_layout_requested_triggers_cycle()
     {
-        this.bus.Publish(Commands.ToggleMicroLockRequested, Map())
+        ; Default mode COMPACT \u2014 publishing the command moves it
+        ; to MICRO (next step in the STEVE -> COMPACT -> MICRO loop).
+        this.bus.Publish(Commands.CycleOverlayLayoutRequested, Map())
+        Assert.Equal(OverlayModes.MICRO, this.svc.GetMode())
         Assert.True(this.svc.IsMicroLocked())
     }
 
-    toggle_steve_lock_requested_triggers_toggle()
+    cycle_overlay_layout_requested_publishes_event()
     {
-        this.bus.Publish(Commands.ToggleSteveLockRequested, Map())
-        Assert.True(this.svc.IsSteveLocked())
+        ; End-to-end: the command handler routes through CycleLayout,
+        ; which in turn publishes Evt.OverlayModeChanged. Subscribers
+        ; that listen only to the event (not the command) still see
+        ; the transition.
+        captured := this._CaptureEvents(Events.OverlayModeChanged)
+        this.bus.Publish(Commands.CycleOverlayLayoutRequested, Map())
+        Assert.Equal(1, captured.Length)
     }
 
     set_overlay_mode_requested_with_mode_data_triggers_set_mode()
@@ -367,15 +390,19 @@ class OverlayModeServiceTests extends TestCase
     mode_changed_event_includes_prev_mode()
     {
         capturedEvents := this._CaptureEvents(Events.OverlayModeChanged)
-        this.svc.ToggleMicroLock()
+        this.svc.CycleLayout()
         Assert.Equal(OverlayModes.COMPACT, capturedEvents[1]["prevMode"])
         Assert.Equal(OverlayModes.MICRO,   capturedEvents[1]["mode"])
     }
 
     mode_changed_event_includes_locked_flags()
     {
+        ; The two lock flags survive in the payload because
+        ; downstream subscribers (e.g. AppSettings.window persist)
+        ; still consume them. Payload shape pinned to avoid silent
+        ; field drops in a future refactor.
         capturedEvents := this._CaptureEvents(Events.OverlayModeChanged)
-        this.svc.ToggleMicroLock()
+        this.svc.CycleLayout()    ; COMPACT -> MICRO
         Assert.True(capturedEvents[1]["locked"], "micro lock flag in payload")
         Assert.False(capturedEvents[1]["steveLocked"], "steve lock flag in payload")
     }
@@ -387,8 +414,7 @@ class OverlayModeServiceTests extends TestCase
     dispose_unsubscribes_all_commands()
     {
         this.svc.Dispose()
-        Assert.Equal(0, this.bus.Subscribers(Commands.ToggleMicroLockRequested))
-        Assert.Equal(0, this.bus.Subscribers(Commands.ToggleSteveLockRequested))
+        Assert.Equal(0, this.bus.Subscribers(Commands.CycleOverlayLayoutRequested))
         Assert.Equal(0, this.bus.Subscribers(Commands.SetOverlayModeRequested))
     }
 
@@ -396,7 +422,7 @@ class OverlayModeServiceTests extends TestCase
     {
         this.svc.Dispose()
         this.svc.Dispose()
-        Assert.Equal(0, this.bus.Subscribers(Commands.ToggleMicroLockRequested))
+        Assert.Equal(0, this.bus.Subscribers(Commands.CycleOverlayLayoutRequested))
     }
 }
 

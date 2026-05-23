@@ -766,32 +766,6 @@ class SpeedKalandraApp
         try this._persistenceTrayIndicator.Dispose()
     }
 
-    ToggleOverlay()
-    {
-        mode := this.overlayMode.GetMode()
-        if (mode = OverlayModes.MICRO)
-        {
-            if this.microWidget.IsVisible()
-                this.microWidget.Hide()
-            else
-                this.microWidget.Show()
-        }
-        else if (mode = OverlayModes.STEVE)
-        {
-            if this.steveWidget.IsVisible()
-                this.steveWidget.Hide()
-            else
-                this.steveWidget.Show()
-        }
-        else
-        {
-            if this.compactWidget.IsVisible()
-                this.compactWidget.Hide()
-            else
-                this.compactWidget.Show()
-        }
-    }
-
     HandleTimerToggle()
     {
         if this.runService.IsActive()
@@ -802,9 +776,6 @@ class SpeedKalandraApp
 
     _WireEventHandlers()
     {
-        this.bus.Subscribe(Commands.ToggleOverlayRequested,
-            (data) => this.ToggleOverlay())
-
         this.bus.Subscribe(Commands.TimerToggleRequested,
             (data) => this.HandleTimerToggle())
 

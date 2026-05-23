@@ -8,9 +8,7 @@
 ;   ResetRun         -> Cmd.ResetRunRequested
 ;   FinalizeRun      -> Cmd.FinalizeRunRequested
 ;   Settings         -> Cmd.OpenSettingsRequested
-;   ToggleOverlay    -> Cmd.ToggleOverlayRequested
-;   ToggleMicroLock  -> Cmd.ToggleMicroLockRequested
-;   ToggleSteveLock  -> Cmd.ToggleSteveLockRequested
+;   CycleLayout      -> Cmd.CycleOverlayLayoutRequested
 ;   PlotRunStats     -> Cmd.OpenRunStatsPlotRequested
 ;
 ; The authoritative list is `HotkeyService.ActionToCommand` below —
@@ -35,9 +33,7 @@ class HotkeyService
         "ResetRun",        Commands.ResetRunRequested,
         "FinalizeRun",     Commands.FinalizeRunRequested,
         "Settings",        Commands.OpenSettingsRequested,
-        "ToggleOverlay",   Commands.ToggleOverlayRequested,
-        "ToggleMicroLock", Commands.ToggleMicroLockRequested,
-        "ToggleSteveLock", Commands.ToggleSteveLockRequested,
+        "CycleLayout",     Commands.CycleOverlayLayoutRequested,
         "PlotRunStats",    Commands.OpenRunStatsPlotRequested
     )
 

@@ -31,7 +31,7 @@ class AppSettingsTests extends TestCase
         "defaults_has_unknown_game_patch",
         "defaults_window_is_window_state_instance",
         "defaults_overlay_is_overlay_layout_instance",
-        "defaults_hotkeys_includes_nine_actions",
+        "defaults_hotkeys_includes_seven_actions",
         "defaults_vendor_regexes_are_three_empty_strings",
         "defaults_loading_visual_is_enabled",
         "defaults_auto_pause_on_focus_is_true",
@@ -116,19 +116,34 @@ class AppSettingsTests extends TestCase
         Assert.IsType(OverlayLayout, AppSettings.Defaults().overlay)
     }
 
-    defaults_hotkeys_includes_nine_actions()
+    defaults_hotkeys_includes_seven_actions()
     {
+        ; Down from nine: the ToggleOverlay / ToggleMicroLock /
+        ; ToggleSteveLock trio was collapsed into the single
+        ; CycleLayout action (see Commands.CycleOverlayLayoutRequested).
+        ; Existing INIs with the old keys are migrated by
+        ; SettingsRepository._LoadHotkeys; this test just locks the
+        ; in-memory default count + presence of the new key.
         cfg := AppSettings.Defaults()
-        Assert.Equal(9, cfg.hotkeys.Count, "9 actions registered by default")
+        Assert.Equal(7, cfg.hotkeys.Count, "7 actions registered by default")
 
-        ; Sanity check on some better-known ones
-        Assert.True(cfg.hotkeys.Has("ToggleOverlay"))
+        ; Sanity check on a few entries — the unified cycle, a
+        ; lifecycle action, and the most-used dialog.
+        Assert.True(cfg.hotkeys.Has("CycleLayout"))
         Assert.True(cfg.hotkeys.Has("NewRun"))
         Assert.True(cfg.hotkeys.Has("Settings"))
 
-        Assert.Equal("F8",   cfg.hotkeys["ToggleOverlay"])
-        Assert.Equal("^!n",  cfg.hotkeys["NewRun"])
-        Assert.Equal("^!s",  cfg.hotkeys["Settings"])
+        Assert.Equal("^F8", cfg.hotkeys["CycleLayout"])
+        Assert.Equal("^!n", cfg.hotkeys["NewRun"])
+        Assert.Equal("^!s", cfg.hotkeys["Settings"])
+
+        ; Removed actions must NOT be present — the cycle replaced
+        ; them and ToggleOverlay was dropped entirely. Locking the
+        ; absence so a future refactor that re-adds them by accident
+        ; surfaces here.
+        Assert.False(cfg.hotkeys.Has("ToggleOverlay"))
+        Assert.False(cfg.hotkeys.Has("ToggleMicroLock"))
+        Assert.False(cfg.hotkeys.Has("ToggleSteveLock"))
     }
 
     defaults_vendor_regexes_are_three_empty_strings()
@@ -228,7 +243,7 @@ class AppSettingsTests extends TestCase
         cfg := AppSettings.FromMap(Map())
         ; Should be identical to Defaults()
         Assert.Equal("Default", cfg.profileName)
-        Assert.Equal(9,         cfg.hotkeys.Count)
+        Assert.Equal(7,         cfg.hotkeys.Count)
         Assert.IsType(WindowState,   cfg.window)
         Assert.IsType(OverlayLayout, cfg.overlay)
     }
@@ -584,8 +599,8 @@ class AppSettingsTests extends TestCase
     get_hotkey_returns_registered_keybind()
     {
         cfg := AppSettings.Defaults()
-        Assert.Equal("^!n",  cfg.GetHotkey("NewRun"))
-        Assert.Equal("F8",   cfg.GetHotkey("ToggleOverlay"))
+        Assert.Equal("^!n", cfg.GetHotkey("NewRun"))
+        Assert.Equal("^F8", cfg.GetHotkey("CycleLayout"))
     }
 
     get_hotkey_returns_provided_default_for_unknown()

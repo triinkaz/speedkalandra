@@ -511,14 +511,63 @@ class SettingsRepository
 
     ; ============================================================
     ; [Hotkeys]
+    ;
+    ; Load merges INI entries into the defaults from AppSettings
+    ; (cfg.hotkeys already populated by AppSettings.Defaults).
+    ; Three legacy actions are migrated to the unified CycleLayout
+    ; so a returning user keeps the hotkey they were already pressing:
+    ;
+    ;   ToggleSteveLock  -> CycleLayout  (preferred source)
+    ;   ToggleMicroLock  -> CycleLayout  (used only if Steve had no bind)
+    ;   ToggleOverlay    -> discarded silently
+    ;
+    ; Save (_SaveHotkeys via _SyncMapSection) removes any INI key
+    ; that isn't present in cfg.hotkeys, so the legacy keys disappear
+    ; from disk on the next save — no stale state lingers.
     ; ============================================================
     _LoadHotkeys(cfg)
     {
         existing := this._ini.ReadSectionAsMap("Hotkeys")
         if (existing.Count = 0)
             return
+
+        ; Read legacy entries first so we can decide the migration
+        ; target before the main loop writes anything. Empty binds
+        ; are ignored — a key bound to "" was effectively disabled
+        ; and shouldn't shadow the default CycleLayout bind.
+        legacySteve   := existing.Has("ToggleSteveLock") ? Trim(String(existing["ToggleSteveLock"])) : ""
+        legacyMicro   := existing.Has("ToggleMicroLock") ? Trim(String(existing["ToggleMicroLock"])) : ""
+        legacyCycle   := existing.Has("CycleLayout")     ? Trim(String(existing["CycleLayout"]))     : ""
+
         for action, binding in existing
+        {
+            ; ToggleOverlay was removed entirely; never restore.
+            if (action = "ToggleOverlay")
+                continue
+            ; The two legacy lock actions are migrated below; skip
+            ; the direct copy so the obsolete key doesn't survive
+            ; in cfg.hotkeys (the save path mirrors cfg.hotkeys
+            ; keys exactly, so leaving them here would write them
+            ; back to disk).
+            if (action = "ToggleSteveLock" || action = "ToggleMicroLock")
+                continue
             cfg.hotkeys[action] := binding
+        }
+
+        ; Migration: if the user explicitly bound CycleLayout in
+        ; their INI, that wins. Otherwise prefer the Steve bind
+        ; (matches the default CycleLayout slot of ^F8 and the
+        ; densest layout), then Micro, then leave the default in
+        ; place. Bind strings are written verbatim — no AHK-syntax
+        ; rewriting; HotkeyFormatter handles the display side.
+        if (legacyCycle != "")
+            cfg.hotkeys["CycleLayout"] := legacyCycle
+        else if (legacySteve != "")
+            cfg.hotkeys["CycleLayout"] := legacySteve
+        else if (legacyMicro != "")
+            cfg.hotkeys["CycleLayout"] := legacyMicro
+        ; else: cfg.hotkeys["CycleLayout"] keeps the default from
+        ; AppSettings._DefaultHotkeys (currently "^F8").
     }
 
     _SaveHotkeys(cfg)

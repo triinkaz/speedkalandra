@@ -5,22 +5,25 @@
 ; Three modes (mutually exclusive):
 ;
 ;   COMPACT - reduced layout with essential info. Default.
-;   MICRO   - minimal bar. Toggle via Cmd.ToggleMicroLockRequested.
-;   STEVE   - SteveTheHappyWhale layout. Toggle via
-;             Cmd.ToggleSteveLockRequested.
+;   MICRO   - minimal bar.
+;   STEVE   - SteveTheHappyWhale layout.
 ;
 ; PHILOSOPHY:
 ;   - Service does NOT touch the GUI. It only changes state and
 ;     publishes Evt.OverlayModeChanged.
 ;   - Pure state machine: testable without a GUI.
-;   - Toggle methods are mutually exclusive: turning one lock on
-;     turns the other off, so the user can never end up in an
-;     inconsistent "both locked" state from the UI.
+;   - The cycle hotkey gives the user a single action that walks
+;     STEVE -> COMPACT -> MICRO -> STEVE (in that fixed order).
+;     Two earlier toggles (ToggleMicroLock, ToggleSteveLock) were
+;     collapsed into this single CycleLayout — see Commands.ahk
+;     for the rationale. Mode flags (_microLocked / _steveLocked)
+;     are kept on the service and on cfg.window so the persisted
+;     "what layout did the user pick last" survives reloads and
+;     stays mutually exclusive.
 ;
 ; SUBSCRIPTIONS:
-;   Cmd.ToggleMicroLockRequested -> ToggleMicroLock()
-;   Cmd.ToggleSteveLockRequested -> ToggleSteveLock()
-;   Cmd.SetOverlayModeRequested  -> SetMode(mode)
+;   Cmd.CycleOverlayLayoutRequested -> CycleLayout()
+;   Cmd.SetOverlayModeRequested     -> SetMode(mode)
 ;
 ; PUBLISHES:
 ;   Evt.OverlayModeChanged { mode, prevMode, locked, steveLocked }
@@ -46,9 +49,8 @@ class OverlayModeService
     _microLocked  := false
     _steveLocked  := false
 
-    _handlerToggleMicroLock   := ""
-    _handlerToggleSteveLock   := ""
-    _handlerSetOverlayMode    := ""
+    _handlerCycleLayout      := ""
+    _handlerSetOverlayMode   := ""
 
     __New(bus, cfg)
     {
@@ -61,26 +63,19 @@ class OverlayModeService
         this._settings := cfg
         this._mode     := OverlayModes.COMPACT
 
-        this._handlerToggleMicroLock   := (data) => this.ToggleMicroLock()
-        this._handlerToggleSteveLock   := (data) => this.ToggleSteveLock()
-        this._handlerSetOverlayMode    := (data) => this._OnSetModeRequested(data)
+        this._handlerCycleLayout    := (data) => this._OnCycleRequested(data)
+        this._handlerSetOverlayMode := (data) => this._OnSetModeRequested(data)
 
-        bus.Subscribe(Commands.ToggleMicroLockRequested, this._handlerToggleMicroLock)
-        bus.Subscribe(Commands.ToggleSteveLockRequested, this._handlerToggleSteveLock)
-        bus.Subscribe(Commands.SetOverlayModeRequested,  this._handlerSetOverlayMode)
+        bus.Subscribe(Commands.CycleOverlayLayoutRequested, this._handlerCycleLayout)
+        bus.Subscribe(Commands.SetOverlayModeRequested,     this._handlerSetOverlayMode)
     }
 
     Dispose()
     {
-        if (this._handlerToggleMicroLock != "")
+        if (this._handlerCycleLayout != "")
         {
-            this._bus.Unsubscribe(Commands.ToggleMicroLockRequested, this._handlerToggleMicroLock)
-            this._handlerToggleMicroLock := ""
-        }
-        if (this._handlerToggleSteveLock != "")
-        {
-            this._bus.Unsubscribe(Commands.ToggleSteveLockRequested, this._handlerToggleSteveLock)
-            this._handlerToggleSteveLock := ""
+            this._bus.Unsubscribe(Commands.CycleOverlayLayoutRequested, this._handlerCycleLayout)
+            this._handlerCycleLayout := ""
         }
         if (this._handlerSetOverlayMode != "")
         {
@@ -93,8 +88,8 @@ class OverlayModeService
     ; Hydrate - loads initial state from AppSettings
     ;
     ; steveLocked takes precedence over microLocked if both are true
-    ; in the INI (manual edit accident). ToggleX guarantees only one
-    ; is active at a time, but Hydrate is defensive.
+    ; in the INI (manual edit accident). CycleLayout/SetMode keep
+    ; them mutually exclusive at runtime; Hydrate is defensive.
     ; ============================================================
     Hydrate()
     {
@@ -128,49 +123,47 @@ class OverlayModeService
     IsSteveLocked()   => this._steveLocked
 
     ; ============================================================
-    ; ToggleMicroLock - alternates COMPACT <-> MICRO LOCKED
+    ; CycleLayout - walks STEVE -> COMPACT -> MICRO -> STEVE
     ;
-    ; If Steve is active, deactivates Steve first (modes are exclusive).
+    ; Single user-facing layout action. The order is fixed and
+    ; intentionally mirrors the visual hierarchy from densest
+    ; (STEVE = full SteveTheHappyWhale layout) to lightest (MICRO =
+    ; minimal bar), passing through COMPACT in the middle. The
+    ; speedrunner usually picks a layout pre-run and stays in it;
+    ; this hotkey is for the rare mid-session swap, where pressing
+    ; it 1-2 times lands them on the target. SetMode is still
+    ; available for code that needs to go directly to a specific
+    ; target (tests, the Hydrate path).
+    ;
+    ; Always changes mode (one of the three values), so always
+    ; returns true and always publishes Evt.OverlayModeChanged.
     ; ============================================================
-    ToggleMicroLock()
+    CycleLayout()
     {
         prev := this._mode
-        if this._microLocked
+        switch this._mode
         {
-            this._microLocked := false
-            this._mode        := OverlayModes.COMPACT
-        }
-        else
-        {
-            ; Enable micro: disable steve if it was on (modes are mutually exclusive).
-            this._steveLocked := false
-            this._microLocked := true
-            this._mode        := OverlayModes.MICRO
-        }
-        this._SyncWindowFlags()
-        this._PublishChange(prev)
-        return true
-    }
-
-    ; ============================================================
-    ; ToggleSteveLock - alternates COMPACT <-> STEVE LOCKED
-    ;
-    ; Modes micro and steve are MUTUALLY EXCLUSIVE: enabling steve
-    ; automatically disables micro. Same for ToggleMicroLock.
-    ; ============================================================
-    ToggleSteveLock()
-    {
-        prev := this._mode
-        if this._steveLocked
-        {
-            this._steveLocked := false
-            this._mode        := OverlayModes.COMPACT
-        }
-        else
-        {
-            this._microLocked := false
-            this._steveLocked := true
-            this._mode        := OverlayModes.STEVE
+            case OverlayModes.STEVE:
+                this._steveLocked := false
+                this._microLocked := false
+                this._mode        := OverlayModes.COMPACT
+            case OverlayModes.COMPACT:
+                this._steveLocked := false
+                this._microLocked := true
+                this._mode        := OverlayModes.MICRO
+            case OverlayModes.MICRO:
+                this._microLocked := false
+                this._steveLocked := true
+                this._mode        := OverlayModes.STEVE
+            default:
+                ; Defensive: corrupted in-memory mode that's not one
+                ; of the three known values. Fall back to COMPACT
+                ; (the safe default) rather than throw — the user
+                ; pressed a hotkey, surfacing an error here would
+                ; be worse UX than a silent recovery to a known mode.
+                this._microLocked := false
+                this._steveLocked := false
+                this._mode        := OverlayModes.COMPACT
         }
         this._SyncWindowFlags()
         this._PublishChange(prev)
@@ -187,13 +180,17 @@ class OverlayModeService
     }
 
     ; ============================================================
-    ; SetMode(target) - forces the mode
+    ; SetMode(target) - forces the mode (programmatic API)
     ;
     ; target = COMPACT: clear locks, _mode := COMPACT
     ; target = MICRO:   _microLocked := true, _mode := MICRO (clear steve)
     ; target = STEVE:   _steveLocked := true, _mode := STEVE (clear micro)
     ;
-    ; Idempotent: calling with the current mode is a no-op.
+    ; Idempotent: calling with the current mode is a no-op (returns
+    ; false). Not used by the cycle hotkey — that path goes through
+    ; CycleLayout. SetMode is retained for code that needs to land
+    ; on a specific mode (tests, Hydrate flows, future programmatic
+    ; entry points).
     ; ============================================================
     SetMode(target)
     {
@@ -246,6 +243,22 @@ class OverlayModeService
             "locked",      this._microLocked,
             "steveLocked", this._steveLocked
         ))
+    }
+
+    ; Cycle command handler. Always advances; the user feedback
+    ; (TrayTip with the new mode label) is the same one
+    ; _OnSetModeRequested used to surface, so the visible behaviour
+    ; doesn't drift between the two entry points.
+    _OnCycleRequested(data)
+    {
+        this.CycleLayout()
+        try
+        {
+            label := this.IsSteve() ? "STEVE"
+                   : this.IsMicro() ? "MICRO"
+                   : "COMPACT"
+            try TrayTip("SpeedKalandra", "Mode: " label, "Mute")
+        }
     }
 
     _OnSetModeRequested(data)
