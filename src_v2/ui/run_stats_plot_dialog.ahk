@@ -96,8 +96,15 @@ class RunStatsPlotDialog
     static GRAN_LABELS := ["Full run", "By act", "By map", "By town", "By loading"]
     static GRAN_KEYS   := ["run", "ato", "mapa", "cidade", "loading"]
 
-    ; Max-act-reached filter. Index 1 = "All" (no filter).
-    static MIN_ACT_LABELS := ["All", "Act 1+", "Act 2+", "Act 3+", "Act 4+", "Act 5+", "Act 6+", "Act 7+", "Act 8+", "Act 9+", "Act 10+"]
+    ; Max-act filter: cuts data above the selected act across every
+    ; surface in the dialog (KPIs, current-run bar, line chart).
+    ; Index 1 = "All" (no filter); 2..5 = Act 1..4 (one per
+    ; campaign act currently in the zones catalog); 6 = "Interlude"
+    ; placeholder — sentinel 999 means "include everything" today,
+    ; same as All, until BACKLOG B1 wires cruel/interlude tracking
+    ; through the pipeline and the sentinel starts gating against
+    ; the stage flag.
+    static MAX_ACT_LABELS := ["All", "Act 1", "Act 2", "Act 3", "Act 4", "Interlude"]
 
     static ROTATING_PALETTE := [
         "38BDF8", "F97316", "A78BFA", "FACC15", "EF4444",
@@ -122,7 +129,11 @@ class RunStatsPlotDialog
     _isOpen  := false
 
     _granularity   := "run"
-    _minActFilter  := 0       ; 0 = all, N >= 1 = runs with maxActReached >= N
+    ; Max-act filter value:
+    ;   0   = All (no filter)
+    ;   1..4 = cut details with parsed act > N
+    ;   999 = Interlude placeholder (no-op today; see BACKLOG B1)
+    _maxActFilter  := 0
     _profileFilter        := ""    ; "" = All profiles; otherwise = profile name
     _profileFilterInited  := false ; false = first-open default still pending
     _currentData   := ""
@@ -186,6 +197,10 @@ class RunStatsPlotDialog
 
     _ShowWithData(data)
     {
+        ; _currentData holds the UNFILTERED build result so the
+        ; filter can be reapplied on every dropdown change without
+        ; having to rebuild from the snapshot. The filtered view is
+        ; derived on the fly inside _BuildGui via FilterByMaxAct.
         this._currentData := data
 
         if this._headless
@@ -200,7 +215,14 @@ class RunStatsPlotDialog
             this._gui := ""
             this._ctrls := Map()
         }
-        this._BuildGui(data)
+        ; Apply the Max Act filter to the current run before
+        ; rendering so KPIs / header total / current-run bar all
+        ; reflect the same truncation the line chart shows. The
+        ; line chart applies the filter PER RUN inside
+        ; _CollectRunsForChart (each historical run loaded gets its
+        ; own FilterByMaxAct pass).
+        viewData := RunStatsPlotBuilder.FilterByMaxAct(data, this._maxActFilter)
+        this._BuildGui(viewData)
         this._isOpen := true
         return true
     }
@@ -347,12 +369,12 @@ class RunStatsPlotDialog
         g.Add("Text", "x224 y" RunStatsPlotDialog.Y_GRAN_LABEL " w200", "MAX ACT FILTER")
 
         g.SetFont("s9 c" Theme.Color("text"), Theme.FONT_UI)
-        ddMinAct := g.Add("DropDownList",
+        ddMaxAct := g.Add("DropDownList",
             "x224 y" RunStatsPlotDialog.Y_GRAN_DD " w120 h180 Background" Theme.Color("surface3")
-            . " Choose" (this._minActFilter + 1),
-            RunStatsPlotDialog.MIN_ACT_LABELS)
-        ddMinAct.OnEvent("Change", (ctrl, *) => this._OnMinActFilterChanged(ctrl))
-        this._ctrls["dropdown_min_act"] := ddMinAct
+            . " Choose" this._MaxActFilterIndexFromValue(this._maxActFilter),
+            RunStatsPlotDialog.MAX_ACT_LABELS)
+        ddMaxAct.OnEvent("Change", (ctrl, *) => this._OnMaxActFilterChanged(ctrl))
+        this._ctrls["dropdown_max_act"] := ddMaxAct
 
         ; --- Profile filter dropdown ---
         ; Isolates the line chart to runs of a single profile. First
@@ -622,15 +644,27 @@ class RunStatsPlotDialog
         g.Show("w" RunStatsPlotDialog.WINDOW_W " h" RunStatsPlotDialog.WINDOW_H)
     }
 
-    ; Returns the runs to plot in chronological order, applying both
-    ; the min-act and profile filters. The currently in-progress run
+    ; Returns the runs to plot in chronological order, applying the
+    ; Max Act and profile filters. The currently in-progress run
     ; always appears regardless of filters.
+    ;
+    ; Max Act semantics here is "cut data above act N" — it never
+    ; drops a historical run from the chart based on what it reached.
+    ; A run that only completed Act 1 still appears under a "Act 4"
+    ; filter; it just contributes only its Act 1 data to each series.
+    ; This means even when "run" granularity is selected, we have to
+    ; load the FULL run INI (not the summary) when the filter is
+    ; active, because the summary's `totals` are pre-aggregated for
+    ; the whole run and can't be re-split per act after the fact.
+    ; When the filter is "All" (maxAct=0), the summary still suffices
+    ; under "run" granularity — the fast path.
     _CollectRunsForChart(currentData)
     {
         all := []
         currentRunId := currentData.Has("runId") ? currentData["runId"] : ""
-        minAct := this._minActFilter
+        maxAct := this._maxActFilter
         profileFilter := this._profileFilter
+        filterActive := (maxAct > 0)
 
         if IsObject(this._runHistory)
         {
@@ -645,16 +679,6 @@ class RunStatsPlotDialog
                     if (smId != "" && smId = currentRunId)
                         continue
 
-                    ; Apply the min-act filter. Runs saved before this
-                    ; field existed have maxActReached = 0, so they
-                    ; only appear when the filter is "All".
-                    if (minAct > 0)
-                    {
-                        smMaxAct := sm.Has("maxActReached") ? sm["maxActReached"] : 0
-                        if (smMaxAct < minAct)
-                            continue
-                    }
-
                     ; Apply the profile filter. Empty filter = "All
                     ; profiles" (no filter). Legacy runs without a
                     ; saved profile are excluded when a filter is
@@ -666,7 +690,16 @@ class RunStatsPlotDialog
                             continue
                     }
 
-                    if (this._granularity != "run")
+                    ; Load policy:
+                    ;   - "run" granularity AND filter inactive
+                    ;     -> summary is enough (fast path).
+                    ;   - everything else -> full INI so we have
+                    ;     `details` to slice (either for non-run
+                    ;     granularity, which already needed details,
+                    ;     or for the filter, which slices `details`).
+                    needFull := this._granularity != "run" || filterActive
+                    runItem := sm
+                    if needFull
                     {
                         full := ""
                         try
@@ -674,14 +707,13 @@ class RunStatsPlotDialog
                         catch
                             full := ""
                         if IsObject(full)
-                            all.Push(full)
-                        else
-                            all.Push(sm)
+                            runItem := full
                     }
-                    else
-                    {
-                        all.Push(sm)
-                    }
+
+                    if filterActive && IsObject(runItem) && runItem.Has("details")
+                        runItem := RunStatsPlotBuilder.FilterByMaxAct(runItem, maxAct)
+
+                    all.Push(runItem)
                 }
             }
         }
@@ -891,20 +923,48 @@ class RunStatsPlotDialog
             this._ShowWithData(this._currentData)
     }
 
-    ; Handler of the min-act dropdown.
-    ; idx = 1 → All (filter = 0); idx = N → Act (N - 1)+
-    _OnMinActFilterChanged(ctrl)
+    ; Handler of the Max Act dropdown.
+    ;   idx 1 ("All")       -> filter = 0   (no-op)
+    ;   idx 2..5 (Act 1..4) -> filter = idx - 1
+    ;   idx 6 ("Interlude") -> filter = 999  (placeholder, see
+    ;                          MAX_ACT_LABELS header)
+    _OnMaxActFilterChanged(ctrl)
     {
         try
             idx := ctrl.Value
         catch
             return
-        if (idx < 1 || idx > RunStatsPlotDialog.MIN_ACT_LABELS.Length)
+        if (idx < 1 || idx > RunStatsPlotDialog.MAX_ACT_LABELS.Length)
             return
-        this._minActFilter := idx - 1
+        this._maxActFilter := this._MaxActFilterValueFromIndex(idx)
 
         if IsObject(this._currentData)
             this._ShowWithData(this._currentData)
+    }
+
+    ; Mapping helpers for the Max Act filter. Index <-> value is a
+    ; small lookup, but isolating it in two helpers keeps
+    ; _OnMaxActFilterChanged and _BuildGui (which sets the initial
+    ; Choose<N>) symmetric, and gives a single place to extend when
+    ; BACKLOG B1 lands a real Interlude value.
+    _MaxActFilterValueFromIndex(idx)
+    {
+        if (idx = 1)
+            return 0       ; All
+        if (idx = 6)
+            return 999     ; Interlude placeholder
+        return idx - 1     ; Act 1..4
+    }
+
+    _MaxActFilterIndexFromValue(value)
+    {
+        if (value = 0)
+            return 1       ; All
+        if (value >= 999)
+            return 6       ; Interlude placeholder
+        if (value >= 1 && value <= 4)
+            return value + 1
+        return 1           ; Defensive fallback to All for unknown values
     }
 
     ; Handler of the profile dropdown.

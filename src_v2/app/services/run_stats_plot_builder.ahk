@@ -243,6 +243,12 @@ class RunStatsPlotBuilder
     }
 
     ; Walks loadingEvents and emits one "loading" detail per event.
+    ; Each event's `note` is derived from the destination zone's act
+    ; via the catalog ("Act N"), so the Max Act filter can drop
+    ; loading rows that cross into truncated acts. Loadings whose
+    ; toZone is unknown to the catalog get an empty note and always
+    ; pass the filter — better to over-include than to silently
+    ; lose data on an uncatalogued zone.
     _AddLoadingDetails(data, snapshot)
     {
         if !snapshot.Has("loadingEvents") || !IsObject(snapshot["loadingEvents"])
@@ -264,8 +270,20 @@ class RunStatsPlotBuilder
                 t := toZ   != "" ? toZ   : "?"
                 label := f " -> " t
             }
+            ; Derive note from the destination zone's act when the
+            ; catalog knows it. The destination is the act the
+            ; player is ABOUT TO play in, which is the right
+            ; attribution for the Max Act filter (a loading into
+            ; Act 2 belongs to Act 2's budget, not Act 1's).
+            note := ""
+            if (toZ != "" && IsObject(this._zonesCatalog))
+            {
+                entry := this._zonesCatalog.FindByName(toZ)
+                if IsObject(entry) && entry.act > 0
+                    note := "Act " entry.act
+            }
             ts := ev.Has("ts") ? ev["ts"] : (ev.Has("timestamp") ? ev["timestamp"] : "")
-            this._AddDetail(data, "loading", label, ms, "", ts)
+            this._AddDetail(data, "loading", label, ms, note, ts)
             this._RememberMetaTs(data, ts)
         }
     }
@@ -341,4 +359,110 @@ class RunStatsPlotBuilder
     ; Internal alias kept so existing call sites in this file
     ; (notably _AddDeathDetails) don't need rewriting.
     static _FormatMs(ms) => Duration.FormatMs(ms)
+
+    ; ============================================================
+    ; FilterByMaxAct(data, maxAct)
+    ; ============================================================
+    ;
+    ; Returns a NEW data Map filtered to include only details whose
+    ; `note` references an act <= maxAct, with `totals` and `totalMs`
+    ; recomputed over the retained details. The input Map is NOT
+    ; mutated — callers like RunStatsPlotDialog rebuild the view by
+    ; reapplying the filter to the current source data on every
+    ; dropdown change.
+    ;
+    ; Filter semantics:
+    ;   maxAct = 0  -> no-op, returns a shallow copy of `data`. Used
+    ;                  for both "All" (idx 1) and the "Interlude"
+    ;                  placeholder (idx 6 maps to a sentinel >= 999
+    ;                  which never matches a real act number).
+    ;   maxAct >= 1 -> keep details with parsed act in [1, maxAct],
+    ;                  AND details whose category is "morte" (deaths
+    ;                  carry no timing/act in the current snapshot
+    ;                  schema — see P2=a in BACKLOG B2; rather than
+    ;                  silently dropping them, we surface the full
+    ;                  death count in the KPIs even under a strict
+    ;                  filter), AND details whose `note` doesn't
+    ;                  parse to any act (legacy data, uncatalogued
+    ;                  zones) — same over-include principle.
+    ;
+    ; The act is extracted from `note` via the same regex used by
+    ; `_DeriveMaxAct` and `_SegsByAct`, accepting both "Act N"
+    ; (current) and "Ato N" (legacy Portuguese saves).
+    ;
+    ; `maxActReached` carries through unchanged — it describes the
+    ; underlying run, not the filtered view.
+    static FilterByMaxAct(data, maxAct)
+    {
+        if !IsObject(data)
+            return data
+        if !IsNumber(maxAct) || maxAct <= 0
+            return RunStatsPlotBuilder._ShallowCloneData(data)
+
+        srcDetails := data.Has("details") && IsObject(data["details"])
+            ? data["details"]
+            : []
+
+        out := RunStatsPlotBuilder._ShallowCloneData(data)
+        filteredDetails := []
+        newTotals := Map()
+        for _, key in RunStatsPlotBuilder.SEGMENT_KEYS
+            newTotals[key] := 0
+
+        for _, d in srcDetails
+        {
+            if !IsObject(d)
+                continue
+            if !RunStatsPlotBuilder._DetailPassesMaxAct(d, maxAct)
+                continue
+            filteredDetails.Push(d)
+            cat := d.Has("category") ? d["category"] : ""
+            ms  := d.Has("ms")       ? d["ms"]       : 0
+            if (cat = "" || ms <= 0)
+                continue
+            if !newTotals.Has(cat)
+                newTotals[cat] := 0
+            newTotals[cat] += ms
+        }
+
+        out["details"] := filteredDetails
+        out["totals"]  := newTotals
+        out["totalMs"] := RunStatsPlotBuilder._TotalFromTotals(newTotals)
+        ; maxActReached + runId + profile + patch + firstTs +
+        ; deathCount survive from the shallow clone; they describe
+        ; the underlying run, not the filtered view.
+        return out
+    }
+
+    ; Returns true if the detail should be retained under the
+    ; maxAct filter. See FilterByMaxAct header for the policy.
+    static _DetailPassesMaxAct(detail, maxAct)
+    {
+        ; Deaths bypass the filter (no timing info).
+        cat := detail.Has("category") ? detail["category"] : ""
+        if (cat = "morte")
+            return true
+
+        note := detail.Has("note") ? detail["note"] : ""
+        ; No parsed act -> over-include (legacy data, uncatalogued
+        ; zone, loading into a zone the catalog doesn't know).
+        if !RegExMatch(note, "(?:Ato|Act)\s+(\d+)", &m)
+            return true
+
+        act := Integer(m[1] + 0)
+        if (act <= 0)
+            return true
+        return act <= maxAct
+    }
+
+    ; Returns a shallow clone of the data Map so the caller can
+    ; mutate `details` / `totals` / `totalMs` without affecting
+    ; the source. Other fields (Strings, Ints) don't need cloning.
+    static _ShallowCloneData(data)
+    {
+        out := Map()
+        for k, v in data
+            out[k] := v
+        return out
+    }
 }
