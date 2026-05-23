@@ -18,15 +18,25 @@ A minimalist Path of Exile 2 speedrun tracker for Windows.
 - Auto-finalize on configurable regex trigger (e.g. last-boss kill line)
 - Crash recovery — re-hydrates run state on relaunch
 
+## Screenshots
+
+*Visual showcase — actual rendering uses native Windows controls; the compositions below are illustrative.*
+
+### Overlay
+
+![Overlay showcase — Classic and Minimalist layouts in Compact, Micro, and Steve modes](assets/overlay-showcase.png)
+
+### Functional windows
+
+![Settings, run history, export, and import preview](assets/windows-settings-data.png)
+
+![Run statistics, details, death stats, and outcome banner](assets/windows-stats-diagnostics.png)
+
 ## Game language: English client only
 
 PoE2 translates `Client.txt` to the UI language, and SpeedKalandra parses English text fragments throughout: zone transitions (`[SCENE] Set Source`), deaths (`has been slain`), level-ups (`is now level`), area changes (`Generating level N area X with seed`), focus markers (`[WINDOW] Lost focus`), and the auto-start/auto-finalize regex defaults. On a non-English client these patterns never match, which means per-zone tracking, death counting, level tracking, and the auto triggers all stay silent.
 
 The auto-start and auto-finalize regexes can be edited in **Settings** to match the equivalent lines in your locale; the manual hotkeys (`Ctrl+Alt+N` to start, `Ctrl+Alt+F` to finalize) also work. The pixel-based loading detector is language-agnostic — a non-English user can time runs manually with loading isolation, but the core campaign-tracking experience assumes English.
-
-## Cruel difficulty: live tracking is partial
-
-The campaign zones in cruel difficulty (acts 1–3 replayed before endgame) emit a different log signal than normal acts — `Generating level X area "C_<id>"` only, with no `[SCENE] Set Source` line. SpeedKalandra's live tracker only watches `[SCENE]`, so during a cruel run, zone transitions are not detected and zone time accumulates against the last normal zone seen before crossing into cruel. The post-run **Death Stats** dialog has an "All-time (from log)" view that does pick up cruel zones (with a `" (Cruel)"` suffix) — use that for inspecting cruel deaths until the live path catches up. See `KNOWN_ISSUES.md` for the full breakdown.
 
 ## Disclaimer
 
