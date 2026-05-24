@@ -117,6 +117,10 @@ class SpeedKalandraAppIntegrationTests extends TestCase
         "hydrated_run_propagates_run_id_to_stats_recorder",
         "hydrated_run_finalize_saves_to_history",
 
+        ; --- Route service hydration ordering + re-sync (B4) ---
+        "route_service_subscribed_before_hydrate_so_it_observes_hydrated_run_started",
+        "route_widget_highlight_persists_when_run_starts_inside_first_route_zone",
+
         ; --- Stop (terminal lifecycle) ---
         "stop_does_not_throw_when_never_started",
         "stop_is_idempotent",
@@ -638,6 +642,149 @@ class SpeedKalandraAppIntegrationTests extends TestCase
             "Saved file has the hydrated runId")
 
         try app2.Stop()
+    }
+
+    ; ============================================================
+    ; Route service hydration ordering + re-sync (B4 hotfix)
+    ; ============================================================
+    ;
+    ; Two anti-regression pins for the route widget feature:
+    ;
+    ;   1. The composition root must construct RouteService BEFORE
+    ;      it calls runService.Hydrate() — same GSG §17 item 1
+    ;      contract that the statsRecorder test above enforces.
+    ;      Without it, a hydrated RunStarted at boot would land on
+    ;      an empty subscriber list, and the route widget would
+    ;      stay out of sync for the rest of the session (the next
+    ;      ZoneEntered would NOT re-sync because there's no Reset
+    ;      to trigger the zoneProvider lookup).
+    ;
+    ;   2. When the player is ALREADY standing in the first route
+    ;      zone and a fresh RunStarted fires (autoStart matching
+    ;      dialogue, or manual New Run after loading into the
+    ;      zone), the highlight must persist. Pre-fix this was the
+    ;      "falei com o homem ferido e o destaque sumiu" bug —
+    ;      Reset cleared currentIdx to -1, and no new ZoneEntered
+    ;      came because the player hadn't moved.
+    ;
+    ; Both rely on the closure wired in app.ahk:
+    ;   zoneProvider := () => IsObject(this.zoneTracker)
+    ;                         ? this.zoneTracker.GetActiveZone()
+    ;                         : ""
+    ; which is passed as the 4th arg to RouteService.__New. The
+    ; unit tests cover the service in isolation with a stub
+    ; provider; these integration tests prove the closure
+    ; resolves through the real composition root.
+
+    route_service_subscribed_before_hydrate_so_it_observes_hydrated_run_started()
+    {
+        ; Mirror of hydrated_run_propagates_run_id_to_stats_recorder
+        ; (same pattern, different service).
+        ;
+        ; Set up an in-progress run on disk via the first app instance.
+        this.app.bus.Publish(Commands.NewRunRequested, Map())
+        this.stubClock.AdvanceMs(60000)
+        this.app.runService.PersistTick()
+
+        try this.app.Stop()
+        this.app := ""
+
+        ; Second instance: constructor calls runService.Hydrate(),
+        ; which publishes RunStarted{hydrated:true}. RouteService
+        ; must be wired and subscribed at that moment, or the
+        ; event lands on no listener and the route widget will be
+        ; out of sync for the session.
+        secondClock := Fixtures.MakeFakeClock(2000000)
+        app2 := SpeedKalandraApp(Map(
+            "iniPath",          this.iniPath,
+            "zonesCsvPath",     this.zonesCsvPath,
+            "logPath",          this.logPath,
+            "runHistoryDir",    this.runHistoryDir,
+            "personalBestPath", this.pbPath,
+            "deathLogPath",     this.deathLogPath,
+            "headless",         true,
+            "clock",            secondClock
+        ))
+
+        Assert.True(app2.routeService is RouteService,
+            "RouteService wired on app2")
+        Assert.True(app2.routeRepo is RouteRepository,
+            "RouteRepository wired on app2")
+        Assert.True(app2.bus.Subscribers(Events.RunStarted) >= 1,
+            "At least one subscriber to RunStarted (includes RouteService)")
+        Assert.True(app2.bus.Subscribers(Events.ZoneEntered) >= 1,
+            "At least one subscriber to ZoneEntered (includes RouteService)")
+
+        ; A clean construction without throw is the strongest
+        ; assertion here: a RouteService constructed AFTER Hydrate
+        ; published RunStarted would land in the wrong state
+        ; (`_route` left as the empty-string field default), and
+        ; the next ZoneEntered would crash with the production
+        ; error we saw in the logs: `This value of type "String"
+        ; has no method named "AdvanceTo"`. Reaching this line
+        ; without throw means the ordering held.
+        Assert.True(app2.runService.IsActive(),
+            "sanity: hydrated active run survived the boot")
+
+        try app2.Stop()
+    }
+
+    route_widget_highlight_persists_when_run_starts_inside_first_route_zone()
+    {
+        ; Anti-regression for the B4 hotfix scenario the user
+        ; reproduced visually: runner already inside The Riverbank,
+        ; talks to the wounded man, autoStart matches and fires
+        ; RunStarted, highlight used to disappear until the next
+        ; ZoneEntered (which might be minutes away).
+        ;
+        ; This test wires the real composition through to prove
+        ; that the zoneProvider closure (`() => zoneTracker.
+        ; GetActiveZone()`) resolves correctly when the route
+        ; service's _OnRunLifecycleReset invokes it. The unit
+        ; tests cover the re-sync logic in isolation with a
+        ; stubbed provider; this integration test pins the wiring.
+        ;
+        ; Subscriber FIFO order matters here: RouteService is
+        ; constructed BEFORE ZoneTrackingService in app.ahk, so
+        ; when RunStarted fans out, RouteService's handler runs
+        ; first — while ZoneTracker._activeZone is still populated.
+        ; (Note: ZoneTracker._OnRunStarted does NOT clear
+        ; _activeZone, but it does clear it on RunReset /
+        ; RunCancelled. The FIFO ordering protects the Reset case;
+        ; the no-clear-on-RunStarted convention protects this one.)
+
+        ; Save a route file for the active profile, then refresh
+        ; the in-memory service to pick it up. We touch the repo
+        ; directly because the Settings UI for editing routes is
+        ; not implemented yet (planned in B4 Commit 3).
+        profileName := this.app._cfg.profileName
+        this.app.routeRepo.Save(profileName,
+            Route(["The Riverbank", "Mud Burrow"]))
+        this.app.routeService.Refresh()
+        Assert.Equal(2, this.app.routeService.Count(),
+            "sanity: route loaded with 2 zones")
+
+        ; The runner enters Riverbank BEFORE starting the run.
+        ; _EnterZoneAndAdvance publishes ZoneChanged; ZoneTracker
+        ; consumes that and re-publishes ZoneEntered (enriched
+        ; with isTown from ZonesCatalog), which RouteService
+        ; listens for and forwards to Route.AdvanceTo.
+        this._EnterZoneAndAdvance("The Riverbank", 5000)
+        Assert.Equal(0, this.app.routeService.GetCurrentIdx(),
+            "sanity: ZoneEntered advanced the route to idx 0")
+        Assert.Equal("The Riverbank", this.app.zoneTracker.GetActiveZone(),
+            "sanity: zone tracker holds the active zone")
+
+        ; Now start a new run. _OnRunLifecycleReset fires the path
+        ; that used to strip the highlight: Reset() takes
+        ; currentIdx to -1, then the zoneProvider lookup re-syncs
+        ; via AdvanceTo("The Riverbank") back to idx 0.
+        this.app.bus.Publish(Commands.NewRunRequested, Map())
+
+        Assert.Equal(0, this.app.routeService.GetCurrentIdx(),
+            "Bug fix: re-sync via zoneProvider keeps Riverbank "
+            . "highlighted across RunStarted (was -1 pre-fix, "
+            . "would have stayed -1 until the next ZoneEntered)")
     }
 
     ; ============================================================

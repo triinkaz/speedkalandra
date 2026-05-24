@@ -140,6 +140,7 @@ SkTestOnError(err, mode) {
 #Include ..\src_v2\domain\game_processes.ahk
 #Include ..\src_v2\domain\window_state.ahk
 #Include ..\src_v2\domain\overlay_layout.ahk
+#Include ..\src_v2\domain\route.ahk
 #Include ..\src_v2\domain\run_state.ahk
 #Include ..\src_v2\domain\xp_rules.ahk
 #Include ..\src_v2\domain\app_settings.ahk
@@ -167,6 +168,7 @@ SkTestOnError(err, mode) {
 #Include ..\src_v2\infra\run_state_repository.ahk
 #Include ..\src_v2\infra\run_history_repository.ahk
 #Include ..\src_v2\infra\death_log_repository.ahk
+#Include ..\src_v2\infra\route_repository.ahk
 #Include ..\src_v2\infra\settings_repository.ahk
 
 ; ------------------------------------------------------------
@@ -206,6 +208,7 @@ SkTestOnError(err, mode) {
 #Include ..\src_v2\app\services\event_trace_logger.ahk
 #Include ..\src_v2\app\services\run_export_service.ahk
 #Include ..\src_v2\app\services\run_import_service.ahk
+#Include ..\src_v2\app\services\route_service.ahk
 
 ; ------------------------------------------------------------
 ; SUT - ui/
@@ -223,6 +226,8 @@ SkTestOnError(err, mode) {
 #Include ..\src_v2\ui\steve_layout_widget.ahk
 #Include ..\src_v2\ui\steve_layout_plus_widget.ahk
 #Include ..\src_v2\ui\run_outcome_banner_widget.ahk
+#Include ..\src_v2\ui\route_toggle_arrow.ahk
+#Include ..\src_v2\ui\route_widget.ahk
 #Include ..\src_v2\ui\settings_dialog.ahk
 #Include ..\src_v2\ui\run_stats_plot_dialog.ahk
 #Include ..\src_v2\ui\run_history_dialog.ahk
@@ -283,6 +288,7 @@ SpeedKalandraMsgBox(text, title := "", options := "") {
 #Include unit\domain\run_state_tests.ahk
 #Include unit\domain\xp_rules_tests.ahk
 #Include unit\domain\overlay_layout_tests.ahk
+#Include unit\domain\route_tests.ahk
 #Include unit\domain\app_settings_tests.ahk
 
 ; ------------------------------------------------------------
@@ -304,6 +310,7 @@ SpeedKalandraMsgBox(text, title := "", options := "") {
 #Include unit\infra\run_state_repository_warning_sink_tests.ahk
 #Include unit\infra\run_history_repository_tests.ahk
 #Include unit\infra\death_log_repository_tests.ahk
+#Include unit\infra\route_repository_tests.ahk
 #Include unit\infra\settings_repository_tests.ahk
 
 ; ------------------------------------------------------------
@@ -335,6 +342,7 @@ SpeedKalandraMsgBox(text, title := "", options := "") {
 #Include unit\app\services\overlay_interaction_service_tests.ahk
 #Include unit\app\services\event_trace_logger_tests.ahk
 #Include unit\app\services\run_import_service_tests.ahk
+#Include unit\app\services\route_service_tests.ahk
 
 ; ------------------------------------------------------------
 ; Suites - app/ (composition-root collaborators)
@@ -360,6 +368,8 @@ SpeedKalandraMsgBox(text, title := "", options := "") {
 #Include unit\ui\death_stats_dialog_tests.ahk
 #Include unit\ui\settings_dialog_tests.ahk
 #Include unit\ui\run_outcome_banner_widget_tests.ahk
+#Include unit\ui\route_toggle_arrow_tests.ahk
+#Include unit\ui\route_widget_tests.ahk
 
 ; ------------------------------------------------------------
 ; Suites - integration (end-to-end)

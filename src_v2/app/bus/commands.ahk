@@ -56,4 +56,12 @@ class Commands
     ; --- Run export/import ---
     static ExportRunsRequested := "Cmd.ExportRunsRequested"
     static ImportRunsRequested := "Cmd.ImportRunsRequested"
+
+    ; --- Route (B4 Stage 2) ---
+    ; Published by any of the 4 anchor-eligible timer widgets
+    ; (micro/micro_plus/steve/steve_plus) when the user Ctrl+Clicks
+    ; the bottom-right arrow. The composition root handles it:
+    ; flips cfg.routeWidgetVisible, persists settings, then
+    ; publishes Evt.RouteVisibilityToggled with the new value.
+    static ToggleRouteVisibilityRequested := "Cmd.ToggleRouteVisibilityRequested"
 }

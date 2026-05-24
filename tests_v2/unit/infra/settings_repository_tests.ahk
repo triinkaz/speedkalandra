@@ -87,6 +87,13 @@ class SettingsRepositoryTests extends TestCase
         "load_pb_display_mode_falls_back_to_pb_on_invalid_ini",
         "save_load_preserves_show_outcome_banner",
         "load_show_outcome_banner_defaults_true_when_key_missing",
+        "save_load_preserves_route_widget_visible",
+        "save_load_preserves_route_rows_visible",
+        "load_route_widget_visible_defaults_false_when_key_missing",
+        "load_route_rows_visible_defaults_5_when_key_missing",
+        "load_route_rows_visible_clamps_out_of_range_low",
+        "load_route_rows_visible_clamps_out_of_range_high",
+        "load_route_rows_visible_non_numeric_falls_back_to_default",
         "save_load_preserves_hotkeys",
 
         ; --- Hotkey migration (ToggleSteveLock / ToggleMicroLock / ToggleOverlay) ---
@@ -462,6 +469,104 @@ class SettingsRepositoryTests extends TestCase
 
         Assert.True(loaded.showOutcomeBanner,
             "Missing ShowOutcomeBanner key must load as true (opt-out default)")
+    }
+
+    ; --- [Route] (B4 Stage 2) ---
+
+    save_load_preserves_route_widget_visible()
+    {
+        ; Master visibility flag for RouteWidget round-trips through
+        ; [Route].WidgetVisible. Default is false (opt-in semantic);
+        ; once the user enables it via the Ctrl+Click arrow, that
+        ; choice must survive restarts.
+        mainIni := IniFile(Fixtures.TempPath("ini"))
+        repo := SettingsRepository(mainIni)
+
+        cfg := AppSettings.Defaults()
+        Assert.False(cfg.routeWidgetVisible, "sanity: default is false")
+
+        cfg.routeWidgetVisible := true
+        repo.Save(cfg)
+
+        loaded := repo.Load()
+        Assert.True(loaded.routeWidgetVisible,
+            "[Route].WidgetVisible round-trips through INI")
+
+        loaded.routeWidgetVisible := false
+        repo.Save(loaded)
+        reloaded := repo.Load()
+        Assert.False(reloaded.routeWidgetVisible,
+            "Flipping back to false also persists")
+    }
+
+    save_load_preserves_route_rows_visible()
+    {
+        mainIni := IniFile(Fixtures.TempPath("ini"))
+        repo := SettingsRepository(mainIni)
+
+        cfg := AppSettings.Defaults()
+        cfg.routeRowsVisible := 7
+        repo.Save(cfg)
+
+        loaded := repo.Load()
+        Assert.Equal(7, loaded.routeRowsVisible)
+    }
+
+    load_route_widget_visible_defaults_false_when_key_missing()
+    {
+        ; Opt-in semantic: a fresh install or an INI predating the
+        ; key must NOT silently surface the RouteWidget.
+        mainIni := IniFile(Fixtures.TempPath("ini"))
+        repo := SettingsRepository(mainIni)
+        loaded := repo.Load()
+        Assert.False(loaded.routeWidgetVisible)
+    }
+
+    load_route_rows_visible_defaults_5_when_key_missing()
+    {
+        mainIni := IniFile(Fixtures.TempPath("ini"))
+        repo := SettingsRepository(mainIni)
+        loaded := repo.Load()
+        Assert.Equal(5, loaded.routeRowsVisible)
+    }
+
+    load_route_rows_visible_clamps_out_of_range_low()
+    {
+        ; Hand-edited "1" must clamp to 3 (the minimum), not fall
+        ; back to default 5. The user clearly wanted a small
+        ; count; honoring the nearest bound preserves intent.
+        mainIni := IniFile(Fixtures.TempPath("ini"))
+        mainIni.Write("1", "Route", "RowsVisible")
+
+        repo := SettingsRepository(mainIni)
+        loaded := repo.Load()
+        Assert.Equal(3, loaded.routeRowsVisible,
+            "Out-of-range low clamps to 3, not default 5")
+    }
+
+    load_route_rows_visible_clamps_out_of_range_high()
+    {
+        mainIni := IniFile(Fixtures.TempPath("ini"))
+        mainIni.Write("99", "Route", "RowsVisible")
+
+        repo := SettingsRepository(mainIni)
+        loaded := repo.Load()
+        Assert.Equal(10, loaded.routeRowsVisible,
+            "Out-of-range high clamps to 10, not default 5")
+    }
+
+    load_route_rows_visible_non_numeric_falls_back_to_default()
+    {
+        ; Non-numeric / empty values can't be clamped to anything
+        ; meaningful, so they fall back to the default 5 — a typo
+        ; or stray whitespace doesn't silently get bound 3 or 10.
+        mainIni := IniFile(Fixtures.TempPath("ini"))
+        mainIni.Write("nope", "Route", "RowsVisible")
+
+        repo := SettingsRepository(mainIni)
+        loaded := repo.Load()
+        Assert.Equal(5, loaded.routeRowsVisible,
+            "Non-numeric value falls back to default 5")
     }
 
     save_load_preserves_hotkeys()

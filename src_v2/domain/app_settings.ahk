@@ -13,6 +13,7 @@
 ;   [Diagnostics]   EventTracingEnabled (opt-in)
 ;   [Layouts]       Variant (classic | plus)
 ;   [Display]       PbMode (pb | avg5), ShowOutcomeBanner (bool)
+;   [Route]         WidgetVisible (bool), RowsVisible (int 3..10)
 ;   [Disclaimer]    Acknowledged (do-not-show-again flag)
 ;   [Hotkeys]       <action> = keyBind
 ;   [Window]        → WindowState (composite)
@@ -115,6 +116,27 @@ class AppSettings
     ; distracting can flip it off in Settings → DISPLAY. See
     ; RunOutcomeBannerWidget for the full lifecycle.
     showOutcomeBanner := true
+
+    ; --- Route (B4 Stage 2) ---
+    ; Master visibility flag for the route walkthrough widget.
+    ; Default false — the RouteWidget stays invisible on the first
+    ; boot after the feature lands, so a returning user upgrading
+    ; over an existing install doesn't get an unsolicited extra
+    ; surface on screen. The user opts in by Ctrl+Clicking the
+    ; little arrow at the bottom-right of any of the four eligible
+    ; timer widgets (micro / micro_plus / steve / steve_plus).
+    ; Persisted to [Route].WidgetVisible so the choice survives
+    ; restarts. Live-toggled via Cmd.ToggleRouteVisibilityRequested
+    ; → Evt.RouteVisibilityToggled.
+    routeWidgetVisible := false
+
+    ; Number of route rows the widget shows at once, starting from
+    ; the current zone. Default 5: enough lookahead for a typical
+    ; Act 1 segment (4-5 zones) without dominating the overlay.
+    ; Configurable in Settings → ROUTE (clamped to [3, 10] both at
+    ; load time and in the slider UI — fewer than 3 makes the
+    ; widget awkward to read, more than 10 wastes vertical space).
+    routeRowsVisible := 5
 
     ; --- Auto-finalize ---
     autoFinalizeRegex := ""
@@ -226,6 +248,24 @@ class AppSettings
 
         ; --- Display (outcome banner) ---
         cfg.showOutcomeBanner := AppSettings._GetBool(data, "showOutcomeBanner", cfg.showOutcomeBanner)
+
+        ; --- Route ---
+        cfg.routeWidgetVisible := AppSettings._GetBool(data, "routeWidgetVisible", cfg.routeWidgetVisible)
+        ; routeRowsVisible: clamp to [3, 10] so a hand-edited INI
+        ; with an out-of-range value can't produce an unusable widget.
+        if data.Has("routeRowsVisible")
+        {
+            v := data["routeRowsVisible"]
+            if (v != "" && IsNumber(v))
+            {
+                n := Integer(v + 0)
+                if (n < 3)
+                    n := 3
+                if (n > 10)
+                    n := 10
+                cfg.routeRowsVisible := n
+            }
+        }
 
         ; --- Auto-finalize ---
         cfg.autoFinalizeRegex := AppSettings._GetStr(data, "autoFinalizeRegex", cfg.autoFinalizeRegex)

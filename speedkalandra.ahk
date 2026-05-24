@@ -131,6 +131,7 @@ SpeedKalandraMsgBox(text, title := "", options := "")
 #Include "src_v2\domain\overlay_layout.ahk"
 #Include "src_v2\domain\run_state.ahk"
 #Include "src_v2\domain\app_settings.ahk"
+#Include "src_v2\domain\route.ahk"
 
 #Include "src_v2\infra\zones_catalog.ahk"
 #Include "src_v2\infra\settings_repository.ahk"
@@ -138,6 +139,7 @@ SpeedKalandraMsgBox(text, title := "", options := "")
 #Include "src_v2\infra\run_history_repository.ahk"
 #Include "src_v2\infra\death_log_repository.ahk"
 #Include "src_v2\infra\personal_best_repository.ahk"
+#Include "src_v2\infra\route_repository.ahk"
 
 #Include "src_v2\app\bus\events.ahk"
 #Include "src_v2\app\bus\commands.ahk"
@@ -168,6 +170,7 @@ SpeedKalandraMsgBox(text, title := "", options := "")
 #Include "src_v2\app\services\event_trace_logger.ahk"
 #Include "src_v2\app\services\run_export_service.ahk"
 #Include "src_v2\app\services\run_import_service.ahk"
+#Include "src_v2\app\services\route_service.ahk"
 
 #Include "src_v2\ui\theme.ahk"
 #Include "src_v2\ui\widget_base.ahk"
@@ -179,6 +182,8 @@ SpeedKalandraMsgBox(text, title := "", options := "")
 #Include "src_v2\ui\steve_layout_widget.ahk"
 #Include "src_v2\ui\steve_layout_plus_widget.ahk"
 #Include "src_v2\ui\run_outcome_banner_widget.ahk"
+#Include "src_v2\ui\route_toggle_arrow.ahk"
+#Include "src_v2\ui\route_widget.ahk"
 #Include "src_v2\ui\hotkey_formatter.ahk"
 #Include "src_v2\ui\settings_dialog.ahk"
 #Include "src_v2\ui\line_chart_renderer.ahk"

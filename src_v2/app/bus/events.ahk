@@ -64,6 +64,18 @@ class Events
     static OverlayModeChanged   := "Evt.OverlayModeChanged"   ; data: {mode, prevMode, locked, steveLocked}
     static CtrlStateChanged     := "Evt.CtrlStateChanged"     ; data: {active}
 
+    ; Published by WidgetBase whenever a widget's persisted geometry
+    ; changes — after Ctrl+drag completes (_UpdatePositionFromGui),
+    ; after Ctrl+wheel resize (SetScale), and after programmatic
+    ; SetPosition. Carries the FINAL geometry post-change so
+    ; subscribers can re-align dependent visuals (e.g. RouteWidget
+    ; glues itself below the active timer widget on every move/
+    ; resize). Not published during the drag motion itself — only
+    ; at gesture end — because B4 sabor 2 explicitly accepted the
+    ; brief "detached" frame during drag to keep the hot path free
+    ; of bus traffic.
+    static WidgetGeometryChanged := "Evt.WidgetGeometryChanged" ; data: {widgetId, x, y, w, h, scale}
+
     ; --- Settings changes ---
     ; Published by SettingsDialog._OnSave when cfg.logFile is changed
     ; to a different (non-empty) value. App composition root reacts by
@@ -143,4 +155,25 @@ class Events
     ; --- Run export/import ---
     static RunsExported := "Evt.RunsExported"  ; data: {path, count}
     static RunsImported := "Evt.RunsImported"  ; data: {path, imported, renamed, skipped}
+
+    ; --- Route (B4 Stage 2) ---
+    ; Published by RouteService whenever the visible slice of the
+    ; current route changes — player moved into a mapa zone listed
+    ; in the route (advance/retreat), or the route itself was
+    ; edited in Settings, or the run was reset/cancelled (which
+    ; resets _currentIdx to -1). RouteWidget consumes this to
+    ; re-render its rows. Town zones do NOT trigger this event
+    ; (Q5 decision: cities ignored).
+    static RouteChanged := "Evt.RouteChanged"   ; data: {visibleZones, currentIdx, totalZones, hasRoute}
+
+    ; Published by the composition root when the user Ctrl+Clicks
+    ; the arrow on any of the 4 anchor-eligible timer widgets
+    ; (micro/micro_plus/steve/steve_plus). Carries the NEW desired
+    ; visibility state (flipped from the current cfg.routeWidgetVisible).
+    ; RouteWidget calls Show()/Hide() in response; the 4 timer
+    ; widgets refresh the arrow glyph (▾ when hidden, ▴ when shown).
+    ; cfg.routeWidgetVisible is persisted by the same handler before
+    ; the event fires so a crash mid-toggle still leaves a consistent
+    ; state.
+    static RouteVisibilityToggled := "Evt.RouteVisibilityToggled"  ; data: {visible}
 }

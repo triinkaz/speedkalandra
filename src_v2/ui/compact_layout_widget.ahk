@@ -198,6 +198,7 @@ class CompactLayoutWidget extends LayoutWidgetBase
     _handlerDeathDetected  := ""
     _handlerVendorChanged  := ""
     _handlerPbDisplayMode  := ""
+    _handlerRouteVis       := ""   ; Evt.RouteVisibilityToggled — refreshes the arrow glyph in place
 
     __New(bus, position, onPersist, timer, zoneTracker, xp, zonesCatalog := "", loadingTotals := "", cfg := "", pbService := "", avgService := "")
     {
@@ -244,6 +245,14 @@ class CompactLayoutWidget extends LayoutWidgetBase
         bus.Subscribe(Events.DeathDetected,     this._handlerDeathDetected)
         bus.Subscribe(Events.VendorRegexesChanged, this._handlerVendorChanged)
         bus.Subscribe(Events.PbDisplayModeChanged, this._handlerPbDisplayMode)
+
+        ; B4 Stage 2: route toggle arrow. Subscribe only when cfg
+        ; was wired (opt-in at the composition root).
+        if IsObject(cfg)
+        {
+            this._handlerRouteVis := (data) => this._OnRouteVisibilityToggled(data)
+            bus.Subscribe(Events.RouteVisibilityToggled, this._handlerRouteVis)
+        }
     }
 
     _GetFixedSize() => Map("w", CompactLayoutWidget.FIXED_W, "h", CompactLayoutWidget.FIXED_H)
@@ -447,6 +456,28 @@ class CompactLayoutWidget extends LayoutWidgetBase
 
         ; Right edge: vendor clipboard buttons.
         this._BuildVendorButtons(s)
+
+        ; B4 Stage 2: route toggle arrow. Sits above V1 in the
+        ; V1/V2/V3 column (right edge, top). Vertically slotted
+        ; into the gap between the accent stripe (y=0..stripeH)
+        ; and V1 (y≈stripeH+(availH-totalH)/2 ≈ 20 at base scale).
+        ; The arrow's bottom edge stays clear of V1 by at least
+        ; 4 px at scale 1.0, and the start-vertical math scales
+        ; with `s` so the same margin holds at 0.5x and 3.0x.
+        if IsObject(this._cfg)
+        {
+            btnSize := Max(10, Round(CompactLayoutWidget.BTN_SIZE * s))
+            mRight  := Max(1, Round(CompactLayoutWidget.BTN_MARGIN_R * s))
+            stripeH := Max(1, Round(CompactLayoutWidget.STRIPE_H * s))
+            arrowX  := this._w - mRight - btnSize
+            arrowY  := stripeH + Max(1, Round(2 * s))
+            this._ctrls["routeArrow"] := RouteToggleArrow.Build(
+                wg, this._w, this._h, s,
+                this._cfg.routeWidgetVisible,
+                Theme.FONT_UI,
+                (*) => this._OnRouteArrowClick(),
+                arrowX, arrowY)
+        }
 
         ; Reset caches to force the first SetFont
         this._lastXpColor       := ""
@@ -974,6 +1005,23 @@ class CompactLayoutWidget extends LayoutWidgetBase
         this._Refresh()
     }
 
+    ; B4 Stage 2 — route toggle arrow click handler.
+    _OnRouteArrowClick()
+    {
+        this._bus.Publish(Commands.ToggleRouteVisibilityRequested, Map())
+    }
+
+    ; B4 Stage 2 — hot-refresh of arrow glyph after visibility flip.
+    _OnRouteVisibilityToggled(data)
+    {
+        if !this._gui || !this._ctrls.Has("routeArrow")
+            return
+        visible := IsObject(data) && data.Has("visible")
+                   ? data["visible"]
+                   : false
+        RouteToggleArrow.RefreshGlyph(this._ctrls["routeArrow"], visible)
+    }
+
     _OnZoneEntered(data)
     {
         if !IsObject(data)
@@ -1094,6 +1142,11 @@ class CompactLayoutWidget extends LayoutWidgetBase
         {
             this._bus.Unsubscribe(Events.PbDisplayModeChanged, this._handlerPbDisplayMode)
             this._handlerPbDisplayMode := ""
+        }
+        if (this._handlerRouteVis != "")
+        {
+            this._bus.Unsubscribe(Events.RouteVisibilityToggled, this._handlerRouteVis)
+            this._handlerRouteVis := ""
         }
     }
 }

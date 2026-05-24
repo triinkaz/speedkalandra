@@ -15,6 +15,7 @@
 ;   [Diagnostics]    EventTracingEnabled (opt-in; off by default)
 ;   [Layouts]        Variant (classic | plus; opt-in BETA)
 ;   [Display]        PbMode (pb | avg5; toggles PB chip / live-timer color target), ShowOutcomeBanner (bool)
+;   [Route]          WidgetVisible (bool; master visibility flag for RouteWidget), RowsVisible (int 3..10)
 ;   [Hotkeys]        <action> -> keyBind
 ;   [Window]         MicroLocked, SteveLocked
 ;   [Overlay]        <widgetId>.{left,top,scale,visible,centered} + hoverHide
@@ -57,6 +58,7 @@ class SettingsRepository
         this._LoadDiagnostics(cfg)
         this._LoadLayouts(cfg)
         this._LoadDisplay(cfg)
+        this._LoadRoute(cfg)
         this._LoadHotkeys(cfg)
         cfg.window  := this._LoadWindow()
         cfg.overlay := this._LoadOverlay()
@@ -136,6 +138,7 @@ class SettingsRepository
             this._SaveDiagnostics(cfg)
             this._SaveLayouts(cfg)
             this._SaveDisplay(cfg)
+            this._SaveRoute(cfg)
             this._SaveHotkeys(cfg)
             this._SaveWindow(cfg.window)
             this._SaveOverlay(cfg.overlay)
@@ -507,6 +510,56 @@ class SettingsRepository
         v := (cfg.pbDisplayMode = "avg5") ? "avg5" : "pb"
         this._ini.Write(v, "Display", "PbMode")
         this._ini.Write(cfg.showOutcomeBanner ? 1 : 0, "Display", "ShowOutcomeBanner")
+    }
+
+    ; ============================================================
+    ; [Route]
+    ;
+    ; Persists the master visibility flag for the route walkthrough
+    ; widget (B4 Stage 2) and the row count it renders. The route
+    ; *definition* itself — the ordered list of zones — lives in a
+    ; separate per-profile file at data/routes/<profile>.ini and
+    ; is managed by RouteRepository, not by this settings file.
+    ; The two layers are kept apart because the route definition
+    ; is conceptually a piece of user content (like the run
+    ; history INIs in data/runs/), shareable across runners via
+    ; Import/Export, while these flags are UI preferences.
+    ;
+    ; Defaults:
+    ;   WidgetVisible = 0  (invisible until the user opts in via
+    ;                       the Ctrl+Click arrow on a timer widget)
+    ;   RowsVisible   = 5  (clamped to [3, 10] in AppSettings.FromMap)
+    ; ============================================================
+    _LoadRoute(cfg)
+    {
+        ini := this._ini
+        cfg.routeWidgetVisible := ini.Read("Route", "WidgetVisible", "0") = "1"
+
+        ; RowsVisible has a bounded domain [3, 10]. Out-of-range
+        ; values clamp to the nearest bound (not the default 5) —
+        ; a hand-edited "99" clearly means "the user wanted max"
+        ; and silently rewriting it to 5 would feel surprising.
+        ; Non-numeric / empty values can't be clamped to anything
+        ; meaningful and fall back to the default. Mirrors the
+        ; AppSettings.FromMap policy so a fresh INI → cfg and
+        ; FromMap → cfg paths land on the same value.
+        raw := ini.Read("Route", "RowsVisible", "")
+        if (raw != "" && IsNumber(raw))
+        {
+            n := Integer(raw + 0)
+            if (n < 3)
+                n := 3
+            if (n > 10)
+                n := 10
+            cfg.routeRowsVisible := n
+        }
+    }
+
+    _SaveRoute(cfg)
+    {
+        ini := this._ini
+        ini.Write(cfg.routeWidgetVisible ? 1 : 0, "Route", "WidgetVisible")
+        ini.Write(cfg.routeRowsVisible,           "Route", "RowsVisible")
     }
 
     ; ============================================================

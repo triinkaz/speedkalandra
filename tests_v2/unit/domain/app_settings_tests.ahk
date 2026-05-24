@@ -41,6 +41,8 @@ class AppSettingsTests extends TestCase
         "defaults_layout_variant_is_classic",
         "defaults_pb_display_mode_is_pb",
         "defaults_show_outcome_banner_is_true",
+        "defaults_route_widget_visible_is_false",
+        "defaults_route_rows_visible_is_5",
         "defaults_auto_finalize_regex_empty",
         "defaults_auto_start_regex_is_wounded_man_line",
 
@@ -67,6 +69,12 @@ class AppSettingsTests extends TestCase
         "from_map_pb_display_mode_accepts_case_variations_as_avg5",
         "from_map_reads_show_outcome_banner",
         "from_map_show_outcome_banner_defaults_true_when_missing",
+        "from_map_reads_route_widget_visible",
+        "from_map_reads_route_rows_visible",
+        "from_map_clamps_route_rows_visible_below_three",
+        "from_map_clamps_route_rows_visible_above_ten",
+        "from_map_route_rows_visible_invalid_uses_default",
+        "from_map_route_rows_visible_missing_uses_default",
         "from_map_reads_auto_finalize_regex",
         "from_map_reads_auto_start_regex_allowing_empty",
         "from_map_strict_string_treats_empty_as_missing",
@@ -211,6 +219,28 @@ class AppSettingsTests extends TestCase
         ; SettingsRepository default ("1") so a fresh INI and a
         ; FromMap(empty) land on the same value.
         Assert.True(AppSettings.Defaults().showOutcomeBanner)
+    }
+
+    defaults_route_widget_visible_is_false()
+    {
+        ; B4 Stage 2: master visibility flag for the route
+        ; walkthrough widget. Default false so the widget stays
+        ; invisible on the first boot after the feature ships —
+        ; a returning user upgrading over an existing install
+        ; doesn't get an unsolicited extra surface on screen. The
+        ; opt-in is via the bottom-right Ctrl+Click arrow on any
+        ; of the four eligible timer widgets.
+        Assert.False(AppSettings.Defaults().routeWidgetVisible)
+    }
+
+    defaults_route_rows_visible_is_5()
+    {
+        ; B4 Stage 2: how many route rows the widget shows at
+        ; once, starting from the current zone. Default 5: enough
+        ; lookahead for a typical Act 1 segment (4-5 zones)
+        ; without dominating the overlay. Configurable in
+        ; Settings → ROUTE; the slider clamps to [3, 10].
+        Assert.Equal(5, AppSettings.Defaults().routeRowsVisible)
     }
 
     defaults_auto_finalize_regex_empty()
@@ -463,6 +493,84 @@ class AppSettingsTests extends TestCase
         ; the banner off.
         cfg := AppSettings.FromMap(Map())
         Assert.True(cfg.showOutcomeBanner)
+    }
+
+    ; --- Route ---
+
+    from_map_reads_route_widget_visible()
+    {
+        ; Boolean coercion: both AHK true and string "1" must work,
+        ; because the in-memory edit path delivers a real bool but
+        ; SettingsRepository routes through IniRead which returns
+        ; the string "1". Both shapes have to land on the same value.
+        cfg := AppSettings.FromMap(Map("routeWidgetVisible", true))
+        Assert.True(cfg.routeWidgetVisible)
+
+        cfg2 := AppSettings.FromMap(Map("routeWidgetVisible", "1"))
+        Assert.True(cfg2.routeWidgetVisible)
+
+        cfg3 := AppSettings.FromMap(Map("routeWidgetVisible", false))
+        Assert.False(cfg3.routeWidgetVisible)
+    }
+
+    from_map_reads_route_rows_visible()
+    {
+        ; Within the clamped range [3, 10]: read verbatim.
+        cfg := AppSettings.FromMap(Map("routeRowsVisible", 7))
+        Assert.Equal(7, cfg.routeRowsVisible)
+
+        ; Boundary values: 3 and 10 are accepted as-is.
+        cfg2 := AppSettings.FromMap(Map("routeRowsVisible", 3))
+        Assert.Equal(3, cfg2.routeRowsVisible)
+
+        cfg3 := AppSettings.FromMap(Map("routeRowsVisible", 10))
+        Assert.Equal(10, cfg3.routeRowsVisible)
+    }
+
+    from_map_clamps_route_rows_visible_below_three()
+    {
+        ; Out-of-range LOW values clamp to 3 (not to the default 5).
+        ; The user clearly wanted a small count; honoring the
+        ; nearest bound is more useful than a silent default that
+        ; doesn't reflect their intent. Contrast with FromMap's
+        ; treatment of fully invalid values (non-numeric), which
+        ; DO fall back to the default — there "intent" is undefined.
+        cfg := AppSettings.FromMap(Map("routeRowsVisible", 2))
+        Assert.Equal(3, cfg.routeRowsVisible)
+
+        cfg2 := AppSettings.FromMap(Map("routeRowsVisible", 0))
+        Assert.Equal(3, cfg2.routeRowsVisible)
+
+        cfg3 := AppSettings.FromMap(Map("routeRowsVisible", -5))
+        Assert.Equal(3, cfg3.routeRowsVisible)
+    }
+
+    from_map_clamps_route_rows_visible_above_ten()
+    {
+        cfg := AppSettings.FromMap(Map("routeRowsVisible", 11))
+        Assert.Equal(10, cfg.routeRowsVisible)
+
+        cfg2 := AppSettings.FromMap(Map("routeRowsVisible", 999))
+        Assert.Equal(10, cfg2.routeRowsVisible)
+    }
+
+    from_map_route_rows_visible_invalid_uses_default()
+    {
+        ; Non-numeric / empty values can't be clamped to anything
+        ; meaningful, so they fall back to the default 5. A user
+        ; with a typo in their INI lands on the safe default rather
+        ; than silently getting bound 3 or 10.
+        cfg := AppSettings.FromMap(Map("routeRowsVisible", "not a number"))
+        Assert.Equal(5, cfg.routeRowsVisible)
+
+        cfg2 := AppSettings.FromMap(Map("routeRowsVisible", ""))
+        Assert.Equal(5, cfg2.routeRowsVisible)
+    }
+
+    from_map_route_rows_visible_missing_uses_default()
+    {
+        cfg := AppSettings.FromMap(Map())
+        Assert.Equal(5, cfg.routeRowsVisible)
     }
 
     from_map_reads_auto_finalize_regex()

@@ -147,6 +147,7 @@ class SteveLayoutPlusWidget extends LayoutWidgetBase
     _handlerRunReset       := ""
     _handlerRunCancelled   := ""
     _handlerPbDisplayMode  := ""   ; Evt.PbDisplayModeChanged — forces a full refresh on toggle
+    _handlerRouteVis       := ""   ; Evt.RouteVisibilityToggled — refreshes the arrow glyph in place
 
     _highFreqTimerFn := ""
 
@@ -186,6 +187,14 @@ class SteveLayoutPlusWidget extends LayoutWidgetBase
         bus.Subscribe(Events.RunReset,         this._handlerRunReset)
         bus.Subscribe(Events.RunCancelled,     this._handlerRunCancelled)
         bus.Subscribe(Events.PbDisplayModeChanged, this._handlerPbDisplayMode)
+
+        ; B4 Stage 2: route toggle arrow. Subscribe only when cfg
+        ; was wired (opt-in at the composition root).
+        if IsObject(cfg)
+        {
+            this._handlerRouteVis := (data) => this._OnRouteVisibilityToggled(data)
+            bus.Subscribe(Events.RouteVisibilityToggled, this._handlerRouteVis)
+        }
     }
 
     _GetFixedSize() => Map("w", SteveLayoutPlusWidget.FIXED_W, "h", SteveLayoutPlusWidget.FIXED_H)
@@ -339,6 +348,16 @@ class SteveLayoutPlusWidget extends LayoutWidgetBase
         this._lastDeathsColor := ""
         this._lastXpColor     := ""
         this._lastPbText      := ""
+
+        ; B4 Stage 2: bottom-right route toggle arrow.
+        if IsObject(this._cfg)
+        {
+            this._ctrls["routeArrow"] := RouteToggleArrow.Build(
+                wg, w, h, s,
+                this._cfg.routeWidgetVisible,
+                Theme.FONT_UI,
+                (*) => this._OnRouteArrowClick())
+        }
 
         this._Refresh()
 
@@ -642,6 +661,23 @@ class SteveLayoutPlusWidget extends LayoutWidgetBase
         this._Refresh()
     }
 
+    ; B4 Stage 2 — route toggle arrow click handler.
+    _OnRouteArrowClick()
+    {
+        this._bus.Publish(Commands.ToggleRouteVisibilityRequested, Map())
+    }
+
+    ; B4 Stage 2 — hot-refresh of arrow glyph after visibility flip.
+    _OnRouteVisibilityToggled(data)
+    {
+        if !this._gui || !this._ctrls.Has("routeArrow")
+            return
+        visible := IsObject(data) && data.Has("visible")
+                   ? data["visible"]
+                   : false
+        RouteToggleArrow.RefreshGlyph(this._ctrls["routeArrow"], visible)
+    }
+
     _ResolveInitialActZone()
     {
         if !IsObject(this._zoneTracker)
@@ -831,6 +867,11 @@ class SteveLayoutPlusWidget extends LayoutWidgetBase
         {
             this._bus.Unsubscribe(Events.PbDisplayModeChanged, this._handlerPbDisplayMode)
             this._handlerPbDisplayMode := ""
+        }
+        if (this._handlerRouteVis != "")
+        {
+            this._bus.Unsubscribe(Events.RouteVisibilityToggled, this._handlerRouteVis)
+            this._handlerRouteVis := ""
         }
     }
 }

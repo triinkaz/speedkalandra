@@ -214,6 +214,7 @@ class CompactLayoutPlusWidget extends LayoutWidgetBase
     _handlerDeathDetected  := ""
     _handlerVendorChanged  := ""
     _handlerPbDisplayMode  := ""   ; Evt.PbDisplayModeChanged — full refresh on toggle
+    _handlerRouteVis       := ""   ; Evt.RouteVisibilityToggled — refreshes the arrow glyph in place
 
     _highFreqTimerFn := ""
 
@@ -254,6 +255,14 @@ class CompactLayoutPlusWidget extends LayoutWidgetBase
         bus.Subscribe(Events.RunCancelled,          this._handlerRunCancelled)
         bus.Subscribe(Events.VendorRegexesChanged,  this._handlerVendorChanged)
         bus.Subscribe(Events.PbDisplayModeChanged,  this._handlerPbDisplayMode)
+
+        ; B4 Stage 2: route toggle arrow. Subscribe only when cfg
+        ; was wired (opt-in at the composition root).
+        if IsObject(cfg)
+        {
+            this._handlerRouteVis := (data) => this._OnRouteVisibilityToggled(data)
+            bus.Subscribe(Events.RouteVisibilityToggled, this._handlerRouteVis)
+        }
     }
 
     _GetFixedSize() => Map("w", CompactLayoutPlusWidget.FIXED_W, "h", CompactLayoutPlusWidget.FIXED_H)
@@ -417,6 +426,24 @@ class CompactLayoutPlusWidget extends LayoutWidgetBase
 
         ; ============ V1/V2/V3 vendor buttons (right column) ============
         this._BuildVendorButtons(s)
+
+        ; B4 Stage 2: route toggle arrow. Sits above V1 in the
+        ; V1/V2/V3 column (right edge, top), same slot as the
+        ; Classic variant for visual continuity across the toggle.
+        if IsObject(this._cfg)
+        {
+            btnSize := Max(10, Round(CompactLayoutPlusWidget.BTN_SIZE * s))
+            mRight  := Max(1, Round(CompactLayoutPlusWidget.BTN_MARGIN_R * s))
+            stripeH := Max(1, Round(CompactLayoutPlusWidget.STRIPE_H * s))
+            arrowX  := this._w - mRight - btnSize
+            arrowY  := stripeH + Max(1, Round(2 * s))
+            this._ctrls["routeArrow"] := RouteToggleArrow.Build(
+                wg, this._w, this._h, s,
+                this._cfg.routeWidgetVisible,
+                Theme.FONT_UI,
+                (*) => this._OnRouteArrowClick(),
+                arrowX, arrowY)
+        }
 
         ; Initial state resync (handles mid-run widget swap)
         this._ResolveInitialActZone()
@@ -935,6 +962,23 @@ class CompactLayoutPlusWidget extends LayoutWidgetBase
         this._Refresh()
     }
 
+    ; B4 Stage 2 — route toggle arrow click handler.
+    _OnRouteArrowClick()
+    {
+        this._bus.Publish(Commands.ToggleRouteVisibilityRequested, Map())
+    }
+
+    ; B4 Stage 2 — hot-refresh of arrow glyph after visibility flip.
+    _OnRouteVisibilityToggled(data)
+    {
+        if !this._gui || !this._ctrls.Has("routeArrow")
+            return
+        visible := IsObject(data) && data.Has("visible")
+                   ? data["visible"]
+                   : false
+        RouteToggleArrow.RefreshGlyph(this._ctrls["routeArrow"], visible)
+    }
+
     ; Hot-reload of cfg.pbDisplayMode — see steve_layout_plus_widget
     ; for the rationale. Both timers AND both block sub-labels
     ; depend on the mode, so all four derived caches reset.
@@ -1173,6 +1217,11 @@ class CompactLayoutPlusWidget extends LayoutWidgetBase
         {
             this._bus.Unsubscribe(Events.PbDisplayModeChanged, this._handlerPbDisplayMode)
             this._handlerPbDisplayMode := ""
+        }
+        if (this._handlerRouteVis != "")
+        {
+            this._bus.Unsubscribe(Events.RouteVisibilityToggled, this._handlerRouteVis)
+            this._handlerRouteVis := ""
         }
     }
 }

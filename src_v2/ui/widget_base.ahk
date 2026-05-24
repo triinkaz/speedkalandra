@@ -102,6 +102,12 @@ class WidgetBase
     IsModeVisible() => this._modeVisible           ; mode filter
     GetPosition() => this._position
     GetScale()    => this._position.scale
+    ; Returns the Win32 HWND of the rendered Gui, or 0 when the
+    ; widget isn't currently on screen. Used by dependent widgets
+    ; (RouteWidget) that need to read live geometry via WinGetPos
+    ; — they can pair this with WidgetGeometryChanged for updates
+    ; and use the hwnd directly for the initial render.
+    GetHwnd() => this._gui ? this._gui.Hwnd : 0
     GetSize()     => Map("w", this._w, "h", this._h)
 
     ; ============================================================
@@ -302,6 +308,11 @@ class WidgetBase
         this._position.scale := value
         this._Persist()
         this.ReRender()
+        ; Notify subscribers that this widget changed geometry so
+        ; dependent widgets (e.g. RouteWidget glued below the
+        ; active timer) can realign. Helper is a no-op when the
+        ; widget isn't currently rendered.
+        this._PublishGeometryChanged()
     }
 
     ; Changes percentage position. Clamps to [0, 95] (aligned with
@@ -324,6 +335,7 @@ class WidgetBase
         this._position.centered := !!centered
         this._Persist()
         this.ReRender()
+        this._PublishGeometryChanged()
     }
 
     ; ============================================================
@@ -546,6 +558,44 @@ class WidgetBase
                 this._position.centered := false
                 this._Persist()
             }
+        }
+        ; After persisting the new percentages, broadcast the
+        ; geometry change so dependent widgets can realign
+        ; (e.g. RouteWidget glues itself below the active timer
+        ; widget).
+        this._PublishGeometryChanged()
+    }
+
+    ; Publishes Evt.WidgetGeometryChanged with the widget's CURRENT
+    ; screen position + dimensions + scale, read directly from
+    ; the live Gui via WinGetPos. Used by dependent widgets to
+    ; realign after drag-end / scale change / programmatic
+    ; SetPosition.
+    ;
+    ; Silent no-op when the widget isn't rendered — there is no
+    ; geometry to report, and a stale read would risk publishing
+    ; zeros that subscribers might mistake for a valid position.
+    ;
+    ; The event is NOT published during the drag motion itself,
+    ; only at the gesture end. B4 sabor 2 explicitly accepted
+    ; the brief "detached" frame during drag to keep the hot
+    ; path free of bus traffic.
+    _PublishGeometryChanged()
+    {
+        if !this._gui
+            return
+        try
+        {
+            wx := 0, wy := 0, ww := 0, wh := 0
+            WinGetPos(&wx, &wy, &ww, &wh, "ahk_id " this._gui.Hwnd)
+            this._bus.Publish(Events.WidgetGeometryChanged, Map(
+                "widgetId", this.id,
+                "x",        Integer(wx),
+                "y",        Integer(wy),
+                "w",        Integer(ww),
+                "h",        Integer(wh),
+                "scale",    this._position.scale
+            ))
         }
     }
 

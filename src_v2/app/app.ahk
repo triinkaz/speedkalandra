@@ -85,6 +85,17 @@ class SpeedKalandraApp
     deathStatsService := ""
     deathLogScanner   := ""
 
+    ; Route widget infrastructure (B4 Stage 2). The repository
+    ; holds the per-profile route definitions in data/routes/
+    ; <profile>.ini. The service holds the active Route in memory
+    ; and subscribes to ZoneEntered + run lifecycle to advance
+    ; _currentIdx. The widget glues itself below the active
+    ; timer widget (micro / micro_plus / steve / steve_plus)
+    ; via an anchor resolver constructed inline below.
+    routeRepo    := ""
+    routeService := ""
+    routeWidget  := ""
+
     overlayMode     := ""
     overlayApplier  := ""
     focusAutoPause  := ""
@@ -253,6 +264,34 @@ class SpeedKalandraApp
         ; files). Zero game interaction. No risk.
         avgSink := LogServiceWarningSink(this.log, "RunAverage")
         this.runAverage := RunAverageService(this.runHistory, this.bus, avgSink)
+
+        ; B4 Stage 2: route infrastructure. The repository writes
+        ; data/routes/<sanitized_profile>.ini (one file per
+        ; profile, schema [Route] zones=A|B|C). The service is
+        ; constructed here, BEFORE _WireEventHandlers and BEFORE
+        ; runService.Hydrate, so its subscriptions to ZoneEntered /
+        ; RunStarted / RunReset / RunCancelled / ProfileChanged are
+        ; in place when the hydrate path replays Evt.RunStarted
+        ; {hydrated:true}. The GSG §17 anti-regression item 1
+        ; (hydrate-before-subscribers) requires this ordering;
+        ; an integration test pins it.
+        ;
+        ; LoadRouteForProfile is NOT called here — it's deferred
+        ; to after runService.Hydrate (at the end of __New) so the
+        ; resulting Evt.RouteChanged doesn't fire before the
+        ; RouteWidget is constructed below.
+        routeSink := LogServiceWarningSink(this.log, "Route")
+        this.routeRepo    := RouteRepository(
+            scriptDir "\data\routes", routeSink)
+        ; The zoneProvider closure lazy-resolves to this.zoneTracker
+        ; — it's constructed later in this constructor, but the
+        ; closure isn't called until the first RunStarted/Reset/
+        ; Cancelled event lands (always post-construction).
+        zoneProvider := () => IsObject(this.zoneTracker)
+                              ? this.zoneTracker.GetActiveZone()
+                              : ""
+        this.routeService := RouteService(
+            this.bus, this.routeRepo, this.log, zoneProvider)
 
         this.runState   := RunStateRepository(ini, runStateSink)
         this.timer      := TimerService(this.clock, this.bus)
@@ -519,6 +558,20 @@ class SpeedKalandraApp
         ; dependency direction obvious to readers.
         this.runOutcomeBanner := RunOutcomeBannerWidget(this.bus, this._cfg, headless)
 
+        ; B4 Stage 2: route walkthrough widget. Standalone (not in
+        ; the layout-mode widget map) for the same reasons as the
+        ; outcome banner — not user-positionable, doesn't participate
+        ; in mode switching, its geometry is derived from an anchor
+        ; rather than from cfg.overlay. The anchor resolver
+        ; closure picks the active timer widget (micro or steve,
+        ; classic or plus) based on which one is currently
+        ; mode-visible. Compact mode returns "", which the widget
+        ; treats as "hide the route surface".
+        anchorResolver := () => this._ResolveRouteAnchor()
+        this.routeWidget := RouteWidget(
+            this.bus, this._cfg, this.routeService,
+            anchorResolver, headless)
+
         ; Wire the run-finalization save through RunService's
         ; pre-publish hooks instead of as a bus subscriber. This sees
         ; the run's in-memory state before subscribers (notably
@@ -582,6 +635,23 @@ class SpeedKalandraApp
                 . " | What: " . (ex.HasOwnProp("What") ? ex.What : "?")
                 . " | Line: " . (ex.HasOwnProp("Line") ? ex.Line : "?")
                 . " | File: " . (ex.HasOwnProp("File") ? ex.File : "?"), "App")
+        }
+
+        ; B4 Stage 2: load the active route for the current profile.
+        ; Runs AFTER runService.Hydrate intentionally — the hydrate
+        ; path replays Evt.RunStarted{hydrated:true} which resets
+        ; the route position to -1 via RouteService. Loading the
+        ; route last means the resulting Evt.RouteChanged carries
+        ; the post-hydrate state (currentIdx=-1 + the loaded zones),
+        ; which is what RouteWidget renders if cfg.routeWidgetVisible.
+        try
+        {
+            this.routeService.LoadRouteForProfile(this._cfg.profileName)
+        }
+        catch as ex
+        {
+            try this.log.Warn("Failed to load route for profile '"
+                . this._cfg.profileName . "': " . ex.Message, "App")
         }
     }
 
@@ -665,6 +735,17 @@ class SpeedKalandraApp
 
         this.overlayApplier.ApplyMode(this.overlayMode.GetMode())
 
+        ; B4 Stage 2: surface the route widget only if the user has
+        ; opted in via cfg.routeWidgetVisible. The widget itself
+        ; re-checks the cfg on every Show, so a stale flag from a
+        ; previous run can't sneak past this gate. ApplyMode above
+        ; ran first so the anchor resolver returns the right widget
+        ; for the current mode.
+        if (this._cfg.routeWidgetVisible)
+        {
+            try this.routeWidget.Show()
+        }
+
         this.tickEmitter.Start()
 
         ; Event tracing is opt-in via cfg.eventTracingEnabled. When
@@ -739,6 +820,8 @@ class SpeedKalandraApp
         try this.microWidget.Hide()
         try this.steveWidget.Hide()
         try this.runOutcomeBanner.Dispose()
+        try this.routeWidget.Dispose()
+        try this.routeService.Dispose()
 
         try
         {
@@ -790,6 +873,17 @@ class SpeedKalandraApp
         this.bus.Subscribe(Commands.ImportRunsRequested,
             (data) => this._OnImportRunsRequested(data))
 
+        ; B4 Stage 2: route visibility toggle. The four anchor-
+        ; eligible timer widgets publish this command when the user
+        ; Ctrl+Clicks their bottom-right arrow. The handler flips
+        ; cfg.routeWidgetVisible, persists the new value via the
+        ; settings repository, then publishes Evt.RouteVisibility
+        ; Toggled with the new state — RouteWidget (Show/Hide) and
+        ; the four arrow controls (glyph refresh) react to that
+        ; event.
+        this.bus.Subscribe(Commands.ToggleRouteVisibilityRequested,
+            (data) => this._OnToggleRouteVisibility(data))
+
         ; Export/import logging: services don't carry a log dependency
         ; by design, so we mirror their outcome events here.
         this.bus.Subscribe(Events.RunsExported,
@@ -818,6 +912,50 @@ class SpeedKalandraApp
             (data) => this._OnLogFilePathChanged(data))
         this.bus.Subscribe(Events.HotkeysChanged,
             (data) => this._reconfig.RebindHotkeys(data))
+    }
+
+    ; B4 Stage 2 — toggle handler. Flips cfg.routeWidgetVisible,
+    ; persists settings, then publishes Evt.RouteVisibilityToggled
+    ; with the new value so RouteWidget (Show/Hide) and the four
+    ; arrow controls (glyph swap) react. Persistence failure is
+    ; logged but doesn't block the in-memory flip — the user's
+    ; choice still applies for this session.
+    _OnToggleRouteVisibility(data)
+    {
+        this._cfg.routeWidgetVisible := !this._cfg.routeWidgetVisible
+        try
+        {
+            this._settingsRepo.Save(this._cfg)
+        }
+        catch as ex
+        {
+            try this.log.Warn("Failed to persist route visibility flip: " . ex.Message, "App")
+        }
+        this.bus.Publish(Events.RouteVisibilityToggled, Map(
+            "visible", this._cfg.routeWidgetVisible))
+    }
+
+    ; B4 Stage 2 — anchor resolver for RouteWidget. Returns the
+    ; active timer widget (the one currently mode-visible) so the
+    ; route surface glues itself below it. MICRO mode — only the
+    ; micro widget visible — returns "", which signals
+    ; RouteWidget to hide rather than render orphaned.
+    ;
+    ; Eligibility is the two large timer widgets: compact and
+    ; steve (classic + plus variants of each). The user opted
+    ; these in because they have enough screen real estate for
+    ; the route panel to sit comfortably below; the micro widget
+    ; is intentionally too small to host a route surface anchored
+    ; to it. Preference is compact > steve so the closer-to-the-
+    ; top widget wins when both are mode-visible (in practice
+    ; only one is at a time, but the order is the tie-break).
+    _ResolveRouteAnchor()
+    {
+        if (IsObject(this.compactWidget) && this.compactWidget.IsModeVisible())
+            return this.compactWidget
+        if (IsObject(this.steveWidget) && this.steveWidget.IsModeVisible())
+            return this.steveWidget
+        return ""
     }
 
     ; Restarts LogMonitor against a new Client.txt path when the user
@@ -1133,6 +1271,7 @@ class SpeedKalandraApp
             "loadingDetection", "loadingTotals",
             "personalBest", "runAverage", "runHistory",
             "deathLog", "deathStatsService", "deathLogScanner",
+            "routeRepo", "routeService", "routeWidget",
             "statsRecorder", "plotBuilder",
             "autoFinalize", "autoStart",
             ; Input + presentation
