@@ -164,12 +164,14 @@ class SettingsDialog
 
     _BuildGui()
     {
-        ; Fixed size (WINDOW_W x WINDOW_H) — +Resize would add DWM
-        ; sizing borders that repaint on every neighbour-window move
-        ; (significant cost when overlays are dragged with this dialog
-        ; visible, since both are AlwaysOnTop and Windows recomposes
-        ; the topmost stack on each WinMove).
-        g := Gui("+AlwaysOnTop -MaximizeBox", "SpeedKalandra " . Version.STRING . " - Settings")
+        ; +Resize enabled so the user can stretch the window when
+        ; the contents exceed the screen height. The previous fixed
+        ; size traded DWM repaint cost during overlay drags for the
+        ; window-always-fits guarantee, but once the ROUTE section
+        ; (B4 Commit 3) pushed total height past ~1080px on most
+        ; displays, close/min/Save/Cancel buttons started landing
+        ; outside the viewport. Resize is the lesser cost.
+        g := Gui("+AlwaysOnTop +Resize", "SpeedKalandra " . Version.STRING . " - Settings")
         g.BackColor := Theme.Color("bg")
         g.MarginX := 16
         g.MarginY := 14
@@ -355,7 +357,23 @@ class SettingsDialog
         btnCancel.OnEvent("Click", (*) => this.Close())
 
         finalH := y + 50
-        g.Show("w" SettingsDialog.WINDOW_W " h" finalH)
+        ; Cap at screen height minus a margin for taskbar + window
+        ; decorations. Without this, finalH can exceed the display
+        ; height (the ROUTE section pushed B4 Commit 3 right up to
+        ; the boundary) and Windows places the window with its
+        ; bottom — or top, if the user later moves it — outside the
+        ; viewport, hiding either Save/Cancel or close/minimize.
+        ; +Resize on the Gui (set in _BuildGui header) lets the user
+        ; stretch back if the cap clipped useful content.
+        maxH := A_ScreenHeight - 80
+        if (finalH > maxH)
+            finalH := maxH
+        ; Center forces the window to start centered on the active
+        ; monitor instead of Windows' default top-left placement,
+        ; which on a maxed-out finalH means controls below the
+        ; centerline are at risk regardless of placement — but
+        ; centering at least guarantees the title bar is visible.
+        g.Show("Center w" SettingsDialog.WINDOW_W " h" finalH)
     }
 
     ; Sets the font (Theme.InputFont) before adding the Edit so the
@@ -925,9 +943,15 @@ class SettingsDialog
         ; Listbox + side button column.
         items := this._BuildRouteListBoxItems()
         ; Width 420 leaves an 80px column on the right for the
-        ; three reorder/remove buttons.
+        ; three reorder/remove buttons. Listbox height h100 shows
+        ; ~5 rows at the default font; the slider below already
+        ; lets the user control how many rows the LIVE widget
+        ; surfaces, so the editor's compact view is acceptable.
+        ; Originally h140 in the first draft of Commit 3 but that
+        ; pushed the dialog past 1080p screens — see _BuildGui
+        ; header note on the +Resize switch.
         this._ctrls["routeListBox"] := g.Add("ListBox",
-            "x32 y" (y + 22) " w420 h140",
+            "x32 y" (y + 22) " w420 h100",
             items)
         if (items.Length > 0)
             try this._ctrls["routeListBox"].Choose(1)
@@ -935,23 +959,24 @@ class SettingsDialog
         ; Right-side button column. Three buttons stacked with
         ; small gaps; ▲ at the top, ▼ just below, Remove at the
         ; bottom (aligned to the listbox's bottom edge so the
-        ; deletion control is visually anchored).
+        ; deletion control is visually anchored). Heights h28
+        ; (was h36) so all three fit in the shrunk h100 listbox.
         g.SetFont("s10 c" Theme.Color("text"), Theme.FONT_UI)
-        btnUp := g.Add("Button", "x460 y" (y + 22) " w80 h36", "▲")
+        btnUp := g.Add("Button", "x460 y" (y + 22) " w80 h28", "▲")
         btnUp.OnEvent("Click", (*) => this._OnRouteMoveUp())
         this._ctrls["routeBtnUp"] := btnUp
 
-        btnDown := g.Add("Button", "x460 y" (y + 62) " w80 h36", "▼")
+        btnDown := g.Add("Button", "x460 y" (y + 54) " w80 h28", "▼")
         btnDown.OnEvent("Click", (*) => this._OnRouteMoveDown())
         this._ctrls["routeBtnDown"] := btnDown
 
         g.SetFont("s9 c" Theme.Color("text"), Theme.FONT_UI)
-        btnDel := g.Add("Button", "x460 y" (y + 126) " w80 h36", "Remove")
+        btnDel := g.Add("Button", "x460 y" (y + 94) " w80 h28", "Remove")
         btnDel.OnEvent("Click", (*) => this._OnRouteRemove())
         this._ctrls["routeBtnRemove"] := btnDel
 
         ; Move past the listbox row.
-        y += 22 + 140 + 8
+        y += 22 + 100 + 8
 
         ; Add-zone row: label + non-town dropdown + Add button.
         this._Label(g, y, "Add zone")
