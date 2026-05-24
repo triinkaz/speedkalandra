@@ -32,6 +32,7 @@ class SpeedKalandraAppIntegrationTests extends TestCase
     runHistoryDir := ""
     pbPath        := ""
     deathLogPath  := ""
+    routesDir     := ""
     stubClock     := ""
     app           := ""
 
@@ -44,6 +45,7 @@ class SpeedKalandraAppIntegrationTests extends TestCase
         this.runHistoryDir := this.tmpDir "\runs"
         this.pbPath        := this.tmpDir "\pb.ini"
         this.deathLogPath  := this.tmpDir "\deaths.csv"
+        this.routesDir     := this.tmpDir "\routes"
 
         ; Create a minimal valid zones.csv (real project format)
         FileAppend(
@@ -63,6 +65,11 @@ class SpeedKalandraAppIntegrationTests extends TestCase
         try DirCreate(this.runHistoryDir)
         Fixtures.RegisterTempPath(this.runHistoryDir)
 
+        ; Routes dir is created lazily by RouteRepository.__New (DirCreate
+        ; with try). Registered with the fixture cleanup pool so any INI
+        ; the app may write under it during a test is wiped between runs.
+        Fixtures.RegisterTempPath(this.routesDir)
+
         ; FakeClock with base 1000000ms (arbitrary, far from 0)
         this.stubClock := Fixtures.MakeFakeClock(1000000)
 
@@ -73,6 +80,7 @@ class SpeedKalandraAppIntegrationTests extends TestCase
             "runHistoryDir",    this.runHistoryDir,
             "personalBestPath", this.pbPath,
             "deathLogPath",     this.deathLogPath,
+            "routesDir",        this.routesDir,
             "headless",         true,
             "clock",            this.stubClock
         ))

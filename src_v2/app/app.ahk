@@ -192,6 +192,14 @@ class SpeedKalandraApp
                                                   : (scriptDir "\data\personal_bests.ini")
         deathLogPath := cfgMap.Has("deathLogPath") ? cfgMap["deathLogPath"]
                                                     : (scriptDir "\data\deaths.csv")
+        ; routesDir gates ALL route I/O (per-profile INI under
+        ; data\routes\<profile>.ini). Without an override the
+        ; default is relative to A_ScriptDir, which in tests
+        ; resolves to tests_v2\ — a stray production-format INI
+        ; would land there on every integration-test run. Tests
+        ; that don't care about route state can pass a TempDir.
+        routesDir := cfgMap.Has("routesDir") ? cfgMap["routesDir"]
+                                              : (scriptDir "\data\routes")
 
         headless := cfgMap.Has("headless") ? !!cfgMap["headless"] : false
         this._headless := headless
@@ -281,8 +289,7 @@ class SpeedKalandraApp
         ; resulting Evt.RouteChanged doesn't fire before the
         ; RouteWidget is constructed below.
         routeSink := LogServiceWarningSink(this.log, "Route")
-        this.routeRepo    := RouteRepository(
-            scriptDir "\data\routes", routeSink)
+        this.routeRepo    := RouteRepository(routesDir, routeSink)
         ; The zoneProvider closure lazy-resolves to this.zoneTracker
         ; — it's constructed later in this constructor, but the
         ; closure isn't called until the first RunStarted/Reset/
@@ -505,7 +512,9 @@ class SpeedKalandraApp
         this.overlayApplier := OverlayModeApplier(this.bus, this.widgets)
         this.tickEmitter := AppTickEmitter(this.bus, 300)
 
-        this.settingsDialog := SettingsDialog(this.bus, this._settingsRepo, this._cfg, headless, this.log)
+        this.settingsDialog := SettingsDialog(
+            this.bus, this._settingsRepo, this._cfg, headless, this.log,
+            this.routeRepo, this.routeService, this.zonesCatalog)
         this.plotDialog := RunStatsPlotDialog(
             this.bus, this.plotBuilder, this.statsRecorder,
             this.zoneTracker, this.timer, this.runHistory, headless

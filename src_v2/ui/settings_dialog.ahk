@@ -13,6 +13,27 @@
 ;   Rules             AutoPauseOnFocus, DeathPenaltyEnabled + seconds
 ;   Layouts (BETA)    LayoutVariant (classic | plus)
 ;   Display           PbDisplayMode (pb | avg5; live-reloadable), ShowOutcomeBanner (live-reloadable)
+;   Route             Per-profile zone list (listbox + ▲▼ reorder + Remove +
+;                     non-town dropdown + Add + Visible rows slider +
+;                     Import/Export). Rendered only when routeRepo,
+;                     routeService and zonesCatalog are all wired; the
+;                     dialog accepts those three as optional ctor args so
+;                     headless tests that don't care about the route surface
+;                     keep working unchanged. The route is loaded from
+;                     cfg.profileName at Open() time and edits operate on
+;                     an in-memory buffer (_routeZones) until Save persists
+;                     via routeRepo.Save + routeService.Refresh.
+;
+;                     Limitation: the dialog reads cfg.profileName ONCE on
+;                     Open. If the user changes the Build field and saves,
+;                     the route persists under the NEW profile name; if
+;                     they change the Build but don't save, the route
+;                     editing buffer is still tied to the OLD profile.
+;                     Documented over implementing a live-reload because
+;                     this is rare (the user normally settles on a Build
+;                     before authoring routes) and the alternative would
+;                     require a confirmation flow that's busier than the
+;                     edge case warrants.
 ;   Hotkeys           Every action registered in cfg.hotkeys
 ;
 ; AHK v2 gotcha on Gui.Add: "s<size>" and "c<hex>" inline options are
@@ -38,7 +59,18 @@ class SettingsDialog
     _isOpen        := false
     _hotkeyActions := ""    ; Array<actionName> ordered
 
-    __New(bus, settingsRepo, cfg, headless := false, log := "")
+    ; Route-tab dependencies — optional so legacy / headless test
+    ; setups that don't care about the route surface keep working.
+    ; All three must be wired together for the ROUTE section to
+    ; render and persist; missing any one falls back to "section
+    ; hidden, route persistence skipped".
+    _routeRepo     := ""    ; RouteRepository — Load/Save route per profile
+    _routeService  := ""    ; RouteService    — Refresh() after route save
+    _zonesCatalog  := ""    ; ZonesCatalog    — supplies the non-town dropdown
+    _routeZones    := ""    ; Array<String>   — in-memory editing buffer
+
+    __New(bus, settingsRepo, cfg, headless := false, log := "",
+          routeRepo := "", routeSvc := "", zonesCat := "")
     {
         if !(bus is EventBus)
             throw TypeError("SettingsDialog: 'bus' must be EventBus")
@@ -46,6 +78,26 @@ class SettingsDialog
             throw TypeError("SettingsDialog: 'settingsRepo' must be SettingsRepository")
         if !(cfg is AppSettings)
             throw TypeError("SettingsDialog: 'cfg' must be AppSettings")
+
+        ; Route deps validated ONLY when provided. Each is independently
+        ; optional but if you wire one you must wire all three — the
+        ; section won't render without the trio. Mixing in only some
+        ; would silently degrade (e.g. listbox loaded but Add button
+        ; would have no source for the non-town dropdown), so the
+        ; validation is all-or-nothing.
+        ; Param names follow the case-collision convention documented in
+        ; CLAUDE.md §3: `routeService` would shadow the `RouteService`
+        ; class in `is RouteService` checks here (and `zonesCatalog` /
+        ; `ZonesCatalog` would collide the same way). The shorter
+        ; `routeSvc` / `zonesCat` form is the project convention.
+        ; `routeRepo` is fine as-is — it doesn't share the lowercase
+        ; form with `RouteRepository`.
+        if (routeRepo != "" && !(routeRepo is RouteRepository))
+            throw TypeError("SettingsDialog: 'routeRepo' must be RouteRepository")
+        if (routeSvc != "" && !(routeSvc is RouteService))
+            throw TypeError("SettingsDialog: 'routeService' must be RouteService")
+        if (zonesCat != "" && !(zonesCat is ZonesCatalog))
+            throw TypeError("SettingsDialog: 'zonesCatalog' must be ZonesCatalog")
 
         this._bus          := bus
         this._settingsRepo := settingsRepo
@@ -56,10 +108,24 @@ class SettingsDialog
         ; so the save-failure warn path is a safe no-op in those
         ; callers. Production wires the real LogService.
         this._log          := (log = "" || !IsObject(log)) ? NullLogger() : log
+        this._routeRepo    := routeRepo
+        this._routeService := routeSvc
+        this._zonesCatalog := zonesCat
+        this._routeZones   := []
         this._ctrls        := Map()
         this._hotkeyActions := []
 
         bus.Subscribe(Commands.OpenSettingsRequested, (data) => this.Open())
+    }
+
+    ; True when the trio of route dependencies is wired. Single
+    ; predicate used by both _BuildGui (rendering decision) and
+    ; _OnSave (persistence decision), so they can't drift apart.
+    _HasRouteWiring()
+    {
+        return IsObject(this._routeRepo)
+            && IsObject(this._routeService)
+            && IsObject(this._zonesCatalog)
     }
 
     IsOpen() => this._isOpen
@@ -68,6 +134,9 @@ class SettingsDialog
     {
         if this._headless
         {
+            ; Headless mode still loads the route buffer so tests
+            ; can drive Move/Add/Remove/Save without a real GUI.
+            this._LoadRouteZonesFromRepo()
             this._isOpen := true
             return true
         }
@@ -76,6 +145,7 @@ class SettingsDialog
             try this._gui.Show()
             return true
         }
+        this._LoadRouteZonesFromRepo()
         this._BuildGui()
         this._isOpen := true
         return true
@@ -225,6 +295,15 @@ class SettingsDialog
             "x180 y" y (this._cfg.showOutcomeBanner ? " Checked" : ""),
             "Show run-outcome banner after each run")
         y += 32
+
+        ; ============ Route ============
+        ; The section renders only when routeRepo + routeService +
+        ; zonesCatalog are all wired (production composition root
+        ; provides them; old headless test setups don't). When
+        ; skipped, HOTKEYS follows immediately after DISPLAY with
+        ; no visible gap — the y cursor flows straight through.
+        if this._HasRouteWiring()
+            y := this._BuildRouteSection(g, y)
 
         ; ============ Hotkeys ============
         this._SectionHeader(g, y, "HOTKEYS")
@@ -390,6 +469,14 @@ class SettingsDialog
             ? (this._ctrls["showOutcomeBanner"].Value = 1)
             : cfg.showOutcomeBanner
 
+        ; Route rows visible: read from slider, clamp [3,10]
+        ; defensively. Same fallback-to-existing pattern as the
+        ; checkboxes above so a headless save (no GUI built) doesn't
+        ; clobber the value with a hardcoded default.
+        if this._ctrls.Has("routeRowsVisible")
+            cfg.routeRowsVisible := this._ClampRows(
+                this._ctrls["routeRowsVisible"].Value)
+
         ; Hotkeys: user types in human format ("Ctrl+Alt+F");
         ; HotkeyFormatter.ToAhk converts to internal syntax ("^!f")
         ; before persisting. Old-format input passes through as-is.
@@ -452,6 +539,7 @@ class SettingsDialog
             "layoutVariant",        cfg.layoutVariant,
             "pbDisplayMode",        cfg.pbDisplayMode,
             "showOutcomeBanner",    cfg.showOutcomeBanner,
+            "routeRowsVisible",     cfg.routeRowsVisible,
             "hotkeys",              SettingsDialog._CloneStringMap(cfg.hotkeys)
         )
     }
@@ -470,6 +558,7 @@ class SettingsDialog
         cfg.layoutVariant       := snapshot["layoutVariant"]
         cfg.pbDisplayMode       := snapshot["pbDisplayMode"]
         cfg.showOutcomeBanner   := snapshot["showOutcomeBanner"]
+        cfg.routeRowsVisible    := snapshot["routeRowsVisible"]
         cfg.hotkeys             := snapshot["hotkeys"]          ; the deep clone from snapshot
     }
 
@@ -577,6 +666,18 @@ class SettingsDialog
         }
 
         try TrayTip("SpeedKalandra", "Settings saved.", "Mute")
+
+        ; Save the route after settings. Route persistence is
+        ; independent of the settings file (different repo, different
+        ; INI), so a route failure here doesn't roll back the
+        ; settings save above — the user gets a separate warning and
+        ; the settings change still landed. routeService.Refresh
+        ; (inside _SaveRouteIfWired) publishes RouteChanged so the
+        ; live widget re-renders against both the new zone list AND
+        ; the new cfg.routeRowsVisible without needing a dedicated
+        ; rowsVisible event.
+        this._SaveRouteIfWired()
+
         this.Close()
         return true
     }
@@ -788,5 +889,432 @@ class SettingsDialog
             state.mods .= "#"
 
         ih.Stop()
+    }
+
+    ; ============================================================
+    ; Route section — build, handlers, persistence helpers
+    ; ============================================================
+    ;
+    ; The ROUTE section is rendered by _BuildRouteSection only when
+    ; routeRepo + routeService + zonesCatalog are all wired (see
+    ; _HasRouteWiring). When the section is hidden, none of the
+    ; methods below execute either, so headless tests without the
+    ; trio see the same lifecycle as a pre-feature build.
+    ;
+    ; Editing model:
+    ;   - Open() loads the active route from routeRepo into the
+    ;     _routeZones buffer (Array<String>).
+    ;   - Move/Add/Remove handlers mutate the buffer and refresh the
+    ;     ListBox.
+    ;   - _SaveRouteIfWired persists the buffer back to disk via
+    ;     routeRepo.Save (full overwrite, not incremental) and
+    ;     publishes RouteChanged through routeService.Refresh so the
+    ;     live RouteWidget re-renders.
+    ;
+    ; Cancel path: closing without Save discards every buffer edit
+    ;   — the dialog never touches disk and the in-memory cfg
+    ;   field for routeRowsVisible stays untouched.
+
+    _BuildRouteSection(g, y)
+    {
+        profileLabel := IsObject(this._cfg) ? this._cfg.profileName : ""
+        headerText := "ROUTE"
+            . (profileLabel != "" ? " (build: " . profileLabel . ")" : "")
+        this._SectionHeader(g, y, headerText)
+
+        ; Listbox + side button column.
+        items := this._BuildRouteListBoxItems()
+        ; Width 420 leaves an 80px column on the right for the
+        ; three reorder/remove buttons.
+        this._ctrls["routeListBox"] := g.Add("ListBox",
+            "x32 y" (y + 22) " w420 h140",
+            items)
+        if (items.Length > 0)
+            try this._ctrls["routeListBox"].Choose(1)
+
+        ; Right-side button column. Three buttons stacked with
+        ; small gaps; ▲ at the top, ▼ just below, Remove at the
+        ; bottom (aligned to the listbox's bottom edge so the
+        ; deletion control is visually anchored).
+        g.SetFont("s10 c" Theme.Color("text"), Theme.FONT_UI)
+        btnUp := g.Add("Button", "x460 y" (y + 22) " w80 h36", "▲")
+        btnUp.OnEvent("Click", (*) => this._OnRouteMoveUp())
+        this._ctrls["routeBtnUp"] := btnUp
+
+        btnDown := g.Add("Button", "x460 y" (y + 62) " w80 h36", "▼")
+        btnDown.OnEvent("Click", (*) => this._OnRouteMoveDown())
+        this._ctrls["routeBtnDown"] := btnDown
+
+        g.SetFont("s9 c" Theme.Color("text"), Theme.FONT_UI)
+        btnDel := g.Add("Button", "x460 y" (y + 126) " w80 h36", "Remove")
+        btnDel.OnEvent("Click", (*) => this._OnRouteRemove())
+        this._ctrls["routeBtnRemove"] := btnDel
+
+        ; Move past the listbox row.
+        y += 22 + 140 + 8
+
+        ; Add-zone row: label + non-town dropdown + Add button.
+        this._Label(g, y, "Add zone")
+        nonTowns := this._BuildNonTownZoneNames()
+        g.SetFont(Theme.InputFont(), Theme.FONT_UI)
+        dd := g.Add("DropDownList",
+            "x180 y" y " w280 " Theme.InputBg(),
+            nonTowns)
+        if (nonTowns.Length > 0)
+            try dd.Choose(1)
+        this._ctrls["routeAddDropdown"] := dd
+
+        g.SetFont("s9 c" Theme.Color("text"), Theme.FONT_UI)
+        btnAdd := g.Add("Button", "x466 y" (y - 1) " w74 h24", "+ Add")
+        btnAdd.OnEvent("Click", (*) => this._OnRouteAdd())
+        this._ctrls["routeBtnAdd"] := btnAdd
+
+        y += 30
+
+        ; Visible-rows slider (3-10).
+        this._Label(g, y, "Visible rows")
+        rows := this._ClampRows(this._cfg.routeRowsVisible)
+        ; Slider has a built-in tooltip but it's a separate window
+        ; that pops over the dialog — disorienting on a settings
+        ; surface. Use a live-updating text label to the right of
+        ; the slider track instead.
+        slider := g.Add("Slider",
+            "x180 y" y " w240 h22 Range3-10 Page1 TickInterval1",
+            rows)
+        slider.OnEvent("Change", (*) => this._OnRouteRowsChanged())
+        this._ctrls["routeRowsVisible"] := slider
+
+        g.SetFont("s9 bold c" Theme.Color("text"), Theme.FONT_UI)
+        rowsLabel := g.Add("Text", "x425 y" (y + 2) " w20", String(rows))
+        this._ctrls["routeRowsValueLabel"] := rowsLabel
+        g.SetFont("s9 c" Theme.Color("muted"), Theme.FONT_UI)
+        g.Add("Text", "x450 y" (y + 2) " w80", "(3 - 10)")
+
+        y += 30
+
+        ; Import / Export buttons.
+        g.SetFont("s9 c" Theme.Color("text"), Theme.FONT_UI)
+        btnImport := g.Add("Button", "x180 y" y " w120 h28", "Import...")
+        btnImport.OnEvent("Click", (*) => this._OnRouteImport())
+        this._ctrls["routeBtnImport"] := btnImport
+
+        btnExport := g.Add("Button", "x310 y" y " w120 h28", "Export...")
+        btnExport.OnEvent("Click", (*) => this._OnRouteExport())
+        this._ctrls["routeBtnExport"] := btnExport
+
+        y += 40
+        return y
+    }
+
+    ; Loads the active route from disk into _routeZones. Called from
+    ; Open(). Silently leaves the buffer empty if route deps aren't
+    ; wired — the section is hidden in that case anyway.
+    _LoadRouteZonesFromRepo()
+    {
+        this._routeZones := []
+        if !this._HasRouteWiring()
+            return
+        if !IsObject(this._cfg)
+            return
+        try
+        {
+            ; Param name `loaded` to avoid the `route`/`Route` case
+            ; collision (CLAUDE.md §3).
+            loaded := this._routeRepo.Load(this._cfg.profileName)
+            if (loaded is Route)
+                this._routeZones := loaded.GetZones()
+        }
+    }
+
+    ; Rebuilds the listbox from _routeZones. selectIndex (1-based)
+    ; is the row to focus after the rebuild; 0 means "no selection".
+    _RefreshRouteListBox(selectIndex := 0)
+    {
+        if !this._ctrls.Has("routeListBox")
+            return
+        lb := this._ctrls["routeListBox"]
+        items := this._BuildRouteListBoxItems()
+        try
+        {
+            lb.Delete()
+            if (items.Length > 0)
+                lb.Add(items)
+            if (selectIndex >= 1 && selectIndex <= items.Length)
+                lb.Choose(selectIndex)
+        }
+    }
+
+    ; Format the zone list for the ListBox. Numbering the rows
+    ; (" 1. Zone", " 2. Zone") makes reorder feedback immediate
+    ; — after a Move, the user sees the new position number, not
+    ; just a reordered name.
+    _BuildRouteListBoxItems()
+    {
+        items := []
+        if !(this._routeZones is Array)
+            return items
+        for i, zone in this._routeZones
+            items.Push(Format("{:2d}. {}", i, zone))
+        return items
+    }
+
+    ; Reads the catalog, filters out town entries (Q5 decision:
+    ; routes don't include towns), and returns sorted display names
+    ; for the Add-zone dropdown.
+    _BuildNonTownZoneNames()
+    {
+        out := []
+        if !IsObject(this._zonesCatalog)
+            return out
+        for _, z in this._zonesCatalog.All()
+        {
+            if !z.isTown
+                out.Push(z.name)
+        }
+        this._SortArray(out)
+        return out
+    }
+
+    ; The four handlers accept an optional idxOverride so tests
+    ; can drive them without a real ListBox — in headless mode
+    ; the dialog has no _ctrls["routeListBox"], so reading
+    ; selection from it would short-circuit every test. Production
+    ; always calls without the override (default -1), which makes
+    ; the handler read the live listbox selection as before.
+
+    _OnRouteMoveUp(idxOverride := -1)
+    {
+        idx := this._ResolveRouteIdx(idxOverride)
+        if (idx < 2 || idx > this._routeZones.Length)
+            return
+        ; AHK arrays are 1-based; idx is also 1-based here (from
+        ; ListBox.Value), so swap with idx-1.
+        tmp := this._routeZones[idx - 1]
+        this._routeZones[idx - 1] := this._routeZones[idx]
+        this._routeZones[idx] := tmp
+        this._RefreshRouteListBox(idx - 1)
+    }
+
+    _OnRouteMoveDown(idxOverride := -1)
+    {
+        idx := this._ResolveRouteIdx(idxOverride)
+        if (idx < 1 || idx >= this._routeZones.Length)
+            return
+        tmp := this._routeZones[idx + 1]
+        this._routeZones[idx + 1] := this._routeZones[idx]
+        this._routeZones[idx] := tmp
+        this._RefreshRouteListBox(idx + 1)
+    }
+
+    _OnRouteRemove(idxOverride := -1)
+    {
+        idx := this._ResolveRouteIdx(idxOverride)
+        if (idx < 1 || idx > this._routeZones.Length)
+            return
+        this._routeZones.RemoveAt(idx)
+        ; Try to select the same position. If we removed the
+        ; LAST item, select the new last (or 0 = no selection).
+        newSel := idx > this._routeZones.Length
+                ? this._routeZones.Length
+                : idx
+        this._RefreshRouteListBox(newSel)
+    }
+
+    _OnRouteAdd(zoneOverride := "")
+    {
+        zoneName := zoneOverride
+        if (zoneName = "")
+        {
+            if !this._ctrls.Has("routeAddDropdown")
+                return
+            zoneName := Trim(this._ctrls["routeAddDropdown"].Text)
+        }
+        if (Trim(String(zoneName)) = "")
+            return
+        this._routeZones.Push(String(zoneName))
+        this._RefreshRouteListBox(this._routeZones.Length)
+    }
+
+    ; Reads the route ListBox selection; returns 0 when there's no
+    ; listbox (headless) or no selection. Used by all four route
+    ; handlers above so the override semantics stay symmetric.
+    _ResolveRouteIdx(override)
+    {
+        if (override >= 0)
+            return Integer(override)
+        if !this._ctrls.Has("routeListBox")
+            return 0
+        try
+            return Integer(this._ctrls["routeListBox"].Value)
+        catch
+            return 0
+    }
+
+    _OnRouteRowsChanged()
+    {
+        if !this._ctrls.Has("routeRowsVisible")
+            return
+        if !this._ctrls.Has("routeRowsValueLabel")
+            return
+        try this._ctrls["routeRowsValueLabel"].Value :=
+            String(this._ctrls["routeRowsVisible"].Value)
+    }
+
+    _OnRouteImport()
+    {
+        if !this._HasRouteWiring()
+            return
+        try
+        {
+            ; Local `file` collides with built-in `File` class —
+            ; use `selectedFile`.
+            selectedFile := FileSelect(1, ,
+                "Import route from INI", "Route INI (*.ini)")
+            if (selectedFile = "")
+                return
+            ok := this._routeRepo.ImportFromFile(
+                selectedFile, this._cfg.profileName)
+            if !ok
+            {
+                try SpeedKalandraMsgBox(
+                    "Could not import route from`n`n  " . selectedFile . "`n`n"
+                    . "Check that the file is a valid SpeedKalandra route "
+                    . "INI (schema: [Route] zones=A|B|C, encoding UTF-16 LE BOM).",
+                    "Import failed", "IconX")
+                return
+            }
+            ; Reload the in-memory buffer from the freshly
+            ; imported file so the listbox reflects what was
+            ; written. Edits made before the import are silently
+            ; discarded — import is a full overwrite by design.
+            this._LoadRouteZonesFromRepo()
+            this._RefreshRouteListBox(1)
+            ; Refresh the live widget too so a successful import
+            ; surfaces in the overlay without waiting for Save.
+            try this._routeService.Refresh()
+        }
+    }
+
+    _OnRouteExport()
+    {
+        if !this._HasRouteWiring()
+            return
+        if (this._routeZones.Length = 0)
+        {
+            try SpeedKalandraMsgBox(
+                "Nothing to export — the route for build '"
+                . this._cfg.profileName . "' is empty. Add zones "
+                . "first, save, and try Export again.",
+                "Nothing to export", "Iconi")
+            return
+        }
+        try
+        {
+            ; Make sure the route on disk matches the in-memory
+            ; buffer BEFORE export. The user may have added zones
+            ; without clicking Save yet; export should reflect
+            ; what they see, not the stale disk version.
+            try this._routeRepo.Save(this._cfg.profileName,
+                Route(this._routeZones))
+
+            defaultName := this._SanitizeFileNameStem(this._cfg.profileName)
+                . "_route.ini"
+            ; FileSelect "S 16" = Save As + overwrite confirmation.
+            selectedFile := FileSelect("S 16", defaultName,
+                "Export route to INI", "Route INI (*.ini)")
+            if (selectedFile = "")
+                return
+            ok := this._routeRepo.ExportToFile(
+                this._cfg.profileName, selectedFile)
+            if !ok
+            {
+                try SpeedKalandraMsgBox(
+                    "Could not export route to`n`n  " . selectedFile . "`n`n"
+                    . "Check write permission and free disk space.",
+                    "Export failed", "IconX")
+                return
+            }
+            try TrayTip("SpeedKalandra",
+                "Route exported to: " . selectedFile, "Mute")
+        }
+    }
+
+    ; Persists the in-memory _routeZones buffer back to the active
+    ; profile's route INI and refreshes the live widget. Called by
+    ; _PersistAndPublishCfg AFTER settingsRepo.Save succeeds. Route
+    ; failure does NOT roll back the settings save — the user gets
+    ; a separate warning and the settings change still landed.
+    _SaveRouteIfWired()
+    {
+        if !this._HasRouteWiring()
+            return
+        profileName := this._cfg.profileName
+        ; Param name `routeObj` to avoid the `Route`/`route` case
+        ; collision (CLAUDE.md §3, see also RouteRepository.Save).
+        routeObj := Route(this._routeZones)
+        ok := false
+        try
+        {
+            ok := this._routeRepo.Save(profileName, routeObj)
+        }
+        catch as ex
+        {
+            try this._log.Warn("Route save failed: " . ex.Message,
+                "SettingsDialog")
+            try SpeedKalandraMsgBox(
+                "Failed to save the route for build '" . profileName . "'.`n`n"
+                . "Reason: " . ex.Message . "`n`n"
+                . "Settings WERE saved; only the route did not persist. "
+                . "Reopen Settings and try again.",
+                "Route save failed", "IconX")
+            return
+        }
+        if !ok
+        {
+            try this._log.Warn(
+                "Route save returned false (see prior warnings)",
+                "SettingsDialog")
+            return
+        }
+        ; Refresh service so the live widget re-renders against
+        ; the new route AND the new cfg.routeRowsVisible. Defensive
+        ; try — Refresh shouldn't throw, but a throw here must
+        ; not bubble up and skip the dialog Close.
+        try this._routeService.Refresh()
+    }
+
+    _ClampRows(n)
+    {
+        try
+        {
+            nn := Integer(n + 0)
+            if (nn < 3)
+                return 3
+            if (nn > 10)
+                return 10
+            return nn
+        }
+        catch
+            return 5    ; the AppSettings default — last-resort fallback
+    }
+
+    ; Sanitizes a profile name into a safe filename stem. Mirrors
+    ; RouteRepository._SanitizeProfileName but kept private here
+    ; because the dialog needs a slightly different fallback
+    ; ("route" vs "default") and depending on infra internals
+    ; would couple UI to persistence.
+    _SanitizeFileNameStem(s)
+    {
+        name := Trim(String(s))
+        if (name = "")
+            return "route"
+        for _, ch in StrSplit("<>:`"/\|?*", "")
+            name := StrReplace(name, ch, "_")
+        name := StrReplace(name, "`r", "_")
+        name := StrReplace(name, "`n", "_")
+        name := Trim(name)
+        if (name = "")
+            return "route"
+        return name
     }
 }

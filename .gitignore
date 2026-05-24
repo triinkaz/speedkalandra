@@ -20,6 +20,16 @@ data/zone_totals*.txt
 data/*
 !data/zones.csv
 
+# === Test artifacts ===
+# Tests are supposed to write under A_Temp via Fixtures.TempDir,
+# but a stray production-format INI can land under tests_v2/data/
+# when SpeedKalandraApp constructs a repository whose path defaults
+# off A_ScriptDir (and the test forgot to pass an explicit override).
+# Defensive ignore so the next leak doesn't show up as untracked
+# in git status; the underlying fix should still route the path
+# override through the cfgMap.
+tests_v2/data/
+
 # === Build / dist output ===
 SpeedKalandra-dist*/
 SpeedKalandra-dist*.zip
