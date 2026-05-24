@@ -13,16 +13,34 @@
 ;   _zones      — Array<String>, display names in user-chosen order.
 ;                 Display names are stored verbatim (case sensitive
 ;                 as the user typed / picked from the catalog).
-;                 Duplicates are allowed: the user may revisit the
-;                 same zone twice in a planned route (uncommon but
-;                 not forbidden), and the AdvanceTo logic resolves
-;                 the "correct" occurrence by proximity to the
-;                 current index.
+;                 Duplicates are NOT allowed: Add rejects a zone
+;                 already present (case-insensitive match) and the
+;                 array constructor drops duplicates silently with
+;                 first-occurrence-wins. The earlier permissive
+;                 semantic was changed because the route panel is
+;                 a "path map with accumulated time per zone", not
+;                 a splits-style sequence — going back to a zone
+;                 already in the list is the EXPECTED behavior
+;                 (handled by AdvanceTo's backward scan), so a
+;                 second entry for the same zone has no use case
+;                 and just confuses the per-zone time display.
+;   _notes      — Map<lowerZoneName, noteText>. Per-zone runner
+;                 tip rendered below the current zone on the
+;                 overlay ("vendor first then portal back", etc).
+;                 Stored as plain text; \n in stored text becomes
+;                 a line break in the widget. Keys lowercased so
+;                 SetNote("Mud Burrow") and SetNote("mud burrow")
+;                 refer to the same note regardless of case drift.
+;                 Empty/whitespace-only notes are normalized to
+;                 absent (not an empty-string entry) so the widget
+;                 doesn't reserve space for nothing.
 ;   _currentIdx — Integer in [-1, _zones.Length - 1]. -1 means
 ;                 "haven't entered any route zone yet this run".
 ;                 The Reset() method snaps back to -1 — used by
 ;                 RouteService on RunStarted / RunReset /
-;                 RunCancelled. Zero-based otherwise.
+;                 RunCancelled. Zero-based otherwise. Notes are
+;                 NOT cleared on Reset (they're route authoring
+;                 data, not per-run state).
 ;
 ; SEMANTICS OF AdvanceTo:
 ;   The runner's path through a route isn't strictly forward — a
@@ -40,11 +58,13 @@
 ;     3. If no match in either direction, the call is a silent
 ;        no-op (off-route zone).
 ;
-;   The asymmetric forward-first scan reflects the typical case:
-;   most ZoneEntered events advance the route; retreat is real but
-;   less common. Case-insensitive match is forgiving against minor
-;   capitalization drift between editor input and Client.txt
-;   resolution.
+;   The asymmetric forward-first scan stays even though Add now
+;   rejects duplicates, because legacy route files on disk may
+;   still contain duplicates that the constructor's silent dedupe
+;   already collapsed — but as a defensive measure, the scan
+;   logic doesn't assume uniqueness. Case-insensitive match is
+;   forgiving against minor capitalization drift between editor
+;   input and Client.txt resolution.
 ;
 ;   Town zones are NOT filtered here — RouteService strips
 ;   isTown=true events BEFORE invoking AdvanceTo, so this layer
@@ -67,26 +87,67 @@
 class Route
 {
     _zones      := ""    ; Array<String>
+    _notes      := ""    ; Map<lowerZoneName, noteText>
     _currentIdx := -1
 
-    __New(zones := "")
+    __New(zones := "", notes := "")
     {
         ; Accept an empty constructor (typical: build empty, then
         ; Add). Accept an Array of strings for one-shot
         ; initialization (typical: RouteRepository.Load returns a
-        ; Route already populated).
+        ; Route already populated). Dedupe silently (first wins)
+        ; so a legacy file on disk that contained duplicates lands
+        ; here as a normalized list — no caller has to remember
+        ; to filter.
         this._zones := []
+        this._notes := Map()
+        this._notes.CaseSense := "Off"    ; case-insensitive lookup; keys still stored lowercased to be explicit
         this._currentIdx := -1
-        if (zones = "")
-            return
-        if !(zones is Array)
-            throw TypeError("Route: 'zones' must be Array<String> or empty")
-        for _, z in zones
+        if (zones != "")
         {
-            zStr := String(z)
-            if (zStr = "")
-                continue
-            this._zones.Push(zStr)
+            if !(zones is Array)
+                throw TypeError("Route: 'zones' must be Array<String> or empty")
+            seen := Map()
+            seen.CaseSense := "Off"
+            for _, z in zones
+            {
+                zStr := String(z)
+                if (Trim(zStr) = "")
+                    continue
+                if seen.Has(zStr)
+                    continue
+                seen[zStr] := true
+                this._zones.Push(zStr)
+            }
+        }
+        ; Notes parameter (optional). Map<zoneName, noteText> — the
+        ; constructor normalizes keys to lowercase and drops empty
+        ; notes so the in-memory state matches the on-disk contract.
+        ; Notes for zones NOT present in _zones are kept defensively
+        ; (a Remove between Save and Load wouldn't cascade to the
+        ; notes section on disk if the user hand-edited the INI;
+        ; clearing them silently would lose user data).
+        if (notes != "")
+        {
+            if !(notes is Map)
+                throw TypeError("Route: 'notes' must be Map<zoneName, noteText> or empty")
+            ; Trim's default 2nd arg is " `t" (space + tab) and does
+            ; NOT include `r/`n — a note that is just "`t`n" would
+            ; otherwise survive the empty-check and end up stored as
+            ; an effectively-blank entry. Pass all whitespace chars
+            ; explicitly so multi-line newlines without content
+            ; collapse to "absent".
+            blankChars := " `t`r`n"
+            for k, v in notes
+            {
+                kStr := String(k)
+                vStr := String(v)
+                if (Trim(kStr, blankChars) = "")
+                    continue
+                if (Trim(vStr, blankChars) = "")
+                    continue
+                this._notes[StrLower(kStr)] := vStr
+            }
         }
     }
 
@@ -118,35 +179,121 @@ class Route
         return out
     }
 
+    ; True when the zone (case-insensitive) is already present in
+    ; the route. Single source of truth for Add's dedupe gate and
+    ; for callers (Settings UI) that want feedback before pushing.
+    HasZone(zoneName)
+    {
+        zStr := String(zoneName)
+        if (Trim(zStr) = "")
+            return false
+        target := StrLower(zStr)
+        for _, existing in this._zones
+        {
+            if (StrLower(existing) = target)
+                return true
+        }
+        return false
+    }
+
+    ; ------------------------------------------------------------
+    ; Notes
+    ; ------------------------------------------------------------
+
+    ; Returns the note text for zoneName, or "" if no note (and ""
+    ; for zones not in the route either — callers can't distinguish
+    ; "never set" from "empty", which is intentional; the widget
+    ; renders both as "no note row").
+    GetNote(zoneName)
+    {
+        zStr := String(zoneName)
+        if (Trim(zStr) = "")
+            return ""
+        key := StrLower(zStr)
+        return this._notes.Has(key) ? this._notes[key] : ""
+    }
+
+    ; Sets the note for zoneName. Empty/whitespace-only text deletes
+    ; the note (so the widget stops reserving space for it). Returns
+    ; true when the underlying _notes map was mutated, false on
+    ; no-op (whitespace text against an already-empty entry).
+    SetNote(zoneName, text)
+    {
+        zStr := String(zoneName)
+        if (Trim(zStr) = "")
+            return false
+        key := StrLower(zStr)
+        textStr := String(text)
+        ; See __New: AHK v2's default Trim chars are " `t" (no
+        ; `r/`n), so "`n" alone would NOT trim to empty. Pass all
+        ; whitespace chars explicitly to keep SetNote("x", "`n")
+        ; semantically equivalent to SetNote("x", "") — both
+        ; mean "no note for this zone".
+        if (Trim(textStr, " `t`r`n") = "")
+        {
+            if !this._notes.Has(key)
+                return false
+            this._notes.Delete(key)
+            return true
+        }
+        if (this._notes.Has(key) && this._notes[key] = textStr)
+            return false
+        this._notes[key] := textStr
+        return true
+    }
+
+    ; Defensive copy of the notes map. Used by RouteRepository.Save
+    ; to serialize the [Notes] INI section, and by the Settings
+    ; dialog to hydrate its editing buffer on Open().
+    GetAllNotes()
+    {
+        out := Map()
+        out.CaseSense := "Off"
+        for k, v in this._notes
+            out[k] := v
+        return out
+    }
+
     ; ------------------------------------------------------------
     ; Mutators (editing)
     ; ------------------------------------------------------------
 
     ; Appends a zone to the end of the route. Empty / whitespace-
-    ; only names are silently ignored — the Settings UI is the
-    ; place to validate input; this layer just trusts what it
-    ; receives. Duplicates ARE allowed (see AdvanceTo semantics).
+    ; only names are silently ignored. Duplicates (case-insensitive)
+    ; are REJECTED — the Settings UI is responsible for surfacing
+    ; feedback to the user; this layer just returns false and
+    ; leaves _zones untouched.
     Add(zoneName)
     {
         zStr := String(zoneName)
         if (Trim(zStr) = "")
+            return false
+        if this.HasZone(zStr)
             return false
         this._zones.Push(zStr)
         return true
     }
 
     ; Removes the zone at zero-based idx. Returns true on success,
-    ; false on out-of-range. If the current zone is removed, the
-    ; index snaps back to (idx - 1) so the next AdvanceTo can still
-    ; find the route position relative to the shrinkage. If a zone
-    ; BEFORE the current is removed, current shifts down by 1 to
-    ; preserve identity. Removal AFTER current leaves the index
-    ; untouched.
+    ; false on out-of-range. Also drops the matching note if one
+    ; exists — keeping it around with no anchor zone would leak
+    ; orphan notes into the [Notes] INI section on the next save.
+    ; If the current zone is removed, the index snaps back to
+    ; (idx - 1) so the next AdvanceTo can still find the route
+    ; position relative to the shrinkage. If a zone BEFORE the
+    ; current is removed, current shifts down by 1 to preserve
+    ; identity. Removal AFTER current leaves the index untouched.
     Remove(idx)
     {
         if (!IsNumber(idx) || idx < 0 || idx >= this._zones.Length)
             return false
+        removedZone := this._zones[idx + 1]
         this._zones.RemoveAt(idx + 1)
+        ; Drop the note for the removed zone (defensive — only
+        ; deletes if a note existed; no-op otherwise).
+        key := StrLower(removedZone)
+        if this._notes.Has(key)
+            this._notes.Delete(key)
         if (this._currentIdx >= 0)
         {
             if (this._currentIdx > idx)

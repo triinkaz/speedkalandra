@@ -7,6 +7,10 @@
 ;   [Route]
 ;   zones=The Riverbank|Clearfell|The Grelwood|The Red Vale
 ;
+;   [Notes]
+;   the riverbank=walk straight then open door
+;   mud burrow=vendor first\nportal back to town
+;
 ; Encoding follows the project-wide convention. AHK v2's
 ; IniRead key-lookup variant silently returns the default on
 ; UTF-8 BOM files; only UTF-16 LE BOM works. AtomicWriter +
@@ -18,6 +22,24 @@
 ;   77 entries in data/zones.csv), but some names DO contain
 ;   commas in other games / future content. Pipe is a forward-
 ;   compatible choice that doesn't force escaping today.
+;
+; NOTES SECTION:
+;   Keys are lowercased zone names (matches Route._notes internal
+;   keying for case-insensitive lookup). Values are encoded with
+;   two escape sequences — `\\` for a literal backslash and `\n`
+;   for a line break — so a multi-line note serializes onto a
+;   single INI value (INI format doesn't support multi-line
+;   values natively). The decode is order-sensitive: `\\` must
+;   be resolved before `\n` so the literal sequence "\\n" in the
+;   user's note (the two characters backslash + n) doesn't get
+;   mis-decoded as a newline. Implemented via char-by-char scan
+;   rather than two StrReplace calls because StrReplace can't
+;   express that disambiguation in a single pass.
+;
+;   The keys are lowercased before write to keep the file format
+;   coherent with the in-memory Map keying — a user hand-editing
+;   the INI with a different casing would still resolve correctly
+;   on load (the Route constructor also lowercases on intake).
 ;
 ; PATH STRUCTURE:
 ;   <baseDir>\<sanitizedProfileName>.ini
@@ -42,6 +64,9 @@
 ;   - the [Route] section is missing
 ;   - the zones= key is empty
 ;   - the file is unreadable (logged via WarningSink)
+;
+;   Notes are best-effort: a missing or unreadable [Notes]
+;   section just yields no notes; the route still loads.
 ;
 ; Save writes atomically via AtomicWriter (.tmp + FileMove). A
 ; crash mid-Save leaves an orphan .tmp and preserves the prior
@@ -99,7 +124,13 @@ class RouteRepository
             if (Trim(String(raw)) = "")
                 return Route()
             zones := RouteRepository._SplitZones(raw)
-            return Route(zones)
+            ; Notes are best-effort — a missing or unreadable
+            ; [Notes] section yields an empty map; the route
+            ; still loads. Read failures inside _LoadNotes are
+            ; swallowed there (logged via the warning sink),
+            ; never surfacing up.
+            notes := this._LoadNotes(ini)
+            return Route(zones, notes)
         }
         catch as ex
         {
@@ -179,7 +210,11 @@ class RouteRepository
             zones := RouteRepository._SplitZones(raw)
             if (zones.Length = 0)
                 return false
-            return this.Save(dstProfile, Route(zones))
+            ; Round-trip notes too — an exported route file
+            ; carrying [Notes] should land in the destination
+            ; profile with those notes intact.
+            notes := this._LoadNotes(ini)
+            return this.Save(dstProfile, Route(zones, notes))
         }
         catch as ex
         {
@@ -244,6 +279,40 @@ class RouteRepository
             zonesPart .= zStr
         }
         content .= "zones=" zonesPart "`r`n"
+
+        ; [Notes] section (serialized only if there's at least
+        ; one note — keeps the file format identical to the
+        ; pre-notes era when the user has no per-zone tips).
+        ; Keys are lowercased zone names (already are in the
+        ; map returned by GetAllNotes); values are escaped via
+        ; _EncodeNote to fit on a single INI line.
+        notes := routeObj.GetAllNotes()
+        if (notes.Count > 0)
+        {
+            content .= "`r`n[Notes]`r`n"
+            for k, v in notes
+            {
+                kStr := String(k)
+                ; Defensive: a hand-crafted note Map could carry
+                ; characters that break the INI key (=, [, ],
+                ; CRLF). Strip them on serialize so the file
+                ; stays parseable on next Load. PoE2 zone names
+                ; don't contain any of these, so production data
+                ; never hits these StrReplaces.
+                kStr := StrReplace(kStr, "`r", "")
+                kStr := StrReplace(kStr, "`n", "")
+                kStr := StrReplace(kStr, "=",  "")
+                kStr := StrReplace(kStr, "[",  "")
+                kStr := StrReplace(kStr, "]",  "")
+                if (Trim(kStr) = "")
+                    continue
+                vStr := RouteRepository._EncodeNote(String(v))
+                if (vStr = "")
+                    continue
+                content .= kStr "=" vStr "`r`n"
+            }
+        }
+
         return content
     }
 
@@ -261,6 +330,113 @@ class RouteRepository
             trimmed := Trim(part)
             if (trimmed != "")
                 out.Push(trimmed)
+        }
+        return out
+    }
+
+    ; Reads the [Notes] section of an open IniFile and returns
+    ; a Map<zoneName, decodedText>. Always returns a Map (empty
+    ; on absence or error) so the caller can pass it to Route's
+    ; constructor unconditionally. Per-key failures are skipped
+    ; silently; section-level failures emit a warning.
+    _LoadNotes(ini)
+    {
+        out := Map()
+        out.CaseSense := "Off"
+        try
+        {
+            ; The IniFile abstraction returns a key=value map
+            ; for the requested section. Missing sections come
+            ; back as an empty map (no throw).
+            section := ini.ReadSectionAsMap("Notes")
+            ; Trim's default 2nd arg is " `t" and does NOT include
+            ; `r/`n — a value that decodes to a bare newline (or
+            ; just an escaped \n on disk that decoded to LF) would
+            ; otherwise count as a non-empty note. Pass all
+            ; whitespace chars explicitly so the load path mirrors
+            ; the Route constructor's normalization.
+            blankChars := " `t`r`n"
+            for k, v in section
+            {
+                kStr := String(k)
+                if (Trim(kStr, blankChars) = "")
+                    continue
+                vStr := RouteRepository._DecodeNote(String(v))
+                if (Trim(vStr, blankChars) = "")
+                    continue
+                out[kStr] := vStr
+            }
+        }
+        catch as ex
+        {
+            this._warn.Warn("LoadNotes failed (returning empty)", ex)
+        }
+        return out
+    }
+
+    ; Encodes a note for INI persistence:
+    ;   \  → \\        (backslash escape; MUST run first)
+    ;   LF → \n        (line break escape; second pass)
+    ;   CR → ""        (Windows line endings drop the carriage;
+    ;                   only the LF carries the line-break)
+    ; Order matters: escape backslash FIRST so a literal backslash
+    ; in the user's note (e.g. "C:\path") doesn't get mis-encoded
+    ; as "C:\\path" then re-escaped to "C:\\\\path".
+    static _EncodeNote(text)
+    {
+        s := String(text)
+        if (s = "")
+            return ""
+        s := StrReplace(s, "\", "\\")
+        s := StrReplace(s, "`r", "")
+        s := StrReplace(s, "`n", "\n")
+        return s
+    }
+
+    ; Decodes a note loaded from INI. Implemented as a char-by-
+    ; char scan because StrReplace can't disambiguate "\\n" (the
+    ; literal two-character sequence backslash+n that the user
+    ; typed) from "\n" (the encoded newline) in a single pass.
+    ; The scan resolves "\\" to a single backslash and "\n" to
+    ; a line break; an unknown escape sequence (e.g. "\x") is
+    ; preserved as-is so future format additions don't silently
+    ; eat data.
+    static _DecodeNote(text)
+    {
+        s := String(text)
+        if (s = "")
+            return ""
+        out := ""
+        i := 1
+        len := StrLen(s)
+        while (i <= len)
+        {
+            ch := SubStr(s, i, 1)
+            if (ch = "\" && i < len)
+            {
+                next := SubStr(s, i + 1, 1)
+                if (next = "\")
+                {
+                    out .= "\"
+                    i += 2
+                    continue
+                }
+                if (next = "n")
+                {
+                    out .= "`n"
+                    i += 2
+                    continue
+                }
+                ; Unknown escape — keep the backslash and let the
+                ; next char be processed normally on the next
+                ; iteration. Avoids silent data loss for future
+                ; escape additions or for malformed input.
+                out .= ch
+                i += 1
+                continue
+            }
+            out .= ch
+            i += 1
         }
         return out
     }

@@ -21,6 +21,12 @@ class RouteTests extends TestCase
         "constructor_filters_empty_strings",
         "constructor_throws_type_error_on_non_array",
         "constructor_with_empty_string_argument_is_empty_route",
+        "constructor_dedupes_silently_first_wins",
+        "constructor_dedupe_is_case_insensitive",
+        "constructor_accepts_optional_notes_param",
+        "constructor_normalizes_note_keys_to_lowercase",
+        "constructor_drops_empty_notes",
+        "constructor_throws_type_error_on_non_map_notes",
 
         ; --- Queries ---
         "count_returns_number_of_zones",
@@ -31,14 +37,31 @@ class RouteTests extends TestCase
         "get_zone_at_returns_empty_for_out_of_range",
         "get_zone_at_returns_empty_for_negative",
         "get_zones_returns_copy_not_internal",
+        "has_zone_true_for_existing",
+        "has_zone_is_case_insensitive",
+        "has_zone_false_for_missing",
+        "has_zone_false_for_empty_input",
+
+        ; --- Notes ---
+        "get_note_returns_empty_for_unknown_zone",
+        "get_note_returns_set_value",
+        "set_note_stores_text",
+        "set_note_is_case_insensitive",
+        "set_note_with_empty_text_deletes_existing_note",
+        "set_note_with_whitespace_only_deletes_existing_note",
+        "set_note_returns_true_on_change",
+        "set_note_returns_false_on_no_op_empty_against_absent",
+        "set_note_returns_false_on_no_op_same_value",
+        "get_all_notes_returns_defensive_copy",
 
         ; --- Add ---
         "add_appends_zone",
         "add_ignores_empty_string",
         "add_ignores_whitespace_only",
-        "add_allows_duplicates",
+        "add_rejects_duplicate_case_insensitive",
         "add_returns_true_on_success",
         "add_returns_false_on_empty",
+        "add_returns_false_on_duplicate",
 
         ; --- Remove ---
         "remove_deletes_zone_at_idx",
@@ -47,6 +70,8 @@ class RouteTests extends TestCase
         "remove_decrements_current_idx_when_removed_at_current",
         "remove_does_not_change_current_idx_when_removed_after",
         "remove_at_idx_zero_when_current_is_zero_yields_minus_one",
+        "remove_drops_matching_note",
+        "remove_no_op_on_notes_when_zone_had_no_note",
 
         ; --- MoveUp / MoveDown ---
         "move_up_swaps_with_previous",
@@ -60,6 +85,7 @@ class RouteTests extends TestCase
 
         ; --- Reset ---
         "reset_snaps_current_idx_to_minus_one",
+        "reset_preserves_notes",
 
         ; --- AdvanceTo: forward ---
         "advance_to_finds_next_zone_forward",
@@ -69,7 +95,6 @@ class RouteTests extends TestCase
 
         ; --- AdvanceTo: backward (retreat) ---
         "advance_to_retreats_when_no_forward_match",
-        "advance_to_prefers_forward_over_backward_for_duplicates",
 
         ; --- AdvanceTo: off-route / edge cases ---
         "advance_to_off_route_zone_returns_false",
@@ -133,6 +158,82 @@ class RouteTests extends TestCase
         Assert.Equal(0, r.Count())
     }
 
+    constructor_dedupes_silently_first_wins()
+    {
+        ; Legacy route files on disk may contain duplicates (older
+        ; behavior allowed them). The constructor's silent dedupe
+        ; collapses those on load so the in-memory Route always
+        ; reflects the post-change "no duplicates" invariant; the
+        ; first occurrence wins so the user's authored order is
+        ; preserved.
+        r := Route(["A", "B", "A", "C", "B"])
+        Assert.Equal(3, r.Count(),
+            "duplicates dropped silently")
+        Assert.Equal("A", r.GetZoneAt(0), "first A wins")
+        Assert.Equal("B", r.GetZoneAt(1), "first B wins")
+        Assert.Equal("C", r.GetZoneAt(2), "C preserved")
+    }
+
+    constructor_dedupe_is_case_insensitive()
+    {
+        ; A legacy file with mixed-case duplicates ("Mud Burrow" +
+        ; "mud burrow") should produce a single entry, with the
+        ; first-occurrence casing preserved — so the catalog-cased
+        ; version stays if the user typed it first.
+        r := Route(["Mud Burrow", "mud burrow", "MUD BURROW"])
+        Assert.Equal(1, r.Count(), "case-insensitive dedupe")
+        Assert.Equal("Mud Burrow", r.GetZoneAt(0),
+            "first-occurrence casing preserved")
+    }
+
+    constructor_accepts_optional_notes_param()
+    {
+        notes := Map("Mud Burrow", "vendor first", "Hunting Grounds", "skip side")
+        r := Route(["Mud Burrow", "Hunting Grounds"], notes)
+        Assert.Equal("vendor first", r.GetNote("Mud Burrow"))
+        Assert.Equal("skip side",    r.GetNote("Hunting Grounds"))
+    }
+
+    constructor_normalizes_note_keys_to_lowercase()
+    {
+        ; Notes passed in with the catalog's casing must still be
+        ; findable by any case variant — the internal key is the
+        ; lowercased zone name so SetNote("Mud Burrow") and
+        ; GetNote("MUD BURROW") refer to the same entry.
+        notes := Map("Mud Burrow", "hi")
+        r := Route(["Mud Burrow"], notes)
+        Assert.Equal("hi", r.GetNote("mud burrow"),
+            "lowercase lookup finds note stored with title case")
+        Assert.Equal("hi", r.GetNote("MUD BURROW"),
+            "uppercase lookup finds note too")
+    }
+
+    constructor_drops_empty_notes()
+    {
+        ; Empty / whitespace-only note text is normalized to
+        ; absent so the widget never reserves space for a blank
+        ; entry. The Settings UI relies on this: deleting all text
+        ; in the edit + Save must produce "no note", not "empty
+        ; note that still triggers a render row".
+        notes := Map(
+            "A", "",
+            "B", "   ",
+            "C", "`t`n",
+            "D", "valid"
+        )
+        r := Route(["A", "B", "C", "D"], notes)
+        Assert.Equal("", r.GetNote("A"))
+        Assert.Equal("", r.GetNote("B"))
+        Assert.Equal("", r.GetNote("C"))
+        Assert.Equal("valid", r.GetNote("D"))
+    }
+
+    constructor_throws_type_error_on_non_map_notes()
+    {
+        Assert.Throws(TypeError, () => Route(["A"], "not a map"))
+        Assert.Throws(TypeError, () => Route(["A"], [1, 2]))
+    }
+
     ; ============================================================
     ; Queries
     ; ============================================================
@@ -191,6 +292,134 @@ class RouteTests extends TestCase
             "GetZones must return a defensive copy")
     }
 
+    has_zone_true_for_existing()
+    {
+        r := Route(["A", "B", "C"])
+        Assert.True(r.HasZone("B"))
+    }
+
+    has_zone_is_case_insensitive()
+    {
+        r := Route(["Mud Burrow"])
+        Assert.True(r.HasZone("mud burrow"))
+        Assert.True(r.HasZone("MUD BURROW"))
+    }
+
+    has_zone_false_for_missing()
+    {
+        r := Route(["A", "B"])
+        Assert.False(r.HasZone("C"))
+    }
+
+    has_zone_false_for_empty_input()
+    {
+        r := Route(["A"])
+        Assert.False(r.HasZone(""))
+        Assert.False(r.HasZone("   "))
+    }
+
+    ; ============================================================
+    ; Notes
+    ; ============================================================
+
+    get_note_returns_empty_for_unknown_zone()
+    {
+        r := Route(["A"])
+        Assert.Equal("", r.GetNote("A"), "no note set")
+        Assert.Equal("", r.GetNote("NotInRoute"), "zone not in route")
+        Assert.Equal("", r.GetNote(""), "empty input")
+    }
+
+    get_note_returns_set_value()
+    {
+        r := Route(["A"])
+        r.SetNote("A", "vendor first")
+        Assert.Equal("vendor first", r.GetNote("A"))
+    }
+
+    set_note_stores_text()
+    {
+        r := Route(["A", "B"])
+        r.SetNote("A", "hi")
+        r.SetNote("B", "bye")
+        Assert.Equal("hi",  r.GetNote("A"))
+        Assert.Equal("bye", r.GetNote("B"))
+    }
+
+    set_note_is_case_insensitive()
+    {
+        ; A user typing the note key in any case must update the
+        ; same entry — prevents two notes for the same zone if the
+        ; user happens to type with a different capitalization.
+        r := Route(["Mud Burrow"])
+        r.SetNote("MUD BURROW", "first")
+        r.SetNote("mud burrow", "second")
+        Assert.Equal("second", r.GetNote("Mud Burrow"),
+            "second SetNote overwrites first regardless of case")
+    }
+
+    set_note_with_empty_text_deletes_existing_note()
+    {
+        r := Route(["A"])
+        r.SetNote("A", "original")
+        Assert.Equal("original", r.GetNote("A"))
+
+        r.SetNote("A", "")
+        Assert.Equal("", r.GetNote("A"),
+            "empty text deletes the note")
+    }
+
+    set_note_with_whitespace_only_deletes_existing_note()
+    {
+        r := Route(["A"])
+        r.SetNote("A", "original")
+        r.SetNote("A", "   `t  ")
+        Assert.Equal("", r.GetNote("A"),
+            "whitespace-only text deletes the note")
+    }
+
+    set_note_returns_true_on_change()
+    {
+        r := Route(["A"])
+        Assert.True(r.SetNote("A", "new"))
+        Assert.True(r.SetNote("A", "updated"))
+        Assert.True(r.SetNote("A", ""), "delete is a mutation")
+    }
+
+    set_note_returns_false_on_no_op_empty_against_absent()
+    {
+        ; Setting empty text on a zone that has no note is a no-op
+        ; — nothing was deleted, the map didn't change.
+        r := Route(["A"])
+        Assert.False(r.SetNote("A", ""))
+    }
+
+    set_note_returns_false_on_no_op_same_value()
+    {
+        r := Route(["A"])
+        r.SetNote("A", "unchanged")
+        Assert.False(r.SetNote("A", "unchanged"),
+            "writing same value is a no-op")
+    }
+
+    get_all_notes_returns_defensive_copy()
+    {
+        ; The Settings dialog hydrates its editing buffer from
+        ; GetAllNotes. A mutation on the returned map must not
+        ; leak back into Route's _notes — otherwise the user's
+        ; in-progress edits in the right panel would silently
+        ; mutate the persisted state before they hit Save.
+        r := Route(["A", "B"])
+        r.SetNote("A", "hi")
+        copy := r.GetAllNotes()
+        copy["a"]   := "MUTATED"
+        copy["new"] := "INJECTED"
+        Assert.Equal("hi", r.GetNote("A"),
+            "mutation on the copy does NOT touch Route")
+        Assert.False(r.GetNote("new"),
+            "injected key on copy does NOT appear in Route")
+    }
+
     ; ============================================================
     ; Add
     ; ============================================================
@@ -219,16 +448,26 @@ class RouteTests extends TestCase
         Assert.Equal(0, r.Count(), "whitespace-only is treated as empty")
     }
 
-    add_allows_duplicates()
+    add_rejects_duplicate_case_insensitive()
     {
-        ; The runner may legitimately revisit the same zone in a
-        ; planned route (boss room, sweep back through a town hub
-        ; to vendor mid-route). AdvanceTo resolves duplicates by
-        ; nearest-forward.
+        ; The route panel is a path-with-accumulated-time view, not
+        ; a splits-style sequence — going back to a zone already
+        ; in the list is the EXPECTED behavior (handled by
+        ; AdvanceTo's backward scan), so a second entry for the
+        ; same zone has no use case and was banned to keep the
+        ; per-zone time display unambiguous.
         r := Route()
-        r.Add("A")
-        r.Add("A")
-        Assert.Equal(2, r.Count())
+        Assert.True(r.Add("Mud Burrow"))
+        Assert.False(r.Add("Mud Burrow"),
+            "exact match rejected")
+        Assert.False(r.Add("mud burrow"),
+            "lowercase variant rejected")
+        Assert.False(r.Add("MUD BURROW"),
+            "uppercase variant rejected")
+        Assert.Equal(1, r.Count(),
+            "all duplicate attempts left the route at length 1")
+        Assert.Equal("Mud Burrow", r.GetZoneAt(0),
+            "original casing preserved")
     }
 
     add_returns_true_on_success()
@@ -240,6 +479,14 @@ class RouteTests extends TestCase
     {
         Assert.False(Route().Add(""))
         Assert.False(Route().Add("   "))
+    }
+
+    add_returns_false_on_duplicate()
+    {
+        r := Route()
+        r.Add("A")
+        Assert.False(r.Add("A"))
+        Assert.False(r.Add("a"))
     }
 
     ; ============================================================
@@ -312,6 +559,38 @@ class RouteTests extends TestCase
         r.Remove(0)
         Assert.Equal(-1, r.GetCurrentIdx(),
             "removing the current zone at idx 0 resets to 'haven't started'")
+    }
+
+    remove_drops_matching_note()
+    {
+        ; A note for a removed zone would otherwise leak into
+        ; the [Notes] INI section on the next save — the on-disk
+        ; format would carry an orphan entry pointing to a zone
+        ; that no longer exists in [Route]. Remove also drops
+        ; the note to keep the two sections coherent.
+        r := Route(["A", "B", "C"])
+        r.SetNote("B", "will be orphaned")
+        Assert.Equal("will be orphaned", r.GetNote("B"))
+
+        r.Remove(1)    ; drops zone B
+        Assert.Equal("", r.GetNote("B"),
+            "note dropped along with the zone")
+    }
+
+    remove_no_op_on_notes_when_zone_had_no_note()
+    {
+        ; Remove should not throw or otherwise misbehave when the
+        ; removed zone never had a note assigned.
+        r := Route(["A", "B"])
+        r.SetNote("A", "only on A")
+        threw := false
+        try r.Remove(1)    ; B has no note
+        catch
+            threw := true
+        Assert.False(threw, "Remove must not throw when no note exists")
+        Assert.Equal(1, r.Count())
+        Assert.Equal("only on A", r.GetNote("A"),
+            "other zones' notes unaffected")
     }
 
     ; ============================================================
@@ -405,6 +684,22 @@ class RouteTests extends TestCase
         Assert.Equal(-1, r.GetCurrentIdx())
     }
 
+    reset_preserves_notes()
+    {
+        ; Notes are route AUTHORING data, not per-run state — the
+        ; Reset call (issued by RouteService on RunStarted /
+        ; RunReset / RunCancelled) only snaps the position back to
+        ; -1; the runner's tips must survive across runs.
+        r := Route(["A", "B"])
+        r.SetNote("A", "persists across runs")
+        r.AdvanceTo("A")
+
+        r.Reset()
+        Assert.Equal(-1, r.GetCurrentIdx(), "position reset")
+        Assert.Equal("persists across runs", r.GetNote("A"),
+            "notes NOT cleared by Reset")
+    }
+
     ; ============================================================
     ; AdvanceTo: forward
     ; ============================================================
@@ -465,20 +760,17 @@ class RouteTests extends TestCase
         Assert.Equal(0, r.GetCurrentIdx())
     }
 
-    advance_to_prefers_forward_over_backward_for_duplicates()
-    {
-        ; The route has "A" at both idx 0 and idx 3. Current at
-        ; idx 1. AdvanceTo("A") should find idx 3 (forward) rather
-        ; than idx 0 (backward) — the natural reading of "advance"
-        ; is forward-first.
-        r := Route(["A", "B", "C", "A", "E"])
-        r.AdvanceTo("B")
-        Assert.Equal(1, r.GetCurrentIdx())
-
-        Assert.True(r.AdvanceTo("A"))
-        Assert.Equal(3, r.GetCurrentIdx(),
-            "forward A at idx 3 wins over backward A at idx 0")
-    }
+    ; (The pre-dedupe test
+    ;  `advance_to_prefers_forward_over_backward_for_duplicates`
+    ;  was removed: duplicates can no longer enter the route via
+    ;  Add or the constructor, so the forward-first-then-backward
+    ;  scan never resolves to a duplicate in production. The scan
+    ;  ORDER is still defensive code — a hand-edited INI could
+    ;  technically smuggle dupes past the constructor's dedupe
+    ;  step if it bypasses the public API — but pinning the
+    ;  preference is testing dead code from a user-facing
+    ;  perspective. The general backward-retreat path is still
+    ;  covered by advance_to_retreats_when_no_forward_match above.)
 
     ; ============================================================
     ; AdvanceTo: off-route / edge cases

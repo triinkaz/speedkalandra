@@ -70,11 +70,37 @@ class RouteWidget
     static FONT_SIZE_BASE  := 10
     static MIN_WIDTH       := 120
     static MIN_SCALE       := 0.5
+    ; Time column reservation (right side of each row). Holds
+    ; "99:59" comfortably and clips "H:MM:SS" gracefully (longest
+    ; per-zone time is rare; 50 px at scale 1.0 is enough for
+    ; MM:SS, and the column scales with the anchor).
+    static TIME_COL_BASE   := 50
+    ; Live-tick interval. 500 ms is fast enough that the current
+    ; zone's time visibly moves between glances at the overlay,
+    ; slow enough that even on slow machines the SetTimer overhead
+    ; is invisible. Headless mode bypasses SetTimer entirely.
+    static TICK_MS         := 500
+    ; Note row visuals — rendered below the current zone when the
+    ; runner authored a per-zone tip. Smaller font than zone rows
+    ; so the tip reads as secondary information (the zone name and
+    ; live time stay the primary signals on the overlay). Line
+    ; height is a multiplier of the font size so wrapped lines and
+    ; literal-`n breaks share consistent vertical spacing.
+    static NOTE_FONT_SIZE_BASE := 8
+    static NOTE_LINE_HEIGHT_BASE := 14
+    ; Conservative chars-per-line estimate used to predict wrap
+    ; height without measuring the GDI text metrics. The actual
+    ; ratio depends on the font + DPI, but "avg char width ≈ 55%
+    ; of the font's pt size" is close enough for Segoe UI at the
+    ; sizes we render. Slight overshoot is preferable to clipping
+    ; the bottom line of a tip.
+    static NOTE_CHAR_WIDTH_RATIO := 0.55
 
     _bus            := ""
     _cfg            := ""
     _routeService   := ""
     _anchorResolver := ""
+    _zoneTracker    := ""   ; ZoneTrackingService or "" — supplies per-zone time
     _headless       := false
 
     ; Live state.
@@ -84,13 +110,25 @@ class RouteWidget
                                ; successful render; updated on every
                                ; _Render so an OverlayModeChanged
                                ; that swaps anchors still rebinds.
+    ; Per-row Text control handles, populated by _Render so the
+    ; live-tick can update only the time cells without rebuilding
+    ; the Gui. Cleared by Hide() and on every _Render restart.
+    ; Two parallel arrays (name + time), 1:1 with _lastRenderedSlice.
+    _rowNameControls  := ""
+    _rowTimeControls  := ""
+    ; ObjBindMethod handle for the live tick. Reused across
+    ; Start/Stop so SetTimer can cancel it by the same reference.
+    ; A naive `() => this._OnTick()` lambda would produce a new
+    ; object on every call and SetTimer(0) would fail to cancel.
+    _tickFn           := ""
+    _tickActive       := false
 
     _handlerRouteChanged           := ""
     _handlerWidgetGeometryChanged  := ""
     _handlerRouteVisibilityToggled := ""
     _handlerOverlayModeChanged     := ""
 
-    __New(bus, cfg, svc, anchorResolver, headless := false)
+    __New(bus, cfg, svc, anchorResolver, headless := false, zoneTracker := "")
     {
         if !(bus is EventBus)
             throw TypeError("RouteWidget: 'bus' must be EventBus")
@@ -108,12 +146,26 @@ class RouteWidget
             throw TypeError("RouteWidget: 'svc' must be RouteService")
         if !RouteWidget._IsCallable(anchorResolver)
             throw TypeError("RouteWidget: 'anchorResolver' must be a callable")
+        ; zoneTracker is optional — when missing, the time column
+        ; stays empty (no "0:00" placeholders, per the Q4 decision).
+        ; Param name `zoneTracker` doesn't collide with the
+        ; `ZoneTrackingService` class (lowercase forms `zonetracker`
+        ; vs `zonetrackingservice` differ).
+        if (zoneTracker != "" && !(zoneTracker is ZoneTrackingService))
+            throw TypeError("RouteWidget: 'zoneTracker' must be ZoneTrackingService")
 
         this._bus            := bus
         this._cfg            := cfg
         this._routeService   := svc
         this._anchorResolver := anchorResolver
         this._headless       := !!headless
+        this._zoneTracker    := zoneTracker
+        this._rowNameControls := []
+        this._rowTimeControls := []
+        ; ObjBindMethod gives a stable callable that SetTimer can
+        ; both register and cancel by reference. Done once here so
+        ; Start/Stop never construct fresh closures.
+        this._tickFn := ObjBindMethod(this, "_OnTick")
 
         this._handlerRouteChanged           := (data) => this._OnRouteChanged(data)
         this._handlerWidgetGeometryChanged  := (data) => this._OnWidgetGeometryChanged(data)
@@ -169,15 +221,22 @@ class RouteWidget
         if !this._cfg.routeWidgetVisible
             return
         this._Render()
+        ; Start the live tick AFTER _Render so the first tick has
+        ; control handles to update. _StartTick is a no-op when
+        ; there's no _gui (Render hides) or no zoneTracker wired.
+        this._StartTick()
     }
 
     Hide()
     {
+        this._StopTick()
         if this._gui
         {
             try this._gui.Destroy()
             this._gui := ""
         }
+        this._rowNameControls := []
+        this._rowTimeControls := []
         this._lastAnchorId := ""
     }
 
@@ -304,50 +363,146 @@ class RouteWidget
         rowH     := Round(RouteWidget.ROW_HEIGHT_BASE * scale)
         padding  := Round(RouteWidget.PADDING_BASE * scale)
         fontSize := Round(RouteWidget.FONT_SIZE_BASE * scale)
+        timeColW := Round(RouteWidget.TIME_COL_BASE * scale)
         if (fontSize < 6)
             fontSize := 6    ; lower bound — sub-6 pt is unreadable
 
-        height := padding * 2 + rowH * slice.Length
+        ; Pre-compute the note row size budget so the Gui's total
+        ; height covers any note that the current zone carries.
+        ; The widget's height has to be reserved BEFORE the
+        ; Gui.Show() call, so we tally everything up front (one
+        ; pass to know currentZone's note dimensions, second pass
+        ; to actually render rows with the cursor-based layout).
+        noteFontSize := Max(7, Round(RouteWidget.NOTE_FONT_SIZE_BASE * scale))
+        noteLineH    := Max(noteFontSize + 2, Round(RouteWidget.NOTE_LINE_HEIGHT_BASE * scale))
+        currentNote  := this._GetCurrentNoteFromSlice(slice)
+
         width  := aw < RouteWidget.MIN_WIDTH ? RouteWidget.MIN_WIDTH : aw
+        ; Note row width is the full inner width (uses both the
+        ; name column AND the time column) since it has nothing to
+        ; align against on the right — it's a free-form text block.
+        noteWidth  := width - padding * 2
+        noteHeight := 0
+        if (currentNote != "")
+            noteHeight := RouteWidget._EstimateNoteHeight(currentNote, noteWidth, noteFontSize, noteLineH)
+
+        height := padding * 2 + rowH * slice.Length + noteHeight
         x      := ax
         y      := ay + ah
 
         ; Rebuild the Gui from scratch each render so per-row colors
         ; reflect the latest currentIdx. The alternative — keep the
         ; Gui and only update each text control's text + color — would
-        ; require tracking control handles per row, and the
-        ; build cost here is negligible (a few Text controls).
+        ; require tracking control handles per row, which we DO
+        ; track now (_rowNameControls/_rowTimeControls) but only for
+        ; live-tick time updates; full row rebuilds on RouteChanged
+        ; would still need the colour/weight reset, so a full Gui
+        ; rebuild is simpler than partial.
         if this._gui
         {
             try this._gui.Destroy()
             this._gui := ""
         }
+        this._rowNameControls := []
+        this._rowTimeControls := []
 
         wg := Gui("+ToolWindow +AlwaysOnTop -Caption +E0x08000000")
         wg.BackColor := Theme.Color("surface")
         wg.MarginX := 0
         wg.MarginY := 0
 
-        ; Render each row.
+        ; Each row gets TWO Text controls so the tick can update the
+        ; time independently of the name (which doesn't change between
+        ; rebuilds and would lose its color/weight if rewritten). Name
+        ; column is left-aligned and takes the full width minus the
+        ; reserved time column. Time column is right-aligned via SS_RIGHT
+        ; (0x2) so "0:32" and "12:45" align cleanly on the same edge.
+        nameW := width - padding * 2 - timeColW
+        if (nameW < 10)
+            nameW := 10    ; degenerate width — keep the row visible
+        timeX := width - padding - timeColW
+
+        ; Cursor-based Y rather than index-based (i * rowH) because
+        ; a note row inserted below the current zone makes the
+        ; layout non-uniform — subsequent rows have to start AFTER
+        ; the note's variable height. Tracking currentY explicitly
+        ; keeps the slot reservations correct without per-row
+        ; arithmetic in two places.
+        currentY := padding
         for i, row in slice
         {
             status   := row["status"]
             colorKey := RouteWidget._ColorFor(status)
             weight   := (status = "current") ? " bold" : " norm"
+
+            ; Name (left side).
             wg.SetFont(
                 "s" fontSize " c" Theme.Color(colorKey) weight,
                 Theme.FONT_UI
             )
-            rowY := padding + (i - 1) * rowH
-            wg.Add(
+            nameCtrl := wg.Add(
                 "Text",
-                "x" padding " y" rowY
-                . " w" (width - padding * 2)
+                "x" padding " y" currentY
+                . " w" nameW
                 . " h" rowH
                 . " Background" Theme.Color("surface")
                 . " 0x200",    ; SS_CENTERIMAGE — vertical centering
                 row["name"]
             )
+            this._rowNameControls.Push(nameCtrl)
+
+            ; Time (right side). Color is muted by default; the
+            ; CURRENT row uses the text color (still bold) so the
+            ; live-updating value reads as part of the highlight. An
+            ; empty value renders no visible character but keeps the
+            ; control's bounding box reserved for the next tick.
+            timeColorKey := (status = "current") ? colorKey : "muted"
+            wg.SetFont(
+                "s" fontSize " c" Theme.Color(timeColorKey) weight,
+                Theme.FONT_UI
+            )
+            timeText := this._ComputeTimeText(row["name"])
+            timeCtrl := wg.Add(
+                "Text",
+                "x" timeX " y" currentY
+                . " w" timeColW
+                . " h" rowH
+                . " Background" Theme.Color("surface")
+                . " 0x200"    ; SS_CENTERIMAGE (vertical)
+                . " 0x2",     ; SS_RIGHT (horizontal)
+                timeText
+            )
+            this._rowTimeControls.Push(timeCtrl)
+
+            currentY += rowH
+
+            ; Note row — only for the CURRENT zone, only when the
+            ; runner authored a tip for it. Upcoming and before
+            ; rows never get a note row (would create noise; the
+            ; runner can't read 5 notes at once anyway). The note
+            ; row uses surface3 background to visually differentiate
+            ; from the zone rows (surface), and the muted text
+            ; color so the tip reads as a secondary signal beneath
+            ; the highlighted current-zone name. Newlines in the
+            ; note text (decoded from \n on disk) render naturally
+            ; in a Text control — AHK splits at LF without
+            ; additional flags.
+            if (status = "current" && currentNote != "")
+            {
+                wg.SetFont(
+                    "s" noteFontSize " c" Theme.Color("muted") " norm",
+                    Theme.FONT_UI
+                )
+                wg.Add(
+                    "Text",
+                    "x" padding " y" currentY
+                    . " w" noteWidth
+                    . " h" noteHeight
+                    . " Background" Theme.Color("surface3"),
+                    currentNote
+                )
+                currentY += noteHeight
+            }
         }
 
         wg.Show("NoActivate X" x " Y" y " W" width " H" height)
@@ -395,6 +550,204 @@ class RouteWidget
         {
             return ""
         }
+    }
+
+    ; ============================================================
+    ; Live-tick handlers (zone-time updates)
+    ; ============================================================
+
+    ; Starts the SetTimer that refreshes per-row time cells. No-op
+    ; in headless mode (tests never want a background timer) and
+    ; when there's no zoneTracker wired (nothing to read times from).
+    _StartTick()
+    {
+        if this._headless
+            return
+        if !IsObject(this._zoneTracker)
+            return
+        if !this._tickFn
+            return
+        if this._tickActive
+            return
+        try SetTimer(this._tickFn, RouteWidget.TICK_MS)
+        this._tickActive := true
+    }
+
+    _StopTick()
+    {
+        if !this._tickActive
+            return
+        if !this._tickFn
+            return
+        try SetTimer(this._tickFn, 0)
+        this._tickActive := false
+    }
+
+    ; Tick body. Updates each row's time cell in place — no Gui
+    ; rebuild. Skipped when the widget is hidden or the slice/
+    ; controls are out of sync (defensive against a race with a
+    ; concurrent _Render rebuild, though AHK v2's single-threaded
+    ; message pump makes this nearly impossible in practice).
+    _OnTick()
+    {
+        if !this._gui
+            return
+        if !IsObject(this._zoneTracker)
+            return
+        if !IsObject(this._lastRenderedSlice)
+            return
+        if !(this._rowTimeControls is Array)
+            return
+        for i, row in this._lastRenderedSlice
+        {
+            if (i > this._rowTimeControls.Length)
+                continue
+            ctrl := this._rowTimeControls[i]
+            if (ctrl = "")
+                continue
+            newText := this._ComputeTimeText(row["name"])
+            try ctrl.Value := newText
+        }
+    }
+
+    ; Computes the display string for a zone's time cell. Returns
+    ; "" when there's no tracker wired OR the zone has no recorded
+    ; time (zones never visited stay blank rather than showing
+    ; "0:00" — less visual noise per Q4 decision). Includes the
+    ; in-flight active elapsed when the zone is currently active,
+    ; so the row visibly ticks up between renders.
+    ;
+    ; The "empty when zero" filter lives in _FormatTime (single
+    ; source of truth); this method only adds the tracker-absent
+    ; guard plus a defensive try around the read.
+    _ComputeTimeText(zoneName)
+    {
+        if !IsObject(this._zoneTracker)
+            return ""
+        ms := 0
+        try ms := this._zoneTracker.GetZoneTotalWithActive(zoneName)
+        return RouteWidget._FormatTime(ms)
+    }
+
+    ; ============================================================
+    ; Note rendering helpers
+    ; ============================================================
+
+    ; Returns the note text for the current zone in the slice (the
+    ; row with status="current"), or "" when (a) no current row in
+    ; the slice, (b) RouteService doesn't expose a current Route,
+    ; or (c) the current zone has no authored note. Defensive
+    ; try/catch around the Route read so a domain-layer bug never
+    ; cascades into a render crash.
+    _GetCurrentNoteFromSlice(slice)
+    {
+        if !IsObject(slice)
+            return ""
+        currentRow := ""
+        for _, row in slice
+        {
+            if (row["status"] = "current")
+            {
+                currentRow := row
+                break
+            }
+        }
+        if !IsObject(currentRow)
+            return ""
+        try
+        {
+            route := this._routeService.GetCurrentRoute()
+            if !IsObject(route)
+                return ""
+            return route.GetNote(currentRow["name"])
+        }
+        catch
+        {
+            return ""
+        }
+    }
+
+    ; Estimates the pixel height needed to render the given note
+    ; text inside a control of width availW at the given font
+    ; size. Counts hard line breaks (`n) AND soft wraps (chars per
+    ; line based on the font + width). Conservative — overshoots
+    ; slightly on long lines so the last visible line isn't
+    ; clipped at the bottom edge of the control.
+    ;
+    ; The estimate is good enough for typical tips (< 200 chars)
+    ; on the widget's normal width (~120-300 px). Notes longer
+    ; than that would benefit from a real GDI measurement, but
+    ; that complexity isn't worth the cost — the smoke test will
+    ; catch any tip that visibly clips, and the user can break
+    ; long notes manually.
+    static _EstimateNoteHeight(note, availW, fontSize, lineHeight)
+    {
+        lines := RouteWidget._EstimateNoteLines(note, availW, fontSize)
+        if (lines < 1)
+            return 0
+        ; +4 px padding inside the note row so the bottom line of
+        ; text doesn't touch the row's visual edge. Pure aesthetics;
+        ; the wrap math above accounts for the text itself.
+        return lines * lineHeight + 4
+    }
+
+    static _EstimateNoteLines(note, availW, fontSize)
+    {
+        s := String(note)
+        if (s = "")
+            return 0
+        avgCharW := Max(4, fontSize * RouteWidget.NOTE_CHAR_WIDTH_RATIO)
+        ; Subtract a little for the internal padding the Text
+        ; control reserves around its text; otherwise lines that
+        ; fit *exactly* at the boundary would be miscounted as 1
+        ; when AHK actually wraps them to 2.
+        usableW := Max(20, availW - 4)
+        charsPerLine := Max(8, Floor(usableW / avgCharW))
+
+        totalLines := 0
+        for _, line in StrSplit(s, "`n", "`r")
+        {
+            len := StrLen(line)
+            if (len = 0)
+            {
+                ; Hard `n with no content — user intentionally left
+                ; a blank line; still occupies one row of vertical
+                ; space.
+                totalLines += 1
+                continue
+            }
+            wraps := Ceil(len / charsPerLine)
+            if (wraps < 1)
+                wraps := 1
+            totalLines += wraps
+        }
+        return Max(1, totalLines)
+    }
+
+    ; Formats milliseconds as M:SS (or H:MM:SS once a single zone
+    ; exceeds an hour, rare but defensive). Floors seconds via
+    ; integer division — the 500 ms tick already coarsens the
+    ; display, so rounding doesn't add precision.
+    ;
+    ; Zero and negative ms both render as "" (the Q4 "no 0:00 noise"
+    ; rule lives here). Sub-second positive values like 500 ms still
+    ; render as "0:00" — the user sees the time appear immediately
+    ; on zone entry, rather than waiting a full second for the
+    ; first non-empty cell.
+    static _FormatTime(ms)
+    {
+        if (!IsNumber(ms) || ms <= 0)
+            return ""
+        totalSec := ms // 1000
+        m := totalSec // 60
+        s := totalSec - m * 60
+        if (m >= 60)
+        {
+            h := m // 60
+            m := m - h * 60
+            return Format("{:d}:{:02d}:{:02d}", h, m, s)
+        }
+        return Format("{:d}:{:02d}", m, s)
     }
 
     ; ============================================================

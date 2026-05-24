@@ -47,12 +47,13 @@ class _FakeAnchor
 
 class RouteWidgetTests extends TestCase
 {
-    bus    := ""
-    cfg    := ""
-    repo   := ""
-    svc    := ""
-    anchor := ""
-    widget := ""
+    bus     := ""
+    cfg     := ""
+    repo    := ""
+    svc     := ""
+    anchor  := ""
+    widget  := ""
+    tracker := ""    ; lazily attached by _AttachTracker (zoneTracker tests only)
 
     Setup()
     {
@@ -74,6 +75,12 @@ class RouteWidgetTests extends TestCase
     {
         if IsObject(this.widget)
             this.widget.Dispose()
+        ; Tracker is only attached by the optional _AttachTracker
+        ; helper (zoneTracker tests). Dispose unsubscribes its
+        ; ZoneChanged/TimerPaused/etc handlers from the shared
+        ; bus so the next test starts with a clean subscriber list.
+        if IsObject(this.tracker)
+            try this.tracker.Dispose()
         if IsObject(this.svc)
             this.svc.Dispose()
         Fixtures.CleanupAll()
@@ -135,7 +142,31 @@ class RouteWidgetTests extends TestCase
         ; --- Dispose ---
         "dispose_unsubscribes_all_four_events",
         "dispose_hides_widget",
-        "dispose_is_idempotent"
+        "dispose_is_idempotent",
+
+        ; --- zoneTracker dep (live per-zone time) ---
+        "constructor_accepts_optional_zone_tracker",
+        "constructor_throws_on_invalid_zone_tracker_type",
+        "constructor_back_compat_without_zone_tracker",
+        "format_time_renders_M_SS_under_one_hour",
+        "format_time_renders_H_MM_SS_at_or_over_one_hour",
+        "format_time_returns_empty_for_zero_or_negative",
+        "compute_time_text_returns_empty_without_tracker",
+        "compute_time_text_returns_empty_for_zero_ms",
+        "compute_time_text_formats_when_total_positive",
+
+        ; --- Note rendering (per-zone tips below current zone) ---
+        "estimate_note_lines_returns_zero_for_empty",
+        "estimate_note_lines_returns_one_for_short_text",
+        "estimate_note_lines_counts_hard_newlines",
+        "estimate_note_lines_treats_empty_line_as_one_row",
+        "estimate_note_lines_wraps_long_text_on_narrow_column",
+        "estimate_note_height_returns_zero_for_empty",
+        "estimate_note_height_grows_with_line_count",
+        "get_current_note_from_slice_returns_empty_for_no_current_row",
+        "get_current_note_from_slice_returns_empty_when_zone_has_no_note",
+        "get_current_note_from_slice_returns_note_when_current_has_note",
+        "get_current_note_from_slice_is_case_insensitive"
     ]
 
     ; ============================================================
@@ -146,6 +177,44 @@ class RouteWidgetTests extends TestCase
     {
         this.repo.Save("Default", Route(zones))
         this.svc.LoadRouteForProfile("Default")
+    }
+
+    ; Same as _SaveAndLoadRoute but also persists per-zone notes,
+    ; used by the note-rendering tests below. notesMap is a
+    ; Map<zoneName, noteText> matching Route's constructor contract.
+    ; Round-trips through the repo so the loaded Route's _notes are
+    ; populated exactly as production would have them after the
+    ; user authored tips in the Settings UI.
+    _SaveAndLoadRouteWithNotes(zones, notesMap)
+    {
+        this.repo.Save("Default", Route(zones, notesMap))
+        this.svc.LoadRouteForProfile("Default")
+    }
+
+    ; Disposes the default widget from Setup and replaces it with a
+    ; new widget WIRED to a fresh ZoneTrackingService. Used by the
+    ; zoneTracker-aware tests below; existing tests that don't care
+    ; about per-zone time keep using the Setup widget unchanged.
+    ; Both widget AND tracker are assigned to instance fields so
+    ; Teardown disposes them — a leaked tracker would keep its
+    ; bus subscriptions live across tests.
+    _AttachTracker()
+    {
+        if IsObject(this.widget)
+            try this.widget.Dispose()
+        ; RealClock is fine here — we don't drive any timing path
+        ; that compares ms across calls; the tracker is only used
+        ; for GetZoneTotalWithActive(zoneName) reads, which fold
+        ; in active elapsed only when the zone is the current
+        ; _activeZone (never the case in these tests).
+        clock := RealClock()
+        this.tracker := ZoneTrackingService(this.bus, clock)
+        this.widget := RouteWidget(
+            this.bus, this.cfg, this.svc,
+            () => this.anchor,
+            true,           ; headless
+            this.tracker
+        )
     }
 
     ; ============================================================
@@ -626,11 +695,294 @@ class RouteWidgetTests extends TestCase
     }
 
     ; ============================================================
+    ; zoneTracker dep (live per-zone time)
+    ; ============================================================
+    ;
+    ; RouteWidget accepts an optional zoneTracker (ZoneTrackingService
+    ; or empty) as the 6th ctor arg. When wired, each rendered row
+    ; gets a right-aligned time cell driven by
+    ; GetZoneTotalWithActive(zoneName), refreshed every 500 ms via
+    ; a SetTimer registered with ObjBindMethod (so Stop can cancel
+    ; by the same reference). Headless tests skip the SetTimer
+    ; entirely — _StartTick early-returns when this._headless is
+    ; true — so these tests can exercise the formatting + read paths
+    ; without a live timer.
+
+    constructor_accepts_optional_zone_tracker()
+    {
+        ; Wired version constructs cleanly. Validation rejects
+        ; non-empty non-ZoneTrackingService inputs (next test).
+        threw := false
+        try this._AttachTracker()
+        catch
+            threw := true
+        Assert.False(threw,
+            "constructing with a real ZoneTrackingService must not throw")
+        Assert.True(this.widget is RouteWidget,
+            "widget must be assignable after _AttachTracker")
+    }
+
+    constructor_throws_on_invalid_zone_tracker_type()
+    {
+        ; A Map is the most common shape that someone might
+        ; mistakenly pass; type validation rejects it. Empty
+        ; string (the default) is allowed — covered by
+        ; constructor_back_compat_without_zone_tracker.
+        Assert.Throws(TypeError, () => RouteWidget(
+            this.bus, this.cfg, this.svc,
+            () => this.anchor, true,
+            Map()))
+    }
+
+    constructor_back_compat_without_zone_tracker()
+    {
+        ; 5-arg call (pre-zoneTracker signature) must still work.
+        ; The default empty-string value bypasses type validation
+        ; and leaves _zoneTracker empty; the time column then
+        ; stays blank (verified by compute_time_text_returns_
+        ; empty_without_tracker below).
+        legacyWidget := RouteWidget(
+            this.bus, this.cfg, this.svc,
+            () => this.anchor, true)
+        Assert.True(legacyWidget is RouteWidget,
+            "5-arg ctor must remain valid for legacy call sites")
+        try legacyWidget.Dispose()
+    }
+
+    format_time_renders_M_SS_under_one_hour()
+    {
+        ; 95 000 ms = 1 minute 35 seconds = "1:35".
+        Assert.Equal("1:35", RouteWidget._FormatTime(95000),
+            "1m35s renders as M:SS")
+        ; 999 ms (under 1s) floors to 0 seconds = "0:00".
+        Assert.Equal("0:00", RouteWidget._FormatTime(999),
+            "sub-second floors to 0:00 (no rounding up)")
+        ; 60 000 ms = exactly 1 minute.
+        Assert.Equal("1:00", RouteWidget._FormatTime(60000),
+            "exactly 1 minute renders as 1:00")
+        ; 59 999 ms = 59 seconds (one tick under 1 minute).
+        Assert.Equal("0:59", RouteWidget._FormatTime(59999),
+            "just under 1 minute floors to 0:59")
+    }
+
+    format_time_renders_H_MM_SS_at_or_over_one_hour()
+    {
+        ; 3 725 000 ms = 1h 2m 5s = "1:02:05".
+        Assert.Equal("1:02:05", RouteWidget._FormatTime(3725000),
+            "1h02m05s renders as H:MM:SS (zero-padded MM and SS)")
+        ; 3 600 000 ms = exactly 1h — boundary; the H:MM:SS branch
+        ; takes over the moment total minutes reach 60.
+        Assert.Equal("1:00:00", RouteWidget._FormatTime(3600000),
+            "exactly 1h crosses the M:SS → H:MM:SS boundary")
+        ; 3 599 999 ms = 59m 59s — stays in M:SS.
+        Assert.Equal("59:59", RouteWidget._FormatTime(3599999),
+            "just under 1h stays in M:SS (no leading 0:)")
+    }
+
+    format_time_returns_empty_for_zero_or_negative()
+    {
+        ; Zero-ms zones render blank (Q4 decision: no '0:00' noise).
+        ; Negative is defensive -- unexpected but must not throw
+        ; or render weird strings.
+        Assert.Equal("", RouteWidget._FormatTime(0),
+            "0 ms renders as empty string")
+        Assert.Equal("", RouteWidget._FormatTime(-1),
+            "negative ms renders as empty string")
+        Assert.Equal("", RouteWidget._FormatTime(-99999),
+            "large-negative ms also defensive")
+    }
+
+    compute_time_text_returns_empty_without_tracker()
+    {
+        ; The Setup widget has NO tracker wired (5-arg ctor in
+        ; Setup). _ComputeTimeText must early-return "" so the
+        ; time column stays blank for every row regardless of
+        ; what zone name we ask about.
+        Assert.Equal("", this.widget._ComputeTimeText("The Riverbank"),
+            "no tracker -> empty string (no '0:00' placeholder)")
+        Assert.Equal("", this.widget._ComputeTimeText("AnythingAtAll"),
+            "no tracker -> empty for any zone")
+    }
+
+    compute_time_text_returns_empty_for_zero_ms()
+    {
+        ; Tracker is wired but the zone was never entered, so
+        ; GetZoneTotalWithActive returns 0 -> empty string per
+        ; the Q4 decision (no '0:00' placeholders cluttering
+        ; the overlay before zones are visited).
+        this._AttachTracker()
+        Assert.Equal("", this.widget._ComputeTimeText("Never Visited"),
+            "zero-ms zone renders blank")
+    }
+
+    compute_time_text_formats_when_total_positive()
+    {
+        ; Hydrate the tracker with a fixed total for one zone,
+        ; then verify the widget renders the formatted string.
+        ; Hydrate writes directly to _totals without going through
+        ; the ZoneChanged → _FlushActive path, so this test
+        ; isolates the read+format pipeline from the timing path.
+        this._AttachTracker()
+        totals := Map()
+        totals["The Riverbank"]   := 95000      ; 1:35
+        totals["Hunting Grounds"] := 3725000    ; 1:02:05
+        this.tracker.Hydrate(totals)
+        Assert.Equal("1:35",
+            this.widget._ComputeTimeText("The Riverbank"),
+            "95 000 ms renders via _FormatTime as 1:35")
+        Assert.Equal("1:02:05",
+            this.widget._ComputeTimeText("Hunting Grounds"),
+            "3 725 000 ms crosses into H:MM:SS as 1:02:05")
+        Assert.Equal("",
+            this.widget._ComputeTimeText("Unknown Zone"),
+            "zone not in totals still renders blank")
+    }
+
+    ; ============================================================
     ; Internal helper used by show_does_not_throw_when_resolver_throws
     ; ============================================================
     static _AlwaysThrows()
     {
         throw Error("resolver bug — simulated")
+    }
+
+    ; ============================================================
+    ; Note rendering (per-zone tips below current zone)
+    ; ============================================================
+    ;
+    ; The widget renders an extra row below the CURRENT zone row
+    ; when the runner authored a per-zone tip. Headless tests can't
+    ; observe the actual Gui control (it's never created), but the
+    ; helpers that compute height and resolve the current-zone note
+    ; are static / instance methods and can be exercised directly.
+
+    estimate_note_lines_returns_zero_for_empty()
+    {
+        ; An empty / unset note produces zero lines — the render
+        ; path uses this to know that no note row should be drawn,
+        ; and _EstimateNoteHeight uses it to short-circuit the
+        ; padding addition. Both branches must stay coherent.
+        Assert.Equal(0, RouteWidget._EstimateNoteLines("",  300, 10))
+        Assert.Equal(0, RouteWidget._EstimateNoteLines("",  100, 8))
+    }
+
+    estimate_note_lines_returns_one_for_short_text()
+    {
+        ; Short text on a wide column never wraps — fits in a
+        ; single rendered line.
+        Assert.Equal(1, RouteWidget._EstimateNoteLines("hi", 300, 10))
+    }
+
+    estimate_note_lines_counts_hard_newlines()
+    {
+        ; Three short lines separated by `n. None of them wrap
+        ; (each is 1 char on a 300px column), so the count is
+        ; exactly equal to the number of segments.
+        Assert.Equal(3, RouteWidget._EstimateNoteLines("a`nb`nc", 300, 10))
+    }
+
+    estimate_note_lines_treats_empty_line_as_one_row()
+    {
+        ; "a\n\nb" = line "a", blank line, line "b" = 3 rows of
+        ; vertical space. Empty segments must still count so the
+        ; user can author a tip with visual breathing room.
+        Assert.Equal(3, RouteWidget._EstimateNoteLines("a`n`nb", 300, 10))
+    }
+
+    estimate_note_lines_wraps_long_text_on_narrow_column()
+    {
+        ; Narrow column forces wrap. At font 10 with the 0.55
+        ; chars-per-pt ratio, ~50 px of usable width gives
+        ; ~8 chars per line; 32-char text wraps to >= 3 lines.
+        ; Test uses >= rather than exact so the wrap-math constant
+        ; can be tuned without breaking the assertion.
+        longText := "abcdefghijklmnopqrstuvwxyz123456"
+        lines := RouteWidget._EstimateNoteLines(longText, 50, 10)
+        Assert.True(lines >= 3,
+            "long text on narrow column wraps to >= 3 lines (got " lines ")")
+    }
+
+    estimate_note_height_returns_zero_for_empty()
+    {
+        ; Zero lines → zero pixels reserved. The render loop
+        ; depends on this to know whether to advance the cursor
+        ; or skip the note row entirely.
+        Assert.Equal(0, RouteWidget._EstimateNoteHeight("", 300, 10, 14))
+    }
+
+    estimate_note_height_grows_with_line_count()
+    {
+        ; 1 line: lineHeight (14) + 4 px padding = 18 px.
+        ; 3 lines: 3*14 + 4 = 46 px.
+        ; The +4 is the internal padding added by _EstimateNoteHeight
+        ; so the bottom row of text doesn't touch the row's edge.
+        h1 := RouteWidget._EstimateNoteHeight("single",                 300, 10, 14)
+        h3 := RouteWidget._EstimateNoteHeight("one`ntwo`nthree",         300, 10, 14)
+        Assert.Equal(14 + 4,   h1, "1 line: lineHeight + 4 px padding")
+        Assert.Equal(3*14 + 4, h3, "3 lines: 3*lineHeight + 4 px padding")
+        Assert.True(h3 > h1, "more lines always means taller box")
+    }
+
+    get_current_note_from_slice_returns_empty_for_no_current_row()
+    {
+        ; Slice with only upcoming/before rows — no row whose
+        ; status is "current" — yields no note regardless of
+        ; what the Route has authored. Matches the render's
+        ; "only render the current row's note" rule.
+        this._SaveAndLoadRouteWithNotes(["A", "B"], Map(
+            "A", "tip for A", "B", "tip for B"))
+        slice := [
+            Map("name", "A", "idx", 0, "status", "upcoming"),
+            Map("name", "B", "idx", 1, "status", "upcoming")
+        ]
+        Assert.Equal("", this.widget._GetCurrentNoteFromSlice(slice),
+            "no current row → no note even when other zones have one")
+    }
+
+    get_current_note_from_slice_returns_empty_when_zone_has_no_note()
+    {
+        ; Current row is A; only B has a note. The widget must
+        ; not borrow B's note onto A's row.
+        this._SaveAndLoadRouteWithNotes(["A", "B"], Map("B", "tip for B"))
+        slice := [
+            Map("name", "A", "idx", 0, "status", "current"),
+            Map("name", "B", "idx", 1, "status", "upcoming")
+        ]
+        Assert.Equal("", this.widget._GetCurrentNoteFromSlice(slice),
+            "current zone has no note → empty (other zone's note ignored)")
+    }
+
+    get_current_note_from_slice_returns_note_when_current_has_note()
+    {
+        ; Happy path: current zone has an authored tip. The widget
+        ; resolves it through RouteService.GetCurrentRoute().GetNote
+        ; — if the round-trip through repo/service drops notes,
+        ; this test catches it.
+        this._SaveAndLoadRouteWithNotes(["A", "B"], Map(
+            "A", "vendor first"))
+        slice := [
+            Map("name", "A", "idx", 0, "status", "current"),
+            Map("name", "B", "idx", 1, "status", "upcoming")
+        ]
+        Assert.Equal("vendor first",
+            this.widget._GetCurrentNoteFromSlice(slice))
+    }
+
+    get_current_note_from_slice_is_case_insensitive()
+    {
+        ; Slice carries the zone's display name (may differ from
+        ; the stored note key's casing). Route.GetNote lowercases
+        ; internally; verify the widget's resolve path inherits
+        ; that case-insensitivity end-to-end (slice display name
+        ; → Route key match).
+        this._SaveAndLoadRouteWithNotes(["Mud Burrow"], Map(
+            "Mud Burrow", "skip optional"))
+        slice := [
+            Map("name", "MUD BURROW", "idx", 0, "status", "current")
+        ]
+        Assert.Equal("skip optional",
+            this.widget._GetCurrentNoteFromSlice(slice),
+            "display-name casing variance still resolves the note")
     }
 }
 

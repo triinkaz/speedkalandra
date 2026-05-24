@@ -50,6 +50,17 @@ class _ThrowingRouteRepository extends RouteRepository
     }
 }
 
+; Helper: minimal stub for the GUI Edit control used by the
+; right-side notes panel. In headless tests the real Gui is never
+; built, so `_ctrls["routeNoteEdit"]` doesn't exist; tests inject
+; an instance of this class into the ctrls map to drive the
+; _StashCurrentNoteFromEdit / _SetNoteEditText paths. Same shape
+; for routeNoteHeader (header label).
+class _FakeRouteCtrl
+{
+    Value := ""
+}
+
 
 class SettingsDialogTests extends TestCase
 {
@@ -110,6 +121,36 @@ class SettingsDialogTests extends TestCase
         ; --- Route tab: helpers ---
         "clamp_rows_enforces_3_to_10_bounds",
         "non_town_zone_names_filters_towns_from_catalog",
+
+        ; --- Route tab: Default button ---
+        "load_default_replaces_buffer_with_all_non_town_zones_in_internal_id_order",
+        "load_default_skips_confirm_when_buffer_empty",
+        "load_default_no_op_when_route_deps_missing",
+        "internal_id_sort_key_pads_numeric_segments",
+        "internal_id_sort_key_handles_letter_suffix",
+        "internal_id_sort_orders_G1_2_before_G1_13",
+
+        ; --- Route tab: notes buffer (B5 dedupe + per-zone notes) ---
+        "open_loads_route_notes_from_repo",
+        "add_rejects_duplicate_zone_case_insensitive",
+        "add_logs_info_when_duplicate_rejected",
+        "remove_drops_note_for_removed_zone",
+        "remove_keeps_notes_for_other_zones",
+        "remove_clears_current_note_zone_when_removed_was_active",
+        "stash_writes_edit_value_to_buffer_under_current_zone",
+        "stash_deletes_buffer_entry_when_edit_empty",
+        "stash_deletes_buffer_entry_when_edit_whitespace_only",
+        "stash_noop_when_current_note_zone_empty",
+        "stash_uses_lowercase_key_regardless_of_zone_casing",
+        "save_persists_notes_to_repo",
+        "save_stashes_current_edit_before_serializing",
+        "refresh_panel_populates_header_and_edit_from_buffer",
+        "refresh_panel_clears_when_no_selection",
+        "listbox_change_stashes_previous_then_populates_new",
+        "contains_zone_case_insensitive_true_for_exact_match",
+        "contains_zone_case_insensitive_true_for_case_variation",
+        "contains_zone_case_insensitive_false_for_missing",
+        "contains_zone_case_insensitive_false_for_empty_input",
     ]
 
     ; ============================================================
@@ -912,6 +953,627 @@ class SettingsDialogTests extends TestCase
             Assert.NotEqual("Clearfell Encampment", n,
                 "towns must be filtered out of the dropdown list")
         }
+    }
+
+    ; ============================================================
+    ; Route tab - Default button
+    ; ============================================================
+    ;
+    ; The "Default" button in the Settings ROUTE section replaces
+    ; the in-memory _routeZones buffer with every non-town zone
+    ; from the catalog, sorted by internal_id parsed numerically
+    ; (so "G1_2" < "G1_13" < "G2_1", not the lexicographic order
+    ; a naive StrCompare would yield).
+    ;
+    ; The fixture catalog (_MakeDialogWithRoute) has 4 non-towns:
+    ;   The Riverbank    G1_1
+    ;   Hunting Grounds  G1_2
+    ;   Mud Burrow       G1_3
+    ;   Ogham Farmlands  G1_4
+    ; Internal-id order matches act order here, so the expected
+    ; default sequence is Riverbank, Hunting Grounds, Mud Burrow,
+    ; Ogham Farmlands (different from alphabetic).
+
+    load_default_replaces_buffer_with_all_non_town_zones_in_internal_id_order()
+    {
+        ; Start with a seeded route (so we can confirm the replace
+        ; semantic), then drive _OnRouteLoadDefault with
+        ; skipConfirm=true (headless SpeedKalandraMsgBox returns
+        ; "Cancel" by default, which would abort the test).
+        ctx := this._MakeDialogWithRoute(["Something", "Else"])
+        ctx.dialog.Open()
+        ctx.dialog._OnRouteLoadDefault(true)
+        zones := ctx.dialog._routeZones
+        Assert.Equal(4, zones.Length,
+            "Default must populate the buffer with all 4 non-town zones from the fixture")
+        Assert.Equal("The Riverbank",   zones[1],
+            "G1_1 (The Riverbank) must come first in internal_id order")
+        Assert.Equal("Hunting Grounds", zones[2],
+            "G1_2 (Hunting Grounds) must come second — NOT alphabetic")
+        Assert.Equal("Mud Burrow",      zones[3],
+            "G1_3 (Mud Burrow) must come third")
+        Assert.Equal("Ogham Farmlands", zones[4],
+            "G1_4 (Ogham Farmlands) must come fourth")
+    }
+
+    load_default_skips_confirm_when_buffer_empty()
+    {
+        ; When the buffer is empty (e.g. a fresh profile that has
+        ; never had a route saved), the handler bypasses the
+        ; confirmation MsgBox entirely — no "are you sure" friction
+        ; for a first-time fill. Pass skipConfirm=false (the
+        ; production default) and confirm the buffer still got
+        ; populated, which proves the headless MsgBox stub was
+        ; never reached (otherwise it would return "Cancel" and
+        ; the buffer would stay empty).
+        ctx := this._MakeDialogWithRoute()    ; no initial route
+        ctx.dialog.Open()
+        Assert.Equal(0, ctx.dialog._routeZones.Length,
+            "pre-condition: buffer must start empty")
+        ctx.dialog._OnRouteLoadDefault(false)
+        Assert.Equal(4, ctx.dialog._routeZones.Length,
+            "empty-buffer path must populate without confirmation prompt")
+    }
+
+    load_default_no_op_when_route_deps_missing()
+    {
+        ; Without the route trio wired, _HasRouteWiring is false
+        ; and the handler must early-return without touching the
+        ; buffer. Guarantees legacy/headless setups don't crash
+        ; if a future caller accidentally drives this method.
+        ctx := this._MakeDialog()    ; no route deps
+        threw := false
+        try ctx.dialog._OnRouteLoadDefault(true)
+        catch
+            threw := true
+        Assert.False(threw,
+            "missing-deps path must not throw")
+        Assert.Equal(0, ctx.dialog._routeZones.Length,
+            "missing-deps path must leave the buffer untouched")
+    }
+
+    internal_id_sort_key_pads_numeric_segments()
+    {
+        ; Each underscore-separated segment of the internal_id is
+        ; zero-padded to 4 digits so lexicographic StrCompare gives
+        ; the natural campaign order. "G1_1" → "0001_0001";
+        ; "G1_13_2" → "0001_0013_0002"; etc.
+        Assert.Equal("0001_0001",
+            SettingsDialog._InternalIdSortKey("G1_1"),
+            "single-segment numeric pads to 4 digits")
+        Assert.Equal("0001_0013",
+            SettingsDialog._InternalIdSortKey("G1_13"),
+            "two-digit second segment pads to 4 digits")
+        Assert.Equal("0001_0013_0002",
+            SettingsDialog._InternalIdSortKey("G1_13_2"),
+            "three-segment ID pads each numeric segment independently")
+        Assert.Equal("0002_0001",
+            SettingsDialog._InternalIdSortKey("G2_1"),
+            "act 2 first zone normalizes correctly")
+    }
+
+    internal_id_sort_key_handles_letter_suffix()
+    {
+        ; A small handful of zones (e.g. Arastas G4_8a) carry a
+        ; letter suffix on the last segment. The helper extracts
+        ; the leading digits, pads them, and preserves the suffix
+        ; AFTER the padded number so "G4_8" < "G4_8a" < "G4_9".
+        Assert.Equal("0004_0008a",
+            SettingsDialog._InternalIdSortKey("G4_8a"),
+            "letter suffix preserved after padded number")
+        Assert.Equal("0004_0011_0001a",
+            SettingsDialog._InternalIdSortKey("G4_11_1a"),
+            "letter suffix on nested segment also preserved")
+        Assert.True(
+            StrCompare(
+                SettingsDialog._InternalIdSortKey("G4_8"),
+                SettingsDialog._InternalIdSortKey("G4_8a")
+            ) < 0,
+            "G4_8 must sort before G4_8a")
+        Assert.True(
+            StrCompare(
+                SettingsDialog._InternalIdSortKey("G4_8a"),
+                SettingsDialog._InternalIdSortKey("G4_9")
+            ) < 0,
+            "G4_8a must sort before G4_9")
+    }
+
+    internal_id_sort_orders_G1_2_before_G1_13()
+    {
+        ; The motivating case for the sort-key normalizer: a naive
+        ; StrCompare of the raw internal_ids would put "G1_13" BEFORE
+        ; "G1_2" because '1' < '2' lexicographically. The padded
+        ; key reverses this to the natural numeric order.
+        rawCmp := StrCompare("G1_13", "G1_2")
+        Assert.True(rawCmp < 0,
+            "sanity check: raw lexicographic compare puts G1_13 BEFORE G1_2 (the bug)")
+
+        normalizedCmp := StrCompare(
+            SettingsDialog._InternalIdSortKey("G1_2"),
+            SettingsDialog._InternalIdSortKey("G1_13")
+        )
+        Assert.True(normalizedCmp < 0,
+            "normalized: G1_2 must sort BEFORE G1_13 (the fix)")
+    }
+
+    ; Variant of _MakeDialogWithRoute that ALSO seeds per-zone
+    ; notes into the persisted route. Used by note-buffer tests
+    ; that need a non-empty _routeNotes map after Open(). The
+    ; notesMap arg is a Map<zoneName, noteText> matching
+    ; Route(...) constructor contract. Returns the same handle
+    ; bag shape as _MakeDialogWithRoute.
+    _MakeDialogWithRouteAndNotes(initialZones, notesMap)
+    {
+        bus          := Fixtures.MakeBus()
+        iniPath      := Fixtures.TempPath("ini")
+        ini          := IniFile(iniPath)
+        settingsRepo := SettingsRepository(ini)
+        cfg          := AppSettings.Defaults()
+        memLog       := InMemoryLogger()
+
+        routesDir := Fixtures.TempDir()
+        routeRepo := RouteRepository(routesDir)
+
+        csvContent := "name;internal_id;act;is_town`n"
+                    . "The Riverbank;G1_1;1;0`n"
+                    . "Mud Burrow;G1_3;1;0`n"
+                    . "Hunting Grounds;G1_2;1;0`n"
+                    . "Ogham Farmlands;G1_4;1;0`n"
+                    . "Clearfell Encampment;G1_town;1;1`n"
+        csvPath := Fixtures.TempFile(csvContent, "csv")
+        zonesCat := ZonesCatalog(csvPath)
+        svc := RouteService(bus, routeRepo)
+
+        ; Seed BOTH zones and notes via the Route(zones, notes)
+        ; constructor so the on-disk INI carries the [Notes]
+        ; section the Open() path is expected to hydrate.
+        try routeRepo.Save(cfg.profileName,
+            Route(initialZones, notesMap))
+        try svc.LoadRouteForProfile(cfg.profileName)
+
+        dialog := SettingsDialog(
+            bus, settingsRepo, cfg, true, memLog,
+            routeRepo, svc, zonesCat)
+        return {
+            dialog:       dialog,
+            bus:          bus,
+            cfg:          cfg,
+            settingsRepo: settingsRepo,
+            memLog:       memLog,
+            iniPath:      iniPath,
+            routesDir:    routesDir,
+            routeRepo:    routeRepo,
+            zonesCatalog: zonesCat,
+            routeService: svc
+        }
+    }
+
+    ; Installs fake _FakeRouteCtrl instances as routeNoteHeader and
+    ; routeNoteEdit in the dialog's ctrls map. Tests that exercise
+    ; the stash / refresh / listbox-change paths need these stubs
+    ; so the methods touching `_ctrls["routeNoteEdit"].Value` find
+    ; a writable target.
+    _AttachFakeNotePanelCtrls(dialog)
+    {
+        dialog._ctrls["routeNoteHeader"] := _FakeRouteCtrl()
+        dialog._ctrls["routeNoteEdit"]   := _FakeRouteCtrl()
+    }
+
+    ; ============================================================
+    ; Route tab — notes buffer (B5 dedupe + per-zone notes)
+    ; ============================================================
+    ;
+    ; These tests cover the in-memory _routeNotes buffer + the
+    ; right-side panel binding (header label + Edit content). The
+    ; real Gui Edit is never built in headless mode, so tests
+    ; inject _FakeRouteCtrl stubs into the ctrls map (via the
+    ; _AttachFakeNotePanelCtrls helper) when they need to read /
+    ; write the Edit's Value field. Routes that go entirely
+    ; through the buffer (without touching the Edit) skip the
+    ; stub attachment.
+
+    open_loads_route_notes_from_repo()
+    {
+        ; Seed both zones and notes via Route(zones, notes), then
+        ; Open the dialog. _LoadRouteZonesFromRepo must hydrate
+        ; the _routeNotes map (case-insensitive, lowercased keys).
+        notes := Map("Mud Burrow", "vendor first",
+                     "The Riverbank", "skip optional pack")
+        ctx := this._MakeDialogWithRouteAndNotes(
+            ["The Riverbank", "Mud Burrow"], notes)
+        ctx.dialog.Open()
+
+        Assert.True(ctx.dialog._routeNotes is Map,
+            "buffer must be a Map after Open")
+        Assert.Equal(2, ctx.dialog._routeNotes.Count,
+            "both seeded notes must hydrate")
+        ; Keys are lowercase (Route normalization); case-insensitive
+        ; lookup via .Has should work for any casing.
+        Assert.True(ctx.dialog._routeNotes.Has("mud burrow"),
+            "key stored in lowercase")
+        Assert.Equal("vendor first",
+            ctx.dialog._routeNotes["mud burrow"])
+        Assert.Equal("skip optional pack",
+            ctx.dialog._routeNotes["THE RIVERBANK"],
+            "case-insensitive lookup via Map.CaseSense=Off")
+    }
+
+    add_rejects_duplicate_zone_case_insensitive()
+    {
+        ; Adding a zone that already exists (any casing) must
+        ; leave the buffer unchanged. Route.Add ALSO rejects
+        ; duplicates downstream, but the dialog catches it first
+        ; to give specific user feedback (MsgBox in production,
+        ; log INFO in headless).
+        ctx := this._MakeDialogWithRoute(["Mud Burrow", "The Riverbank"])
+        ctx.dialog.Open()
+        before := ctx.dialog._routeZones.Length
+        ctx.dialog._OnRouteAdd("MUD BURROW")        ; case variation
+        ctx.dialog._OnRouteAdd("the riverbank")     ; another variation
+        ctx.dialog._OnRouteAdd("Mud Burrow")        ; exact match
+        Assert.Equal(before, ctx.dialog._routeZones.Length,
+            "all three duplicate attempts must leave the buffer length unchanged")
+    }
+
+    add_logs_info_when_duplicate_rejected()
+    {
+        ; The MsgBox surface is not observable in headless mode
+        ; (SpeedKalandraMsgBox stubs to "Cancel" without recording).
+        ; The INFO log line we added to the dedupe branch is the
+        ; one observable signal that the dedupe path was taken,
+        ; so this test pins the diagnostic contract.
+        ctx := this._MakeDialogWithRoute(["Mud Burrow"])
+        ctx.dialog.Open()
+        ctx.dialog._OnRouteAdd("Mud Burrow")
+        Assert.True(ctx.memLog.HasEntry("INFO", "Add ignored duplicate zone"),
+            "dedupe rejection must leave an INFO log entry for diagnostics")
+        Assert.True(ctx.memLog.HasEntry("INFO", "Mud Burrow"),
+            "log entry must mention the offending zone name")
+    }
+
+    remove_drops_note_for_removed_zone()
+    {
+        ; Removing a zone must also drop its note from the
+        ; in-memory buffer, so the subsequent Save persists a
+        ; Route(zones, notes) where notes doesn't carry an orphan
+        ; entry pointing to a zone that's no longer in the list.
+        notes := Map("Mud Burrow", "first vendor",
+                     "The Riverbank", "skip pack")
+        ctx := this._MakeDialogWithRouteAndNotes(
+            ["The Riverbank", "Mud Burrow"], notes)
+        ctx.dialog.Open()
+        ctx.dialog._OnRouteRemove(2)    ; drop Mud Burrow
+
+        Assert.False(ctx.dialog._routeNotes.Has("mud burrow"),
+            "Mud Burrow's note must be dropped after Remove")
+    }
+
+    remove_keeps_notes_for_other_zones()
+    {
+        ; The drop in remove_drops_note_for_removed_zone must NOT
+        ; cascade: other zones' notes stay intact. Without this
+        ; assertion, a buggy remove that nuked the whole notes
+        ; map would pass the test above.
+        notes := Map("Mud Burrow", "first vendor",
+                     "The Riverbank", "skip pack")
+        ctx := this._MakeDialogWithRouteAndNotes(
+            ["The Riverbank", "Mud Burrow"], notes)
+        ctx.dialog.Open()
+        ctx.dialog._OnRouteRemove(2)    ; drop Mud Burrow
+
+        Assert.True(ctx.dialog._routeNotes.Has("the riverbank"),
+            "The Riverbank's note must survive removal of a different zone")
+        Assert.Equal("skip pack",
+            ctx.dialog._routeNotes["the riverbank"])
+    }
+
+    remove_clears_current_note_zone_when_removed_was_active()
+    {
+        ; If the user is currently editing the note for Zone X
+        ; (right panel bound to X) and removes X, the panel must
+        ; clear out — leaving _currentNoteZone pointing at the
+        ; removed zone would resurrect the deletion on the next
+        ; stash, since the Edit's Value would re-write the buffer
+        ; under the (now stale) key.
+        notes := Map("Mud Burrow", "vendor first")
+        ctx := this._MakeDialogWithRouteAndNotes(
+            ["The Riverbank", "Mud Burrow"], notes)
+        ctx.dialog.Open()
+        this._AttachFakeNotePanelCtrls(ctx.dialog)
+        ; Simulate the user clicking row 2 (Mud Burrow):
+        ctx.dialog._currentNoteZone := "Mud Burrow"
+        ; And typing into the Edit:
+        ctx.dialog._ctrls["routeNoteEdit"].Value := "about to be removed"
+
+        ctx.dialog._OnRouteRemove(2)
+
+        Assert.Equal("", ctx.dialog._currentNoteZone,
+            "current note zone must clear when its row is removed")
+        Assert.False(ctx.dialog._routeNotes.Has("mud burrow"),
+            "the in-Edit content must NOT resurrect a note for the removed zone")
+    }
+
+    stash_writes_edit_value_to_buffer_under_current_zone()
+    {
+        ; Happy path: with _currentNoteZone set and the fake Edit
+        ; carrying content, _StashCurrentNoteFromEdit writes the
+        ; content into _routeNotes under the lowercased zone key.
+        ctx := this._MakeDialogWithRoute(["Mud Burrow"])
+        ctx.dialog.Open()
+        this._AttachFakeNotePanelCtrls(ctx.dialog)
+        ctx.dialog._currentNoteZone := "Mud Burrow"
+        ctx.dialog._ctrls["routeNoteEdit"].Value := "swap regen on hit"
+
+        ctx.dialog._StashCurrentNoteFromEdit()
+
+        Assert.True(ctx.dialog._routeNotes.Has("mud burrow"))
+        Assert.Equal("swap regen on hit",
+            ctx.dialog._routeNotes["mud burrow"])
+    }
+
+    stash_deletes_buffer_entry_when_edit_empty()
+    {
+        ; Mirrors Route.SetNote("x", "")'s contract: an empty
+        ; Edit means "this zone has no note", which must DELETE
+        ; any prior buffer entry (not store an empty-string value
+        ; that would then write a no-op key=value to the INI on
+        ; Save).
+        notes := Map("Mud Burrow", "old note")
+        ctx := this._MakeDialogWithRouteAndNotes(["Mud Burrow"], notes)
+        ctx.dialog.Open()
+        this._AttachFakeNotePanelCtrls(ctx.dialog)
+        ctx.dialog._currentNoteZone := "Mud Burrow"
+        ctx.dialog._ctrls["routeNoteEdit"].Value := ""
+
+        ctx.dialog._StashCurrentNoteFromEdit()
+
+        Assert.False(ctx.dialog._routeNotes.Has("mud burrow"),
+            "empty Edit content must delete the buffer entry")
+    }
+
+    stash_deletes_buffer_entry_when_edit_whitespace_only()
+    {
+        ; Whitespace-only content (space/tab/CR/LF) collapses to
+        ; "empty" via the Trim with explicit whitespace chars —
+        ; same defensive contract used in Route.SetNote and the
+        ; Route constructor's notes-loop normalization (CR/LF
+        ; aren't in Trim's defaults, the gotcha that bit us in
+        ; the domain layer earlier).
+        notes := Map("Mud Burrow", "old note")
+        ctx := this._MakeDialogWithRouteAndNotes(["Mud Burrow"], notes)
+        ctx.dialog.Open()
+        this._AttachFakeNotePanelCtrls(ctx.dialog)
+        ctx.dialog._currentNoteZone := "Mud Burrow"
+        ; All three of: space+tab, bare LF, CR+LF must collapse.
+        ctx.dialog._ctrls["routeNoteEdit"].Value := "  `t  `n `r`n  "
+
+        ctx.dialog._StashCurrentNoteFromEdit()
+
+        Assert.False(ctx.dialog._routeNotes.Has("mud burrow"),
+            "whitespace-only Edit content must delete the buffer entry")
+    }
+
+    stash_noop_when_current_note_zone_empty()
+    {
+        ; Defensive: with no zone bound to the right panel
+        ; (_currentNoteZone == ""), stashing must not write
+        ; anywhere. Otherwise a leaked "" key could end up in
+        ; the buffer and confuse the downstream Save.
+        ctx := this._MakeDialogWithRoute(["Mud Burrow"])
+        ctx.dialog.Open()
+        this._AttachFakeNotePanelCtrls(ctx.dialog)
+        ctx.dialog._currentNoteZone := ""     ; explicitly clear
+        ctx.dialog._ctrls["routeNoteEdit"].Value := "orphan content"
+
+        before := ctx.dialog._routeNotes.Count
+        ctx.dialog._StashCurrentNoteFromEdit()
+
+        Assert.Equal(before, ctx.dialog._routeNotes.Count,
+            "empty _currentNoteZone must make stash a no-op")
+        Assert.False(ctx.dialog._routeNotes.Has(""),
+            "no entry under an empty-string key")
+    }
+
+    stash_uses_lowercase_key_regardless_of_zone_casing()
+    {
+        ; The buffer's CaseSense="Off" makes lookups case-
+        ; insensitive even if we store under mixed-case keys,
+        ; BUT the stash path normalizes via StrLower explicitly
+        ; so the on-disk key (which Route.GetAllNotes also
+        ; lowercases) stays canonical. Pin both: the entry is
+        ; stored under lowercase, AND case-variations resolve to
+        ; the same entry.
+        ctx := this._MakeDialogWithRoute(["Mud Burrow"])
+        ctx.dialog.Open()
+        this._AttachFakeNotePanelCtrls(ctx.dialog)
+        ctx.dialog._currentNoteZone := "MuD BuRrOw"    ; mixed case
+        ctx.dialog._ctrls["routeNoteEdit"].Value := "any text"
+
+        ctx.dialog._StashCurrentNoteFromEdit()
+
+        Assert.True(ctx.dialog._routeNotes.Has("mud burrow"),
+            "stash must canonicalize the key to lowercase")
+        Assert.Equal("any text",
+            ctx.dialog._routeNotes["MUD BURROW"],
+            "case-insensitive lookup hits the same entry")
+    }
+
+    save_persists_notes_to_repo()
+    {
+        ; End-to-end: load with notes, mutate the buffer,
+        ; _SaveRouteIfWired, then reload from disk and confirm the
+        ; persisted Route carries the in-memory notes. Without
+        ; this round-trip, a regression that drops notes on
+        ; serialize would slip past the unit-level stash tests.
+        seedNotes := Map("Mud Burrow", "old vendor note")
+        ctx := this._MakeDialogWithRouteAndNotes(
+            ["The Riverbank", "Mud Burrow"], seedNotes)
+        ctx.dialog.Open()
+        ; Mutate the notes buffer directly (no stash dance needed
+        ; since we're not testing the stash path here):
+        ctx.dialog._routeNotes["mud burrow"] := "NEW vendor note"
+        ctx.dialog._routeNotes["the riverbank"] := "skip pack"
+
+        ctx.dialog._SaveRouteIfWired()
+
+        ; Re-load via a fresh Route from the repo and confirm.
+        loaded := ctx.routeRepo.Load(ctx.cfg.profileName)
+        Assert.Equal("NEW vendor note", loaded.GetNote("Mud Burrow"))
+        Assert.Equal("skip pack",       loaded.GetNote("The Riverbank"))
+    }
+
+    save_stashes_current_edit_before_serializing()
+    {
+        ; A user who types a note and IMMEDIATELY clicks Save
+        ; (without first clicking a different zone to trigger
+        ; the listbox onChange stash) must NOT lose that input.
+        ; _SaveRouteIfWired calls _StashCurrentNoteFromEdit
+        ; explicitly to bridge that gap.
+        ctx := this._MakeDialogWithRoute(["Mud Burrow"])
+        ctx.dialog.Open()
+        this._AttachFakeNotePanelCtrls(ctx.dialog)
+        ctx.dialog._currentNoteZone := "Mud Burrow"
+        ctx.dialog._ctrls["routeNoteEdit"].Value := "unflushed input"
+
+        ctx.dialog._SaveRouteIfWired()
+
+        loaded := ctx.routeRepo.Load(ctx.cfg.profileName)
+        Assert.Equal("unflushed input", loaded.GetNote("Mud Burrow"),
+            "unflushed edit must reach disk via Save's pre-serialize stash")
+    }
+
+    refresh_panel_populates_header_and_edit_from_buffer()
+    {
+        ; With a real listbox stub returning idx=2 and the buffer
+        ; carrying a note for zone at idx=2, the refresh must
+        ; populate both the header label ("Notes for: <zone>")
+        ; and the Edit's Value (with the note text).
+        notes := Map("Mud Burrow", "vendor first")
+        ctx := this._MakeDialogWithRouteAndNotes(
+            ["The Riverbank", "Mud Burrow"], notes)
+        ctx.dialog.Open()
+        this._AttachFakeNotePanelCtrls(ctx.dialog)
+        ; Stub the listbox selection at idx 2 (Mud Burrow).
+        ctx.dialog._ctrls["routeListBox"] := _FakeRouteCtrl()
+        ctx.dialog._ctrls["routeListBox"].Value := 2
+
+        ctx.dialog._RefreshNotePanelForSelection()
+
+        Assert.Equal("Mud Burrow", ctx.dialog._currentNoteZone,
+            "refresh must bind _currentNoteZone to the selected zone")
+        Assert.Equal("Notes for: Mud Burrow",
+            ctx.dialog._ctrls["routeNoteHeader"].Value,
+            "header label must restate the zone name")
+        Assert.Equal("vendor first",
+            ctx.dialog._ctrls["routeNoteEdit"].Value,
+            "Edit must show the existing note text")
+    }
+
+    refresh_panel_clears_when_no_selection()
+    {
+        ; No selection (or out-of-range idx) must drop _currentNoteZone
+        ; back to "" and surface the "Select a zone…" fallback in
+        ; the header. Edit clears to empty so the user can't see
+        ; the previous selection's note bleeding into the empty
+        ; state.
+        ctx := this._MakeDialogWithRoute(["Mud Burrow"])
+        ctx.dialog.Open()
+        this._AttachFakeNotePanelCtrls(ctx.dialog)
+        ; No listbox stub installed — _ResolveRouteIdx returns 0
+        ; (out of range), which triggers the empty-state branch.
+        ctx.dialog._currentNoteZone := "some previous binding"
+        ctx.dialog._ctrls["routeNoteEdit"].Value := "stale content"
+        ctx.dialog._ctrls["routeNoteHeader"].Value := "Notes for: stale"
+
+        ctx.dialog._RefreshNotePanelForSelection()
+
+        Assert.Equal("", ctx.dialog._currentNoteZone,
+            "no selection must clear _currentNoteZone")
+        Assert.Equal("Select a zone to edit notes",
+            ctx.dialog._ctrls["routeNoteHeader"].Value,
+            "header falls back to the prompt text")
+        Assert.Equal("", ctx.dialog._ctrls["routeNoteEdit"].Value,
+            "Edit clears so previous content doesn't bleed through")
+    }
+
+    listbox_change_stashes_previous_then_populates_new()
+    {
+        ; The listbox onChange handler is the central integration
+        ; point: it stashes the Edit's CURRENT content under the
+        ; PREVIOUS zone's key, then populates the Edit with the
+        ; NEWLY-selected zone's note. This test drives both halves
+        ; of that contract in sequence.
+        notes := Map("The Riverbank", "skip pack")
+        ctx := this._MakeDialogWithRouteAndNotes(
+            ["The Riverbank", "Mud Burrow"], notes)
+        ctx.dialog.Open()
+        this._AttachFakeNotePanelCtrls(ctx.dialog)
+        ; Stub the listbox so _ResolveRouteIdx returns idx 2.
+        ctx.dialog._ctrls["routeListBox"] := _FakeRouteCtrl()
+        ctx.dialog._ctrls["routeListBox"].Value := 2
+
+        ; Simulate state right BEFORE the user clicks a new row:
+        ; The Riverbank is current, user typed a NEW note for it.
+        ctx.dialog._currentNoteZone := "The Riverbank"
+        ctx.dialog._ctrls["routeNoteEdit"].Value := "NEW Riverbank note"
+
+        ctx.dialog._OnRouteListBoxChanged()
+
+        ; Stash half: previous zone's new content must reach buffer.
+        Assert.Equal("NEW Riverbank note",
+            ctx.dialog._routeNotes["the riverbank"],
+            "previous zone's edit content must be stashed under its key")
+        ; Populate half: panel now bound to Mud Burrow (idx 2),
+        ; which has no note yet, so Edit is empty.
+        Assert.Equal("Mud Burrow", ctx.dialog._currentNoteZone,
+            "_currentNoteZone now points at the newly-selected zone")
+        Assert.Equal("", ctx.dialog._ctrls["routeNoteEdit"].Value,
+            "new zone has no note — Edit must clear, not carry over old content")
+    }
+
+    contains_zone_case_insensitive_true_for_exact_match()
+    {
+        arr := ["The Riverbank", "Mud Burrow"]
+        Assert.True(
+            SettingsDialog._ContainsZoneCaseInsensitive(arr, "Mud Burrow"))
+    }
+
+    contains_zone_case_insensitive_true_for_case_variation()
+    {
+        ; Dedupe must not depend on the user typing the zone name
+        ; with identical casing — the user might paste the name
+        ; lowercase, all-caps, etc.
+        arr := ["The Riverbank", "Mud Burrow"]
+        Assert.True(
+            SettingsDialog._ContainsZoneCaseInsensitive(arr, "MUD BURROW"))
+        Assert.True(
+            SettingsDialog._ContainsZoneCaseInsensitive(arr, "mud burrow"))
+        Assert.True(
+            SettingsDialog._ContainsZoneCaseInsensitive(arr, "MuD BuRrOw"))
+    }
+
+    contains_zone_case_insensitive_false_for_missing()
+    {
+        arr := ["The Riverbank", "Mud Burrow"]
+        Assert.False(
+            SettingsDialog._ContainsZoneCaseInsensitive(arr, "Hunting Grounds"))
+        Assert.False(
+            SettingsDialog._ContainsZoneCaseInsensitive([], "anything"))
+    }
+
+    contains_zone_case_insensitive_false_for_empty_input()
+    {
+        ; Both an empty target and a non-array buffer return
+        ; false defensively — no throw, no spurious match. Keeps
+        ; _OnRouteAdd's early-return path safe even when bystander
+        ; code paths mangle the inputs.
+        arr := ["The Riverbank"]
+        Assert.False(
+            SettingsDialog._ContainsZoneCaseInsensitive(arr, ""))
+        Assert.False(
+            SettingsDialog._ContainsZoneCaseInsensitive(arr, "   "))
+        Assert.False(
+            SettingsDialog._ContainsZoneCaseInsensitive("not an array", "X"))
     }
 }
 

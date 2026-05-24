@@ -46,7 +46,7 @@
 
 class SettingsDialog
 {
-    static WINDOW_W := 560
+    static WINDOW_W := 880
     static WINDOW_H := 620
 
     _bus           := ""
@@ -68,6 +68,21 @@ class SettingsDialog
     _routeService  := ""    ; RouteService    — Refresh() after route save
     _zonesCatalog  := ""    ; ZonesCatalog    — supplies the non-town dropdown
     _routeZones    := ""    ; Array<String>   — in-memory editing buffer
+    _routeNotes    := ""    ; Map<lowerZoneName, noteText> — in-memory notes
+                            ; buffer. Hydrated from disk on Open(),
+                            ; mutated by the right-panel Edit's content
+                            ; via _StashCurrentNoteFromEdit, persisted
+                            ; back via Route(zones, notes) on Save.
+                            ; Map.CaseSense="Off" so SetNote/GetNote with
+                            ; any zone-name casing hit the same entry,
+                            ; matching Route._notes internal contract.
+    _currentNoteZone := ""  ; Display name (original case) of the zone
+                            ; currently bound to the right-panel Edit.
+                            ; "" when no zone is selected. Used by the
+                            ; ListBox onChange handler to know which
+                            ; buffer entry to write to when the user
+                            ; navigates to a different zone (the new
+                            ; selection's note then populates the Edit).
 
     __New(bus, settingsRepo, cfg, headless := false, log := "",
           routeRepo := "", routeSvc := "", zonesCat := "")
@@ -112,6 +127,14 @@ class SettingsDialog
         this._routeService := routeSvc
         this._zonesCatalog := zonesCat
         this._routeZones   := []
+        ; Notes buffer with case-insensitive lookup. Hydrated
+        ; explicitly on Open() via _LoadRouteZonesFromRepo, so a
+        ; programmatic caller that bypasses Open (rare; mostly
+        ; tests) starts with an empty map rather than an undefined
+        ; field.
+        this._routeNotes := Map()
+        this._routeNotes.CaseSense := "Off"
+        this._currentNoteZone := ""
         this._ctrls        := Map()
         this._hotkeyActions := []
 
@@ -940,6 +963,14 @@ class SettingsDialog
             . (profileLabel != "" ? " (build: " . profileLabel . ")" : "")
         this._SectionHeader(g, y, headerText)
 
+        ; Capture the header's Y so the right-side notes panel can
+        ; align with the listbox vertically. The panel sits in the
+        ; x560…x870 column that opened up when WINDOW_W grew from
+        ; 560 to 880 — the left column (x16…x540) keeps all the
+        ; original ROUTE controls (listbox / buttons / dropdown /
+        ; slider / Default-Import-Export) untouched.
+        routeStartY := y
+
         ; Listbox + side button column.
         items := this._BuildRouteListBoxItems()
         ; Width 420 leaves an 80px column on the right for the
@@ -950,11 +981,21 @@ class SettingsDialog
         ; Originally h140 in the first draft of Commit 3 but that
         ; pushed the dialog past 1080p screens — see _BuildGui
         ; header note on the +Resize switch.
-        this._ctrls["routeListBox"] := g.Add("ListBox",
+        lb := g.Add("ListBox",
             "x32 y" (y + 22) " w420 h100",
             items)
+        ; Wire the selection-change handler so navigating between
+        ; zones in the listbox stashes the current Edit content to
+        ; the buffer (for the previously-selected zone) and then
+        ; populates the Edit with the newly-selected zone's note.
+        ; The handler is a closure rather than a bound method so
+        ; it captures `this` correctly across the AHK event-loop
+        ; boundary (ObjBindMethod would also work but the closure
+        ; reads consistently with the rest of this dialog).
+        lb.OnEvent("Change", (*) => this._OnRouteListBoxChanged())
+        this._ctrls["routeListBox"] := lb
         if (items.Length > 0)
-            try this._ctrls["routeListBox"].Choose(1)
+            try lb.Choose(1)
 
         ; Right-side button column. Three buttons stacked with
         ; small gaps; ▲ at the top, ▼ just below, Remove at the
@@ -1017,17 +1058,74 @@ class SettingsDialog
 
         y += 30
 
-        ; Import / Export buttons.
+        ; Default / Import / Export buttons row.
+        ; "Default" replaces the current route with every non-town
+        ; zone from the catalog in internal_id order — the user
+        ; trims down to their preferred route. Asks confirmation
+        ; when the buffer is non-empty so a careless click doesn't
+        ; throw away in-progress edits. 3 buttons at w110 each
+        ; with 10 px gaps fit in the dialog's 528 px usable width
+        ; (16 px margin × 2 off WINDOW_W=560).
         g.SetFont("s9 c" Theme.Color("text"), Theme.FONT_UI)
-        btnImport := g.Add("Button", "x180 y" y " w120 h28", "Import...")
+        btnDefault := g.Add("Button", "x180 y" y " w110 h28", "Default")
+        btnDefault.OnEvent("Click", (*) => this._OnRouteLoadDefault())
+        this._ctrls["routeBtnDefault"] := btnDefault
+
+        btnImport := g.Add("Button", "x300 y" y " w110 h28", "Import...")
         btnImport.OnEvent("Click", (*) => this._OnRouteImport())
         this._ctrls["routeBtnImport"] := btnImport
 
-        btnExport := g.Add("Button", "x310 y" y " w120 h28", "Export...")
+        btnExport := g.Add("Button", "x420 y" y " w110 h28", "Export...")
         btnExport.OnEvent("Click", (*) => this._OnRouteExport())
         this._ctrls["routeBtnExport"] := btnExport
 
         y += 40
+
+        ; --- Right-side notes panel ---
+        ; Sits in the x560…x870 column opened by WINDOW_W=880, top-
+        ; aligned with the listbox so the two surfaces read as a
+        ; single "select a zone on the left, edit its note on the
+        ; right" workflow. The header label restates the currently
+        ; selected zone's name so the user can't accidentally type
+        ; into the wrong row's note after a long editing session.
+        ;
+        ; The Edit is Multi/VScroll/Wrap/WantReturn:
+        ;   - Multi:      multi-line semantics (newlines render as breaks)
+        ;   - VScroll:    scrollbar when content exceeds h180
+        ;   - Wrap:       long lines wrap at the right edge
+        ;   - WantReturn: Enter inside the field inserts a newline
+        ;                 rather than submitting the dialog
+        ;   - Limit500:   matches the soft cap mentioned in the
+        ;                 ROUTE section docstring; longer tips get
+        ;                 truncated client-side rather than producing
+        ;                 a giant note row in the live overlay.
+        panelY := routeStartY + 22
+        g.SetFont("s9 bold c" Theme.Color("text"), Theme.FONT_UI)
+        noteHeader := g.Add("Text", "x560 y" panelY " w300",
+            "Select a zone to edit notes")
+        this._ctrls["routeNoteHeader"] := noteHeader
+
+        g.SetFont(Theme.InputFont(), Theme.FONT_UI)
+        noteEdit := g.Add("Edit",
+            "x560 y" (panelY + 22) " w300 h180 " Theme.InputBg()
+                . " +Multi +VScroll +Wrap WantReturn Limit500",
+            "")
+        this._ctrls["routeNoteEdit"] := noteEdit
+
+        ; Helper hint immediately below the Edit so the user
+        ; doesn't have to discover the multi-line semantics by
+        ; trial-and-error. Muted color so it reads as secondary.
+        g.SetFont("s8 c" Theme.Color("muted"), Theme.FONT_UI)
+        g.Add("Text", "x560 y" (panelY + 206) " w300",
+            "Notes appear below the current zone on the route overlay. Enter = new line.")
+
+        ; Populate the right panel from whatever's currently
+        ; selected in the listbox (default: row 1 from the
+        ; Choose(1) above). Without this, the panel would stay on
+        ; "Select a zone…" until the user clicked a row, even
+        ; though row 1 IS selected.
+        this._RefreshNotePanelForSelection()
+
         return y
     }
 
@@ -1037,6 +1135,9 @@ class SettingsDialog
     _LoadRouteZonesFromRepo()
     {
         this._routeZones := []
+        this._routeNotes := Map()
+        this._routeNotes.CaseSense := "Off"
+        this._currentNoteZone := ""
         if !this._HasRouteWiring()
             return
         if !IsObject(this._cfg)
@@ -1047,7 +1148,16 @@ class SettingsDialog
             ; collision (CLAUDE.md §3).
             loaded := this._routeRepo.Load(this._cfg.profileName)
             if (loaded is Route)
+            {
                 this._routeZones := loaded.GetZones()
+                ; GetAllNotes returns a defensive copy that's already
+                ; lowercase-keyed and case-insensitive — use it
+                ; directly as the editing buffer. Mutations through
+                ; the right panel Edit go via _StashCurrentNoteFromEdit
+                ; which also writes lowercase keys, keeping the buffer
+                ; coherent with Route._notes' internal contract.
+                this._routeNotes := loaded.GetAllNotes()
+            }
         }
     }
 
@@ -1136,13 +1246,39 @@ class SettingsDialog
         idx := this._ResolveRouteIdx(idxOverride)
         if (idx < 1 || idx > this._routeZones.Length)
             return
+        removedZone := this._routeZones[idx]
         this._routeZones.RemoveAt(idx)
+        ; Drop the note from the buffer too so the buffer stays
+        ; coherent with what Save persists via Route(zones, notes)
+        ; — Route.Remove drops the matching note on its own, but
+        ; the buffer here is what the construction passes IN, so
+        ; we have to mirror that contract proactively.
+        removedKey := StrLower(String(removedZone))
+        if this._routeNotes.Has(removedKey)
+            this._routeNotes.Delete(removedKey)
+        ; If the removed zone is the one the right panel is
+        ; currently bound to, clear _currentNoteZone BEFORE the
+        ; subsequent listbox refresh fires the onChange handler.
+        ; Without this, _StashCurrentNoteFromEdit would re-insert
+        ; whatever text is in the Edit field under the (now stale)
+        ; removedKey, resurrecting the deletion we just performed.
+        if (StrLower(this._currentNoteZone) = removedKey)
+        {
+            this._currentNoteZone := ""
+            this._SetNoteHeaderText("")
+            this._SetNoteEditText("")
+        }
         ; Try to select the same position. If we removed the
         ; LAST item, select the new last (or 0 = no selection).
         newSel := idx > this._routeZones.Length
                 ? this._routeZones.Length
                 : idx
         this._RefreshRouteListBox(newSel)
+        ; The listbox refresh above doesn't always trigger the
+        ; onChange handler reliably (depends on whether the
+        ; selected index changed). Re-sync the right panel
+        ; explicitly to be defensive against that.
+        this._RefreshNotePanelForSelection()
     }
 
     _OnRouteAdd(zoneOverride := "")
@@ -1156,8 +1292,36 @@ class SettingsDialog
         }
         if (Trim(String(zoneName)) = "")
             return
+        ; Dedupe up front (case-insensitive). Route.Add ALSO rejects
+        ; duplicates, but doing the check here lets us surface a
+        ; specific MsgBox so the user understands why the listbox
+        ; didn't grow — a silent no-op would feel like a bug.
+        if SettingsDialog._ContainsZoneCaseInsensitive(this._routeZones, zoneName)
+        {
+            ; Log at INFO so the dedupe path leaves an observable
+            ; trace in InMemoryLogger for headless tests (the
+            ; MsgBox below is the user-facing signal but isn't
+            ; observable in headless mode — SpeedKalandraMsgBox
+            ; stubs to "Cancel" without recording calls).
+            try this._log.Info("Add ignored duplicate zone: '" . zoneName . "'",
+                "SettingsDialog")
+            try SpeedKalandraMsgBox(
+                "'" . zoneName . "' is already in the route. Routes "
+                . "don't allow duplicate zones — the overlay tracks "
+                . "one row per zone, and time spent on each visit "
+                . "accumulates onto the single existing row "
+                . "automatically (so a 'second visit' isn't a "
+                . "separate slot in the route).",
+                "Duplicate zone",
+                "Iconi")
+            return
+        }
         this._routeZones.Push(String(zoneName))
         this._RefreshRouteListBox(this._routeZones.Length)
+        ; New row is now selected — sync the right panel to it
+        ; (header restates the new zone name; Edit is empty since
+        ; freshly-added zones have no note).
+        this._RefreshNotePanelForSelection()
     }
 
     ; Reads the route ListBox selection; returns 0 when there's no
@@ -1173,6 +1337,113 @@ class SettingsDialog
             return Integer(this._ctrls["routeListBox"].Value)
         catch
             return 0
+    }
+
+    ; ============================================================
+    ; Notes panel — ListBox onChange + Edit content sync
+    ; ============================================================
+    ;
+    ; The right-side panel is bound to the ListBox selection: when
+    ; the user clicks a different zone, the Edit's current content
+    ; is stashed into _routeNotes under the PREVIOUS zone's key,
+    ; then the Edit is populated with the NEW zone's note (or
+    ; empty when the zone has no note yet). _SaveRouteIfWired
+    ; also calls _StashCurrentNoteFromEdit so the last unflushed
+    ; edit before clicking Save isn't silently dropped.
+    ;
+    ; Headless mode: tests can drive this flow by calling
+    ; _OnRouteListBoxChanged directly after writing to a stub
+    ; routeNoteEdit; the real GUI Edit is never built.
+
+    _OnRouteListBoxChanged()
+    {
+        if !this._HasRouteWiring()
+            return
+        ; Stash first — we're about to overwrite the Edit with the
+        ; new selection's content, so the previous content must
+        ; reach the buffer before that happens.
+        this._StashCurrentNoteFromEdit()
+        this._RefreshNotePanelForSelection()
+    }
+
+    ; Reads the current listbox selection and reflects it in the
+    ; right panel (header label + Edit content + _currentNoteZone
+    ; binding). Does NOT stash the Edit's current content — the
+    ; caller is expected to call _StashCurrentNoteFromEdit first
+    ; when that's appropriate. Used by:
+    ;   - _OnRouteListBoxChanged (after stash)
+    ;   - _OnRouteRemove          (after the removed row is gone)
+    ;   - _OnRouteAdd             (selection moves to the new row)
+    ;   - _OnRouteImport          (selection resets to row 1)
+    ;   - _BuildRouteSection      (initial population)
+    _RefreshNotePanelForSelection()
+    {
+        idx := this._ResolveRouteIdx(-1)
+        if (idx < 1 || idx > this._routeZones.Length)
+        {
+            this._currentNoteZone := ""
+            this._SetNoteHeaderText("")
+            this._SetNoteEditText("")
+            return
+        }
+        zone := this._routeZones[idx]
+        this._currentNoteZone := String(zone)
+        this._SetNoteHeaderText(this._currentNoteZone)
+        key := StrLower(this._currentNoteZone)
+        existing := this._routeNotes.Has(key) ? this._routeNotes[key] : ""
+        this._SetNoteEditText(existing)
+    }
+
+    ; Flushes the Edit's current Value into _routeNotes under the
+    ; lowercase key for _currentNoteZone. Empty / whitespace-only
+    ; content deletes the buffer entry (matches Route.SetNote's
+    ; "empty means absent" semantic so the on-disk file doesn't
+    ; carry a no-op key=value pair after Save). Whitespace chars
+    ; checked are the full set space/tab/CR/LF since AHK v2's
+    ; default Trim chars omit CR/LF (same gotcha that bit us in
+    ; the Route constructor).
+    ;
+    ; No-op when _currentNoteZone is empty (no zone selected) or
+    ; the Edit control wasn't built (headless without routeNoteEdit).
+    _StashCurrentNoteFromEdit()
+    {
+        if (this._currentNoteZone = "")
+            return
+        if !this._ctrls.Has("routeNoteEdit")
+            return
+        text := ""
+        try text := String(this._ctrls["routeNoteEdit"].Value)
+        key := StrLower(this._currentNoteZone)
+        if (Trim(text, " `t`r`n") = "")
+        {
+            if this._routeNotes.Has(key)
+                this._routeNotes.Delete(key)
+            return
+        }
+        this._routeNotes[key] := text
+    }
+
+    ; Writes the header label above the right-panel Edit. Empty
+    ; zoneName means "no zone selected" — fallback text reminds
+    ; the user to click a row to start editing.
+    _SetNoteHeaderText(zoneName)
+    {
+        if !this._ctrls.Has("routeNoteHeader")
+            return
+        txt := (zoneName = "")
+            ? "Select a zone to edit notes"
+            : "Notes for: " . zoneName
+        try this._ctrls["routeNoteHeader"].Value := txt
+    }
+
+    ; Writes the right-panel Edit's content. Defensive try around
+    ; the Value assignment so a teardown race (Edit destroyed mid
+    ; flow) doesn't crash the dialog.
+    _SetNoteEditText(text)
+    {
+        if !this._ctrls.Has("routeNoteEdit")
+            return
+        try this._ctrls["routeNoteEdit"].Value := String(text)
     }
 
     _OnRouteRowsChanged()
@@ -1214,6 +1485,11 @@ class SettingsDialog
             ; discarded — import is a full overwrite by design.
             this._LoadRouteZonesFromRepo()
             this._RefreshRouteListBox(1)
+            ; LoadRouteZones cleared _currentNoteZone already; sync
+            ; the right panel to whatever's now selected (row 1 if
+            ; the imported route is non-empty, otherwise the empty
+            ; "Select a zone…" state).
+            this._RefreshNotePanelForSelection()
             ; Refresh the live widget too so a successful import
             ; surfaces in the overlay without waiting for Save.
             try this._routeService.Refresh()
@@ -1274,9 +1550,14 @@ class SettingsDialog
         if !this._HasRouteWiring()
             return
         profileName := this._cfg.profileName
+        ; Flush whatever the user has typed in the right-panel
+        ; Edit into the buffer before serializing — without this,
+        ; an edit made just before Save (no listbox-change to
+        ; trigger the onChange stash) would be silently dropped.
+        this._StashCurrentNoteFromEdit()
         ; Param name `routeObj` to avoid the `Route`/`route` case
         ; collision (CLAUDE.md §3, see also RouteRepository.Save).
-        routeObj := Route(this._routeZones)
+        routeObj := Route(this._routeZones, this._routeNotes)
         ok := false
         try
         {
@@ -1306,6 +1587,167 @@ class SettingsDialog
         ; try — Refresh shouldn't throw, but a throw here must
         ; not bubble up and skip the dialog Close.
         try this._routeService.Refresh()
+    }
+
+    ; Replaces the in-memory _routeZones buffer with every non-town
+    ; campaign zone in catalog order (sorted by internal_id parsed
+    ; numerically — "G1_2" < "G1_13" < "G2_1"). Asks confirmation
+    ; when the buffer is non-empty so a careless click doesn't lose
+    ; in-progress edits.
+    ;
+    ; skipConfirm is the test seam: headless tests bypass the
+    ; SpeedKalandraMsgBox (which is stubbed to return "Cancel" in
+    ; the headless harness, which would otherwise abort every test).
+    ; Production callers (the button OnEvent) pass no arg and get
+    ; the default confirmation flow.
+    _OnRouteLoadDefault(skipConfirm := false)
+    {
+        if !this._HasRouteWiring()
+            return
+        defaultZones := this._BuildDefaultRouteZones()
+        if (defaultZones.Length = 0)
+        {
+            try SpeedKalandraMsgBox(
+                "No zones in catalog to load. Check that "
+                . "data\\zones.csv exists and contains non-town entries.",
+                "Empty catalog", "Iconi")
+            return
+        }
+        if (!skipConfirm && this._routeZones.Length > 0)
+        {
+            answer := SpeedKalandraMsgBox(
+                "Replace the current route with all " . defaultZones.Length
+                . " non-town campaign zones in catalog order?`n`n"
+                . "Your in-progress edits will be lost (click No to keep them).",
+                "Replace route?", "YesNo Icon?")
+            if (answer != "Yes")
+                return
+        }
+        this._routeZones := defaultZones
+        this._RefreshRouteListBox(1)
+    }
+
+    ; Builds the default route: every non-town zone in the catalog,
+    ; sorted by internal_id parsed numerically. The internal_id
+    ; format is "G<act>_<n>" or "G<act>_<n>_<sub>" (and rarely
+    ; "G<act>_<n>a" with a letter suffix); a naive StrCompare puts
+    ; "G1_13_1" before "G1_2" because '1' < '2' lexicographically.
+    ; _InternalIdSortKey normalizes each numeric segment to a 4-digit
+    ; zero-padded string so lexicographic sort matches numeric order.
+    _BuildDefaultRouteZones()
+    {
+        out := []
+        if !IsObject(this._zonesCatalog)
+            return out
+        ; Build {name, sortKey} pairs so the sort doesn't have to
+        ; reparse the internal_id on every comparison.
+        pairs := []
+        for _, z in this._zonesCatalog.All()
+        {
+            if z.isTown
+                continue
+            pairs.Push({
+                name:    z.name,
+                sortKey: SettingsDialog._InternalIdSortKey(z.internalId)
+            })
+        }
+        this._SortPairsByKey(pairs)
+        for _, p in pairs
+            out.Push(p.name)
+        return out
+    }
+
+    ; Bubble-sort an array of {name, sortKey} pairs in place by
+    ; sortKey (StrCompare). Small arrays (~60 elements) so the O(n²)
+    ; cost is negligible and the in-place mutation is clearer than
+    ; building a parallel array.
+    _SortPairsByKey(pairs)
+    {
+        n := pairs.Length
+        Loop n - 1
+        {
+            i := A_Index
+            Loop n - i
+            {
+                j := A_Index
+                if (StrCompare(pairs[j].sortKey, pairs[j + 1].sortKey) > 0)
+                {
+                    tmp := pairs[j]
+                    pairs[j] := pairs[j + 1]
+                    pairs[j + 1] := tmp
+                }
+            }
+        }
+    }
+
+    ; Normalizes a zone internal_id (e.g. "G1_13_2") into a sortable
+    ; key (e.g. "0001_0013_0002") so lexicographic StrCompare matches
+    ; the natural campaign order. Letter suffixes ("G4_8a") are
+    ; preserved AFTER the zero-padded number so "G4_8" < "G4_8a" < "G4_9".
+    static _InternalIdSortKey(internalId)
+    {
+        s := String(internalId)
+        if (SubStr(s, 1, 1) = "G" || SubStr(s, 1, 1) = "g")
+            s := SubStr(s, 2)
+        parts := StrSplit(s, "_")
+        out := ""
+        for i, p in parts
+        {
+            if (i > 1)
+                out .= "_"
+            ; Split each segment into leading-digits + rest (e.g.
+            ; "8a" → numStr="8", rest="a"; "13" → numStr="13", rest="").
+            ; IsDigit(ch) is used instead of `ch >= "0" && ch <= "9"`
+            ; because AHK v2's relational operators are NUMERIC: when
+            ; the loop reaches a letter (e.g. "a" in "G4_8a"), the
+            ; coercion `"a" >= "0"` throws TypeError("Expected a Number
+            ; but got a String"). IsDigit operates on the string
+            ; directly and returns false for any non-digit char.
+            numStr  := ""
+            rest    := ""
+            len     := StrLen(p)
+            k       := 1
+            while (k <= len)
+            {
+                ch := SubStr(p, k, 1)
+                if IsDigit(ch)
+                {
+                    numStr .= ch
+                    k++
+                }
+                else
+                {
+                    rest := SubStr(p, k)
+                    break
+                }
+            }
+            if (numStr = "")
+                out .= "0000" . rest    ; pure-alpha segment (unlikely but defensive)
+            else
+                out .= Format("{:04d}", Integer(numStr)) . rest
+        }
+        return out
+    }
+
+    ; Case-insensitive presence check on an Array<String>. Used by
+    ; _OnRouteAdd's dedupe guard — Route.Add ALSO rejects duplicates,
+    ; but we surface a specific MsgBox here, which requires knowing
+    ; about the duplicate before pushing onto the buffer. Inlined
+    ; rather than calling Route.HasZone because the buffer is a
+    ; plain Array, not a Route instance, until Save serializes it.
+    static _ContainsZoneCaseInsensitive(arr, name)
+    {
+        if !(arr is Array)
+            return false
+        target := StrLower(String(name))
+        if (target = "")
+            return false
+        for _, z in arr
+        {
+            if (StrLower(String(z)) = target)
+                return true
+        }
+        return false
     }
 
     _ClampRows(n)

@@ -579,7 +579,7 @@ class SpeedKalandraApp
         anchorResolver := () => this._ResolveRouteAnchor()
         this.routeWidget := RouteWidget(
             this.bus, this._cfg, this.routeService,
-            anchorResolver, headless)
+            anchorResolver, headless, this.zoneTracker)
 
         ; Wire the run-finalization save through RunService's
         ; pre-publish hooks instead of as a bus subscriber. This sees

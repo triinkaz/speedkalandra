@@ -43,7 +43,14 @@ class RouteRepositoryTests extends TestCase
         "load_parses_pipe_separated_zones",
         "load_trims_whitespace_around_each_zone",
         "load_filters_empty_entries_between_pipes",
-        "load_preserves_duplicates",
+        "load_dedupes_duplicates_silently_first_wins",
+
+        ; --- Notes: load ---
+        "load_returns_no_notes_when_section_absent",
+        "load_parses_notes_section",
+        "load_decodes_newline_escape_in_note",
+        "load_decodes_backslash_escape_in_note",
+        "load_ignores_notes_with_empty_decoded_text",
 
         ; --- Save: validation ---
         "save_throws_when_argument_not_route",
@@ -59,10 +66,19 @@ class RouteRepositoryTests extends TestCase
         "save_strips_ini_metacharacters_from_zone_names",
         "save_skips_zones_that_become_empty_after_sanitization",
 
+        ; --- Notes: save ---
+        "save_omits_notes_section_when_route_has_no_notes",
+        "save_writes_notes_section_when_route_has_notes",
+        "save_encodes_newline_in_note_text",
+        "save_encodes_backslash_before_newline_in_note_text",
+
         ; --- Roundtrip ---
         "roundtrip_save_load_preserves_zone_order",
-        "roundtrip_save_load_preserves_duplicates",
+        "roundtrip_save_load_dedupes_silently",
         "roundtrip_does_not_persist_current_idx",
+        "roundtrip_preserves_notes",
+        "roundtrip_preserves_multiline_note",
+        "roundtrip_preserves_backslash_in_note",
 
         ; --- Import / Export ---
         "import_from_profile_copies_route_to_destination",
@@ -75,6 +91,7 @@ class RouteRepositoryTests extends TestCase
         "export_to_file_returns_false_when_profile_has_no_route",
         "export_to_file_returns_false_when_path_empty",
         "export_then_import_roundtrip_preserves_zones",
+        "export_then_import_roundtrip_preserves_notes",
     ]
 
     ; ============================================================
@@ -253,18 +270,102 @@ class RouteRepositoryTests extends TestCase
         Assert.Equal("B", loaded.GetZoneAt(1))
     }
 
-    load_preserves_duplicates()
+    load_dedupes_duplicates_silently_first_wins()
     {
-        ; Route allows duplicates (see AdvanceTo's nearest-forward
-        ; semantics). The repo must NOT dedupe on Load.
+        ; Pre-dedupe legacy files on disk may still contain
+        ; duplicates. The Route constructor collapses them with
+        ; first-occurrence-wins, so the loaded route reflects
+        ; the post-change invariant (no duplicates) regardless of
+        ; what the file held.
         repo := this._MakeRepo()
         path := repo.GetPathForProfile("Solo")
-        FileAppend("[Route]`r`nzones=A|B|A`r`n", path, "UTF-16")
+        FileAppend("[Route]`r`nzones=A|B|A|C|b`r`n", path, "UTF-16")
 
         loaded := repo.Load("Solo")
-        Assert.Equal(3, loaded.Count())
+        Assert.Equal(3, loaded.Count(),
+            "duplicate A and case-variant b dropped")
         Assert.Equal("A", loaded.GetZoneAt(0))
-        Assert.Equal("A", loaded.GetZoneAt(2))
+        Assert.Equal("B", loaded.GetZoneAt(1))
+        Assert.Equal("C", loaded.GetZoneAt(2))
+    }
+
+    ; ============================================================
+    ; Notes: load
+    ; ============================================================
+
+    load_returns_no_notes_when_section_absent()
+    {
+        ; A file with only [Route] (the pre-notes format) loads
+        ; the zones AND produces an empty notes map — callers
+        ; that GetNote() on a known zone get "" rather than an
+        ; error.
+        repo := this._MakeRepo()
+        path := repo.GetPathForProfile("Solo")
+        FileAppend("[Route]`r`nzones=A|B`r`n", path, "UTF-16")
+
+        loaded := repo.Load("Solo")
+        Assert.Equal("", loaded.GetNote("A"),
+            "no [Notes] section yields empty note")
+        Assert.Equal("", loaded.GetNote("B"))
+    }
+
+    load_parses_notes_section()
+    {
+        repo := this._MakeRepo()
+        path := repo.GetPathForProfile("Solo")
+        FileAppend(
+            "[Route]`r`nzones=A|B`r`n`r`n[Notes]`r`na=hi`r`nb=bye`r`n",
+            path, "UTF-16")
+
+        loaded := repo.Load("Solo")
+        Assert.Equal("hi",  loaded.GetNote("A"))
+        Assert.Equal("bye", loaded.GetNote("B"))
+    }
+
+    load_decodes_newline_escape_in_note()
+    {
+        ; The on-disk \n (two characters: backslash + n) decodes
+        ; to a real line break in the loaded note. The widget
+        ; then renders that as two lines.
+        repo := this._MakeRepo()
+        path := repo.GetPathForProfile("Solo")
+        FileAppend(
+            "[Route]`r`nzones=A`r`n`r`n[Notes]`r`na=line one\nline two`r`n",
+            path, "UTF-16")
+
+        loaded := repo.Load("Solo")
+        Assert.Equal("line one`nline two", loaded.GetNote("A"),
+            "`\\n` on disk becomes a real LF in memory")
+    }
+
+    load_decodes_backslash_escape_in_note()
+    {
+        ; The on-disk \\ decodes to a single literal backslash.
+        ; A user note like "C:\path\to\file" survives the round.
+        repo := this._MakeRepo()
+        path := repo.GetPathForProfile("Solo")
+        FileAppend(
+            "[Route]`r`nzones=A`r`n`r`n[Notes]`r`na=C:\\path\\file`r`n",
+            path, "UTF-16")
+
+        loaded := repo.Load("Solo")
+        Assert.Equal("C:\path\file", loaded.GetNote("A"))
+    }
+
+    load_ignores_notes_with_empty_decoded_text()
+    {
+        ; A note whose value is empty (or decodes to empty) is
+        ; dropped on load — matches the Route constructor's
+        ; "empty notes are absent" normalization.
+        repo := this._MakeRepo()
+        path := repo.GetPathForProfile("Solo")
+        FileAppend(
+            "[Route]`r`nzones=A|B`r`n`r`n[Notes]`r`na=`r`nb=keeper`r`n",
+            path, "UTF-16")
+
+        loaded := repo.Load("Solo")
+        Assert.Equal("",       loaded.GetNote("A"))
+        Assert.Equal("keeper", loaded.GetNote("B"))
     }
 
     ; ============================================================
@@ -360,6 +461,67 @@ class RouteRepositoryTests extends TestCase
     }
 
     ; ============================================================
+    ; Notes: save
+    ; ============================================================
+
+    save_omits_notes_section_when_route_has_no_notes()
+    {
+        ; A route with no per-zone tips produces a file with only
+        ; [Route] — the pre-notes format. Keeps diffs small for
+        ; users not using notes yet.
+        repo := this._MakeRepo()
+        repo.Save("Solo", Route(["A", "B"]))
+        path := repo.GetPathForProfile("Solo")
+        ini := IniFile(path)
+        Assert.False(ini.SectionExists("Notes"),
+            "no [Notes] section when route has no notes")
+    }
+
+    save_writes_notes_section_when_route_has_notes()
+    {
+        repo := this._MakeRepo()
+        r := Route(["A", "B"])
+        r.SetNote("A", "vendor first")
+        repo.Save("Solo", r)
+
+        ini := IniFile(repo.GetPathForProfile("Solo"))
+        Assert.True(ini.SectionExists("Notes"))
+        Assert.Equal("vendor first", ini.Read("Notes", "a", ""),
+            "key lowercased on write (matches in-memory map)")
+    }
+
+    save_encodes_newline_in_note_text()
+    {
+        ; A multi-line note in memory must serialize onto a single
+        ; INI line via the \\n escape; otherwise the second line
+        ; would parse as a malformed key=value pair.
+        repo := this._MakeRepo()
+        r := Route(["A"])
+        r.SetNote("A", "line one`nline two")    ; real LF in memory
+        repo.Save("Solo", r)
+
+        ini := IniFile(repo.GetPathForProfile("Solo"))
+        Assert.Equal("line one\nline two", ini.Read("Notes", "a", ""),
+            "LF encoded as `\\n` on disk")
+    }
+
+    save_encodes_backslash_before_newline_in_note_text()
+    {
+        ; A literal backslash must be escaped FIRST ("\" -> "\\")
+        ; so a user note like "C:\path`nline two" doesn't get
+        ; mis-decoded as "C:[newline]path..." on the next load.
+        repo := this._MakeRepo()
+        r := Route(["A"])
+        r.SetNote("A", "C:\path`nbelow")
+        repo.Save("Solo", r)
+
+        ini := IniFile(repo.GetPathForProfile("Solo"))
+        ; Expected on disk: "C:\\path\nbelow" (escape order:
+        ; backslash first, then newline).
+        Assert.Equal("C:\\path\nbelow", ini.Read("Notes", "a", ""))
+    }
+
+    ; ============================================================
     ; Roundtrip
     ; ============================================================
 
@@ -377,14 +539,22 @@ class RouteRepositoryTests extends TestCase
         Assert.Equal("Fourth", recovered.GetZoneAt(3))
     }
 
-    roundtrip_save_load_preserves_duplicates()
+    roundtrip_save_load_dedupes_silently()
     {
+        ; The post-change invariant: Route no longer allows
+        ; duplicates. Even if a hand-crafted file on disk has
+        ; them (the legacy format permitted), Load collapses
+        ; them via the constructor's first-wins dedupe. Verified
+        ; here at the Save boundary too — a Route built via the
+        ; public API can't even hold duplicates, so this Save
+        ; only writes 2 zones for the input ["A", "B", "A"].
         repo := this._MakeRepo()
         repo.Save("Solo", Route(["A", "B", "A"]))
         recovered := repo.Load("Solo")
-        Assert.Equal(3, recovered.Count())
+        Assert.Equal(2, recovered.Count(),
+            "duplicates dropped before write")
         Assert.Equal("A", recovered.GetZoneAt(0))
-        Assert.Equal("A", recovered.GetZoneAt(2))
+        Assert.Equal("B", recovered.GetZoneAt(1))
     }
 
     roundtrip_does_not_persist_current_idx()
@@ -402,6 +572,49 @@ class RouteRepositoryTests extends TestCase
         recovered := repo.Load("Solo")
         Assert.Equal(-1, recovered.GetCurrentIdx(),
             "recovered route starts fresh (no persisted progress)")
+    }
+
+    roundtrip_preserves_notes()
+    {
+        repo := this._MakeRepo()
+        r := Route(["A", "B", "C"])
+        r.SetNote("A", "first note")
+        r.SetNote("C", "third note")
+        repo.Save("Solo", r)
+
+        recovered := repo.Load("Solo")
+        Assert.Equal("first note", recovered.GetNote("A"))
+        Assert.Equal("",           recovered.GetNote("B"), "no note for B")
+        Assert.Equal("third note", recovered.GetNote("C"))
+    }
+
+    roundtrip_preserves_multiline_note()
+    {
+        ; A user's three-line tip must survive Save then Load
+        ; with the exact same line breaks.
+        repo := this._MakeRepo()
+        r := Route(["A"])
+        r.SetNote("A", "step one`nstep two`nstep three")
+        repo.Save("Solo", r)
+
+        recovered := repo.Load("Solo")
+        Assert.Equal("step one`nstep two`nstep three", recovered.GetNote("A"),
+            "multi-line note preserved byte-for-byte")
+    }
+
+    roundtrip_preserves_backslash_in_note()
+    {
+        ; Mixed backslashes and newlines exercise both escape
+        ; rules at once. The on-disk representation should be
+        ; encoded with backslash-first ordering; the load step
+        ; uses a char-by-char scan that resolves \\ before \n.
+        repo := this._MakeRepo()
+        r := Route(["A"])
+        r.SetNote("A", "C:\path\to\file`nthen continue")
+        repo.Save("Solo", r)
+
+        recovered := repo.Load("Solo")
+        Assert.Equal("C:\path\to\file`nthen continue", recovered.GetNote("A"))
     }
 
     ; ============================================================
@@ -510,6 +723,28 @@ class RouteRepositoryTests extends TestCase
         Assert.Equal("The Riverbank", recipient.GetZoneAt(0))
         Assert.Equal("Clearfell",     recipient.GetZoneAt(1))
         Assert.Equal("The Grelwood",  recipient.GetZoneAt(2))
+    }
+
+    export_then_import_roundtrip_preserves_notes()
+    {
+        ; A shared route file must carry the author's per-zone
+        ; tips so the recipient sees the same overlay annotations
+        ; without manual re-entry.
+        repo := this._MakeRepo()
+        authorRoute := Route(["The Riverbank", "Clearfell"])
+        authorRoute.SetNote("The Riverbank", "open door first`nthen straight ahead")
+        authorRoute.SetNote("Clearfell",     "skip optional")
+        repo.Save("Author", authorRoute)
+
+        sharedPath := Fixtures.TempPath("ini")
+        Assert.True(repo.ExportToFile("Author", sharedPath))
+        Assert.True(repo.ImportFromFile(sharedPath, "Recipient"))
+
+        recipient := repo.Load("Recipient")
+        Assert.Equal("open door first`nthen straight ahead",
+            recipient.GetNote("The Riverbank"))
+        Assert.Equal("skip optional",
+            recipient.GetNote("Clearfell"))
     }
 }
 
