@@ -13,6 +13,7 @@ A minimalist Path of Exile 2 speedrun tracker for Windows.
 - Times your campaign runs with per-zone breakdowns
 - Reads `Client.txt` for zone transitions and deaths
 - Three configurable overlays: **Compact** (full info), **Micro** (minimal), **Steve** (timer-focused)
+- Optional route walkthrough overlay glued below the timer, showing the next N zones with editable per-zone notes
 - Tracks personal bests per zone, per act, and per full run
 - Detects loading screens via pixel scanning to isolate that time from gameplay
 - Auto-finalize on configurable regex trigger (e.g. last-boss kill line)
@@ -70,9 +71,7 @@ Run `build-dist.ps1` to generate a self-contained `SpeedKalandra-dist/` folder y
 | `Ctrl+5` | Reset (cancels current without saving) |
 | `Ctrl+Alt+P` | Open run plot |
 | `Ctrl+Alt+S` | Open settings |
-| `F8` | Toggle overlay visibility |
-| `Ctrl+F9` | Toggle Micro mode |
-| `Ctrl+F8` | Toggle Steve mode |
+| `Ctrl+F8` | Cycle overlay layout (Compact / Micro / Steve) |
 
 All hotkeys are remappable in Settings.
 
@@ -86,6 +85,7 @@ All hotkeys are remappable in Settings.
 | `speedkalandra_zones.txt` | Per-zone time accumulator for the in-progress run (separate file for write speed) |
 | `data/personal_bests.ini` | PBs per zone, per act, and full run |
 | `data/runs/{runId}.ini` | One file per finalized run (history) |
+| `data/routes/{profile}.ini` | Per-profile route definition + per-zone notes for the route widget |
 | `data/deaths.csv` | Append-only log of every detected death (zone, patch, build) |
 | `data/speedkalandra.log` | Execution log (rotates at 5MB) |
 
