@@ -13,7 +13,7 @@
 ;   [Diagnostics]   EventTracingEnabled (opt-in)
 ;   [Layouts]       Variant (classic | plus)
 ;   [Display]       PbMode (pb | avg5), ShowOutcomeBanner (bool)
-;   [Route]         WidgetVisible (bool), RowsVisible (int 3..10)
+;   [Route]         WidgetVisible (bool), RowsVisible (int 3..10), NoteFontSize (int 6..16)
 ;   [Disclaimer]    Acknowledged (do-not-show-again flag)
 ;   [Hotkeys]       <action> = keyBind
 ;   [Window]        → WindowState (composite)
@@ -137,6 +137,23 @@ class AppSettings
     ; load time and in the slider UI — fewer than 3 makes the
     ; widget awkward to read, more than 10 wastes vertical space).
     routeRowsVisible := 5
+
+    ; Base font size (pt) of the per-zone note row rendered below
+    ; the current zone in the route widget. Default 8 matches the
+    ; pre-config NOTE_FONT_SIZE_BASE constant in RouteWidget, so a
+    ; user upgrading over an existing install sees no visual change
+    ; until they touch the slider. Configurable in Settings →
+    ; ROUTE (clamped to [6, 16] at load time and in the slider UI).
+    ; The widget multiplies this base by the anchor's render scale
+    ; the same way it does for the zone-row font size, so the note
+    ; still scales with the overlay; this knob shifts the BASE so
+    ; users with high-DPI / large overlays who need bigger notes
+    ; (TUGs feedback: "I can barely see what my notes say") can
+    ; push past the default 8 pt without scaling the rest of the
+    ; widget too. Sub-6 pt is unreadable; over-16 pt swamps the
+    ; widget on small overlays — the slider range was picked to
+    ; cover the useful spread without inviting either extreme.
+    routeNoteFontSize := 8
 
     ; --- Auto-finalize ---
     autoFinalizeRegex := ""
@@ -264,6 +281,23 @@ class AppSettings
                 if (n > 10)
                     n := 10
                 cfg.routeRowsVisible := n
+            }
+        }
+        ; routeNoteFontSize: clamp to [6, 16]. Same defensive
+        ; pattern as routeRowsVisible above; a hand-edited INI with
+        ; e.g. NoteFontSize=200 would otherwise produce a single
+        ; note row that consumes the entire screen.
+        if data.Has("routeNoteFontSize")
+        {
+            v := data["routeNoteFontSize"]
+            if (v != "" && IsNumber(v))
+            {
+                n := Integer(v + 0)
+                if (n < 6)
+                    n := 6
+                if (n > 16)
+                    n := 16
+                cfg.routeNoteFontSize := n
             }
         }
 

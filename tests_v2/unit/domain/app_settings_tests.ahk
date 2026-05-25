@@ -43,6 +43,7 @@ class AppSettingsTests extends TestCase
         "defaults_show_outcome_banner_is_true",
         "defaults_route_widget_visible_is_false",
         "defaults_route_rows_visible_is_5",
+        "defaults_route_note_font_size_is_8",
         "defaults_auto_finalize_regex_empty",
         "defaults_auto_start_regex_is_wounded_man_line",
 
@@ -75,6 +76,11 @@ class AppSettingsTests extends TestCase
         "from_map_clamps_route_rows_visible_above_ten",
         "from_map_route_rows_visible_invalid_uses_default",
         "from_map_route_rows_visible_missing_uses_default",
+        "from_map_reads_route_note_font_size",
+        "from_map_clamps_route_note_font_size_below_six",
+        "from_map_clamps_route_note_font_size_above_sixteen",
+        "from_map_route_note_font_size_invalid_uses_default",
+        "from_map_route_note_font_size_missing_uses_default",
         "from_map_reads_auto_finalize_regex",
         "from_map_reads_auto_start_regex_allowing_empty",
         "from_map_strict_string_treats_empty_as_missing",
@@ -241,6 +247,17 @@ class AppSettingsTests extends TestCase
         ; without dominating the overlay. Configurable in
         ; Settings → ROUTE; the slider clamps to [3, 10].
         Assert.Equal(5, AppSettings.Defaults().routeRowsVisible)
+    }
+
+    defaults_route_note_font_size_is_8()
+    {
+        ; B4 follow-up (TUGs feedback): base font size of the
+        ; per-zone note row. Default 8 matches the pre-config
+        ; NOTE_FONT_SIZE_BASE constant in RouteWidget so a returning
+        ; user upgrading over an existing install sees no visual
+        ; change until they touch the slider. Configurable in
+        ; Settings → ROUTE; the slider clamps to [6, 16].
+        Assert.Equal(8, AppSettings.Defaults().routeNoteFontSize)
     }
 
     defaults_auto_finalize_regex_empty()
@@ -571,6 +588,64 @@ class AppSettingsTests extends TestCase
     {
         cfg := AppSettings.FromMap(Map())
         Assert.Equal(5, cfg.routeRowsVisible)
+    }
+
+    from_map_reads_route_note_font_size()
+    {
+        ; Within the clamped range [6, 16]: read verbatim.
+        cfg := AppSettings.FromMap(Map("routeNoteFontSize", 11))
+        Assert.Equal(11, cfg.routeNoteFontSize)
+
+        ; Boundary values: 6 and 16 are accepted as-is.
+        cfg2 := AppSettings.FromMap(Map("routeNoteFontSize", 6))
+        Assert.Equal(6, cfg2.routeNoteFontSize)
+
+        cfg3 := AppSettings.FromMap(Map("routeNoteFontSize", 16))
+        Assert.Equal(16, cfg3.routeNoteFontSize)
+    }
+
+    from_map_clamps_route_note_font_size_below_six()
+    {
+        ; Out-of-range LOW values clamp to 6 (not to the default 8).
+        ; Same clamp-to-nearest-bound policy as routeRowsVisible:
+        ; honoring the user's intent (smaller value) beats silently
+        ; reverting to the default.
+        cfg := AppSettings.FromMap(Map("routeNoteFontSize", 5))
+        Assert.Equal(6, cfg.routeNoteFontSize)
+
+        cfg2 := AppSettings.FromMap(Map("routeNoteFontSize", 0))
+        Assert.Equal(6, cfg2.routeNoteFontSize)
+
+        cfg3 := AppSettings.FromMap(Map("routeNoteFontSize", -3))
+        Assert.Equal(6, cfg3.routeNoteFontSize)
+    }
+
+    from_map_clamps_route_note_font_size_above_sixteen()
+    {
+        cfg := AppSettings.FromMap(Map("routeNoteFontSize", 17))
+        Assert.Equal(16, cfg.routeNoteFontSize)
+
+        cfg2 := AppSettings.FromMap(Map("routeNoteFontSize", 200))
+        Assert.Equal(16, cfg2.routeNoteFontSize)
+    }
+
+    from_map_route_note_font_size_invalid_uses_default()
+    {
+        ; Non-numeric / empty values can't be clamped to anything
+        ; meaningful, so they fall back to the default 8. A user
+        ; with a typo in their INI lands on the safe default rather
+        ; than silently getting bound 6 or 16.
+        cfg := AppSettings.FromMap(Map("routeNoteFontSize", "not a number"))
+        Assert.Equal(8, cfg.routeNoteFontSize)
+
+        cfg2 := AppSettings.FromMap(Map("routeNoteFontSize", ""))
+        Assert.Equal(8, cfg2.routeNoteFontSize)
+    }
+
+    from_map_route_note_font_size_missing_uses_default()
+    {
+        cfg := AppSettings.FromMap(Map())
+        Assert.Equal(8, cfg.routeNoteFontSize)
     }
 
     from_map_reads_auto_finalize_regex()

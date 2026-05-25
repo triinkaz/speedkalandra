@@ -232,6 +232,14 @@ class RouteWidget
         this._StopTick()
         if this._gui
         {
+            ; Unregister from OverlayInteractionService BEFORE
+            ; Destroy() to avoid the hover poll's WinGetPos firing
+            ; against a zombie Hwnd between Unregister and Destroy.
+            ; Mirror of the pattern used by WidgetBase.Hide.
+            if (OverlayInteractionService.Instance != "")
+            {
+                try OverlayInteractionService.Instance.UnregisterHwnd(this._gui.Hwnd)
+            }
             try this._gui.Destroy()
             this._gui := ""
         }
@@ -373,8 +381,19 @@ class RouteWidget
         ; Gui.Show() call, so we tally everything up front (one
         ; pass to know currentZone's note dimensions, second pass
         ; to actually render rows with the cursor-based layout).
-        noteFontSize := Max(7, Round(RouteWidget.NOTE_FONT_SIZE_BASE * scale))
-        noteLineH    := Max(noteFontSize + 2, Round(RouteWidget.NOTE_LINE_HEIGHT_BASE * scale))
+        ;
+        ; The note font size routing lives in _ResolveNoteFontSize
+        ; so the cfg-fallback-clamp policy can be unit-tested
+        ; without spinning up a Gui (the _Render path is gated
+        ; behind a headless early-return well below this point).
+        noteFontSize := RouteWidget._ResolveNoteFontSize(this._cfg, scale)
+        ; Line height must SCALE with the font size, or larger
+        ; configured sizes get clipped at the bottom edge of the
+        ; Text control (TUGs at 16 pt: "cortada na metade" — the
+        ; descender of g/p/q/y was overflowing). Extracted into
+        ; _ResolveNoteLineHeight so the ratio policy is testable
+        ; without spinning up a Gui.
+        noteLineH := RouteWidget._ResolveNoteLineHeight(noteFontSize, scale)
         currentNote  := this._GetCurrentNoteFromSlice(slice)
 
         width  := aw < RouteWidget.MIN_WIDTH ? RouteWidget.MIN_WIDTH : aw
@@ -400,6 +419,14 @@ class RouteWidget
         ; rebuild is simpler than partial.
         if this._gui
         {
+            ; Unregister the previous Hwnd BEFORE Destroy so the
+            ; hover poll doesn't race against a half-torn-down
+            ; window. The register at the end of this method (after
+            ; the new Show) pairs with this unregister.
+            if (OverlayInteractionService.Instance != "")
+            {
+                try OverlayInteractionService.Instance.UnregisterHwnd(this._gui.Hwnd)
+            }
             try this._gui.Destroy()
             this._gui := ""
         }
@@ -514,6 +541,48 @@ class RouteWidget
         try WinSetExStyle("+0x20", "ahk_id " wg.Hwnd)
 
         this._gui := wg
+
+        ; Register the Hwnd with OverlayInteractionService so the
+        ; hover-dim behaviour (alpha 25 on mouse over the overlay)
+        ; applies to this widget too, matching the timer widgets it
+        ; anchors to. Without this, the route surface stays at full
+        ; alpha 255 when the cursor passes over it — inconsistent
+        ; with the anchor and visually surprising for the user who
+        ; expects the whole overlay stack to fade together so the
+        ; underlying game state is readable. The note row in
+        ; particular triggered the TUGs feedback that motivated the
+        ; fix: "when hovering over the notes they don't become
+        ; transparent like the main area". The two callbacks are
+        ; empty because RouteWidget does not support Ctrl-drag
+        ; (position is derived from the anchor; persisting a
+        ; drag-moved RouteWidget would be a lie) or Ctrl-wheel
+        ; resize (scale follows the anchor's scale).
+        ;
+        ; The 4th arg (groupId) is the ANCHOR's Hwnd. This pairs
+        ; with WidgetBase passing its own Hwnd as the anchor's
+        ; groupId, so the service's _IsInHoveredGroup match rule
+        ; ("thisGroup = hoveredHwnd") fires when the anchor is
+        ; hovered, and the symmetric rule ("hoveredGroup = thisHwnd")
+        ; fires when the route widget is hovered. Net effect: hover
+        ; on EITHER surface dims BOTH, which is what Rafael asked
+        ; for after the slider lived in for a session.
+        ;
+        ; If the anchor's hwnd later changes (mode switch, ReRender),
+        ; the next WidgetGeometryChanged or OverlayModeChanged event
+        ; triggers _Render which calls Unregister/Register here, so
+        ; the groupId tracks the live anchor automatically.
+        ;
+        ; The register pairs with the unregister at the top of
+        ; this method (called BEFORE the previous gui.Destroy) and
+        ; with the one in Hide(). Headless mode skips the call
+        ; because Instance is "" when the service was constructed
+        ; with headless=true (the static singleton field is still
+        ; assigned but the service itself is inert).
+        if (OverlayInteractionService.Instance != "")
+        {
+            try OverlayInteractionService.Instance.RegisterHwnd(
+                wg.Hwnd, "", "", anchorHwnd)
+        }
     }
 
     ; Returns true when the widget is conceptually "active" — i.e.
@@ -780,5 +849,74 @@ class RouteWidget
         if (f = "")
             return false
         return HasMethod(f, "Call")
+    }
+
+    ; Resolves the effective note font size in pt for a given cfg
+    ; and anchor scale. Public-static so the cfg-fallback-clamp
+    ; policy can be unit-tested without going through Gui creation
+    ; (the _Render path early-returns in headless mode before this
+    ; would otherwise be exercised).
+    ;
+    ; Policy:
+    ;   1. Pull the BASE from cfg.routeNoteFontSize (user-
+    ;      configurable in Settings → ROUTE).
+    ;   2. If the cfg is missing the field, has a non-numeric
+    ;      value, or carries a sub-6-pt value (defensive against a
+    ;      cfg constructed outside FromMap), fall back to the
+    ;      NOTE_FONT_SIZE_BASE constant (8 pt). The clamp in
+    ;      AppSettings.FromMap already bounds the field at load,
+    ;      so this is belt-and-suspenders.
+    ;   3. Multiply by the anchor's render scale so the note
+    ;      scales with the overlay, same as the zone-row font.
+    ;   4. Floor the final value at 6 pt so an extremely small
+    ;      anchor scale (e.g. 0.5) on a base of 6 pt doesn't
+    ;      compute to 3 pt (sub-readable).
+    static _ResolveNoteFontSize(cfg, scale)
+    {
+        configuredBase := ""
+        try configuredBase := cfg.routeNoteFontSize
+        if !IsNumber(configuredBase) || configuredBase < 6
+            configuredBase := RouteWidget.NOTE_FONT_SIZE_BASE
+        effectiveScale := IsNumber(scale) && scale > 0 ? scale : 1.0
+        return Max(6, Round(configuredBase * effectiveScale))
+    }
+
+    ; Resolves the line height (px) for the note row given a
+    ; resolved note font size (also px, already scaled) and the
+    ; anchor scale. Public-static so the ratio policy can be
+    ; unit-tested without going through Gui creation.
+    ;
+    ; Policy:
+    ;   1. PRIMARY ratio: 1.75x the font size (mirrors the
+    ;      pre-config baseline NOTE_LINE_HEIGHT_BASE=14 over
+    ;      NOTE_FONT_SIZE_BASE=8). At default 8 pt the result is
+    ;      14 px exactly, so existing renders are unchanged.
+    ;   2. Floor at fontSize + 2 (an even tighter floor than the
+    ;      ratio for very small fonts) so the row is never less
+    ;      than glyph height + minimal padding.
+    ;   3. Floor at NOTE_LINE_HEIGHT_BASE * scale so even a
+    ;      tiny configured font on a small overlay keeps the
+    ;      absolute minimum row height.
+    ;
+    ; The 1.75 ratio is conservative for Segoe UI — 1pt ≈ 1.33 px
+    ; at 96 DPI plus 1.2-1.3x line spacing, so 1.7x covers
+    ; descenders (g, p, q, y) without clipping. TUGs feedback at
+    ; 16 pt before this change: "a fonte maxima ficou cortada na
+    ; metade" — the old fontSize+2 formula gave 18 px at 16 pt,
+    ; well below the 22 px Segoe UI actually needs.
+    static _ResolveNoteLineHeight(noteFontSize, scale)
+    {
+        effectiveScale := IsNumber(scale) && scale > 0 ? scale : 1.0
+        ; Ceil rather than Round on the ratio so the .5 boundary
+        ; (10, 14, 18 pt etc. on a 1.75 ratio) never lands a pixel
+        ; short of the glyph height — over-allocating one pixel of
+        ; vertical space is invisible (the bg fills it), while
+        ; under-allocating by one pixel re-introduces the clip bug.
+        ; Round() in AHK v2 uses banker's rounding which would
+        ; flip 24.5 → 24 (the unsafe direction).
+        return Max(
+            noteFontSize + 2,
+            Ceil(noteFontSize * 1.75),
+            Round(RouteWidget.NOTE_LINE_HEIGHT_BASE * effectiveScale))
     }
 }

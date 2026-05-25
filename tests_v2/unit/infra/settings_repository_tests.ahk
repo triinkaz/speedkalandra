@@ -94,6 +94,11 @@ class SettingsRepositoryTests extends TestCase
         "load_route_rows_visible_clamps_out_of_range_low",
         "load_route_rows_visible_clamps_out_of_range_high",
         "load_route_rows_visible_non_numeric_falls_back_to_default",
+        "save_load_preserves_route_note_font_size",
+        "load_route_note_font_size_defaults_8_when_key_missing",
+        "load_route_note_font_size_clamps_out_of_range_low",
+        "load_route_note_font_size_clamps_out_of_range_high",
+        "load_route_note_font_size_non_numeric_falls_back_to_default",
         "save_load_preserves_hotkeys",
 
         ; --- Hotkey migration (ToggleSteveLock / ToggleMicroLock / ToggleOverlay) ---
@@ -567,6 +572,74 @@ class SettingsRepositoryTests extends TestCase
         loaded := repo.Load()
         Assert.Equal(5, loaded.routeRowsVisible,
             "Non-numeric value falls back to default 5")
+    }
+
+    save_load_preserves_route_note_font_size()
+    {
+        ; B4 follow-up: base font size of the per-zone note row.
+        ; Default 8, configurable [6, 16]. Round-trips through
+        ; [Route].NoteFontSize like every other persisted slider.
+        mainIni := IniFile(Fixtures.TempPath("ini"))
+        repo := SettingsRepository(mainIni)
+
+        cfg := AppSettings.Defaults()
+        cfg.routeNoteFontSize := 12
+        repo.Save(cfg)
+
+        loaded := repo.Load()
+        Assert.Equal(12, loaded.routeNoteFontSize)
+    }
+
+    load_route_note_font_size_defaults_8_when_key_missing()
+    {
+        ; Older INIs predating this key must load with the default
+        ; 8 pt — the AppSettings baseline and the pre-config
+        ; NOTE_FONT_SIZE_BASE constant in RouteWidget. A returning
+        ; user upgrading over an existing install sees no visual
+        ; change until they touch the slider.
+        mainIni := IniFile(Fixtures.TempPath("ini"))
+        repo := SettingsRepository(mainIni)
+        loaded := repo.Load()
+        Assert.Equal(8, loaded.routeNoteFontSize)
+    }
+
+    load_route_note_font_size_clamps_out_of_range_low()
+    {
+        ; Hand-edited "4" must clamp to 6 (the minimum), not fall
+        ; back to default 8. Same clamp-to-nearest-bound policy as
+        ; routeRowsVisible: honoring the user's intent (smaller
+        ; value) beats silently reverting to the default.
+        mainIni := IniFile(Fixtures.TempPath("ini"))
+        mainIni.Write("4", "Route", "NoteFontSize")
+
+        repo := SettingsRepository(mainIni)
+        loaded := repo.Load()
+        Assert.Equal(6, loaded.routeNoteFontSize,
+            "Out-of-range low clamps to 6, not default 8")
+    }
+
+    load_route_note_font_size_clamps_out_of_range_high()
+    {
+        mainIni := IniFile(Fixtures.TempPath("ini"))
+        mainIni.Write("200", "Route", "NoteFontSize")
+
+        repo := SettingsRepository(mainIni)
+        loaded := repo.Load()
+        Assert.Equal(16, loaded.routeNoteFontSize,
+            "Out-of-range high clamps to 16, not default 8")
+    }
+
+    load_route_note_font_size_non_numeric_falls_back_to_default()
+    {
+        ; Non-numeric / empty values can't be clamped to anything
+        ; meaningful, so they fall back to the default 8.
+        mainIni := IniFile(Fixtures.TempPath("ini"))
+        mainIni.Write("nope", "Route", "NoteFontSize")
+
+        repo := SettingsRepository(mainIni)
+        loaded := repo.Load()
+        Assert.Equal(8, loaded.routeNoteFontSize,
+            "Non-numeric value falls back to default 8")
     }
 
     save_load_preserves_hotkeys()

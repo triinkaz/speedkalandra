@@ -15,7 +15,7 @@
 ;   [Diagnostics]    EventTracingEnabled (opt-in; off by default)
 ;   [Layouts]        Variant (classic | plus; opt-in BETA)
 ;   [Display]        PbMode (pb | avg5; toggles PB chip / live-timer color target), ShowOutcomeBanner (bool)
-;   [Route]          WidgetVisible (bool; master visibility flag for RouteWidget), RowsVisible (int 3..10)
+;   [Route]          WidgetVisible (bool; master visibility flag for RouteWidget), RowsVisible (int 3..10), NoteFontSize (int 6..16)
 ;   [Hotkeys]        <action> -> keyBind
 ;   [Window]         MicroLocked, SteveLocked
 ;   [Overlay]        <widgetId>.{left,top,scale,visible,centered} + hoverHide
@@ -516,19 +516,21 @@ class SettingsRepository
     ; [Route]
     ;
     ; Persists the master visibility flag for the route walkthrough
-    ; widget (B4 Stage 2) and the row count it renders. The route
-    ; *definition* itself — the ordered list of zones — lives in a
-    ; separate per-profile file at data/routes/<profile>.ini and
-    ; is managed by RouteRepository, not by this settings file.
-    ; The two layers are kept apart because the route definition
-    ; is conceptually a piece of user content (like the run
-    ; history INIs in data/runs/), shareable across runners via
-    ; Import/Export, while these flags are UI preferences.
+    ; widget (B4 Stage 2), the row count it renders, and the base
+    ; font size of the per-zone note row. The route *definition*
+    ; itself — the ordered list of zones — lives in a separate
+    ; per-profile file at data/routes/<profile>.ini and is managed
+    ; by RouteRepository, not by this settings file. The two layers
+    ; are kept apart because the route definition is conceptually a
+    ; piece of user content (like the run history INIs in data/runs/),
+    ; shareable across runners via Import/Export, while these flags
+    ; are UI preferences.
     ;
     ; Defaults:
     ;   WidgetVisible = 0  (invisible until the user opts in via
     ;                       the Ctrl+Click arrow on a timer widget)
     ;   RowsVisible   = 5  (clamped to [3, 10] in AppSettings.FromMap)
+    ;   NoteFontSize  = 8  (clamped to [6, 16] in AppSettings.FromMap)
     ; ============================================================
     _LoadRoute(cfg)
     {
@@ -553,6 +555,23 @@ class SettingsRepository
                 n := 10
             cfg.routeRowsVisible := n
         }
+
+        ; NoteFontSize has a bounded domain [6, 16]. Same
+        ; clamp-to-nearest-bound policy as RowsVisible above. Sub-6
+        ; pt is unreadable; over-16 pt swamps the widget on small
+        ; overlays. The default 8 matches RouteWidget's pre-config
+        ; NOTE_FONT_SIZE_BASE constant so a returning user sees no
+        ; visual change until they touch the slider in Settings.
+        rawFont := ini.Read("Route", "NoteFontSize", "")
+        if (rawFont != "" && IsNumber(rawFont))
+        {
+            n := Integer(rawFont + 0)
+            if (n < 6)
+                n := 6
+            if (n > 16)
+                n := 16
+            cfg.routeNoteFontSize := n
+        }
     }
 
     _SaveRoute(cfg)
@@ -560,6 +579,7 @@ class SettingsRepository
         ini := this._ini
         ini.Write(cfg.routeWidgetVisible ? 1 : 0, "Route", "WidgetVisible")
         ini.Write(cfg.routeRowsVisible,           "Route", "RowsVisible")
+        ini.Write(cfg.routeNoteFontSize,          "Route", "NoteFontSize")
     }
 
     ; ============================================================

@@ -166,7 +166,23 @@ class RouteWidgetTests extends TestCase
         "get_current_note_from_slice_returns_empty_for_no_current_row",
         "get_current_note_from_slice_returns_empty_when_zone_has_no_note",
         "get_current_note_from_slice_returns_note_when_current_has_note",
-        "get_current_note_from_slice_is_case_insensitive"
+        "get_current_note_from_slice_is_case_insensitive",
+
+        ; --- _ResolveNoteFontSize (B4 follow-up; configurable
+        ;     base size via cfg.routeNoteFontSize) ---
+        "resolve_note_font_size_uses_cfg_value_when_valid",
+        "resolve_note_font_size_scales_with_anchor",
+        "resolve_note_font_size_falls_back_to_base_when_cfg_sub_six",
+        "resolve_note_font_size_falls_back_to_base_when_cfg_non_numeric",
+        "resolve_note_font_size_floors_at_six_pt",
+
+        ; --- _ResolveNoteLineHeight (B4 follow-up; line height
+        ;     scales with the configured font so 16 pt doesn't
+        ;     get clipped — TUGs feedback "cortada na metade") ---
+        "resolve_note_line_height_default_8pt_returns_14_px",
+        "resolve_note_line_height_grows_proportionally_with_font",
+        "resolve_note_line_height_respects_constant_floor_for_small_fonts",
+        "resolve_note_line_height_handles_invalid_scale"
     ]
 
     ; ============================================================
@@ -983,6 +999,201 @@ class RouteWidgetTests extends TestCase
         Assert.Equal("skip optional",
             this.widget._GetCurrentNoteFromSlice(slice),
             "display-name casing variance still resolves the note")
+    }
+
+    ; ============================================================
+    ; _ResolveNoteFontSize (B4 follow-up: configurable base size)
+    ; ============================================================
+    ;
+    ; Public-static helper that routes cfg.routeNoteFontSize →
+    ; effective font size (after anchor-scale multiplication and a
+    ; defensive floor at 6 pt). Tests bypass _Render entirely — the
+    ; helper has no Gui dependency so the policy can be locked
+    ; without spinning up a widget.
+
+    resolve_note_font_size_uses_cfg_value_when_valid()
+    {
+        ; Happy path: cfg carries a valid in-range value and
+        ; scale is 1.0, so the resolver returns the cfg value
+        ; verbatim. Pin all three reasonable values (default,
+        ; mid-range, max) so a future change to the formula has
+        ; to confront every common shape at once.
+        cfg := AppSettings.Defaults()
+
+        cfg.routeNoteFontSize := 8
+        Assert.Equal(8, RouteWidget._ResolveNoteFontSize(cfg, 1.0),
+            "default 8 pt at scale 1.0 → 8 pt")
+
+        cfg.routeNoteFontSize := 12
+        Assert.Equal(12, RouteWidget._ResolveNoteFontSize(cfg, 1.0),
+            "mid-range 12 pt at scale 1.0 → 12 pt")
+
+        cfg.routeNoteFontSize := 16
+        Assert.Equal(16, RouteWidget._ResolveNoteFontSize(cfg, 1.0),
+            "max 16 pt at scale 1.0 → 16 pt")
+    }
+
+    resolve_note_font_size_scales_with_anchor()
+    {
+        ; The whole point of multiplying by scale is so the note
+        ; grows when the user resizes the anchor widget up. Base
+        ; 8 pt at scale 2.0 = 16 pt; the same value reachable by
+        ; setting the cfg slider to 16 directly at scale 1.0.
+        cfg := AppSettings.Defaults()
+        cfg.routeNoteFontSize := 8
+        Assert.Equal(16, RouteWidget._ResolveNoteFontSize(cfg, 2.0),
+            "base 8 × scale 2.0 = 16 pt")
+
+        ; Mid-fractional scale: 10 × 1.5 = 15 (Round of 15.0 = 15).
+        cfg.routeNoteFontSize := 10
+        Assert.Equal(15, RouteWidget._ResolveNoteFontSize(cfg, 1.5),
+            "base 10 × scale 1.5 = 15 pt (Round of 15.0)")
+
+        ; Invalid scale (zero / negative / non-numeric) falls
+        ; back to scale 1.0 — a buggy anchor shouldn't zero out
+        ; the note font.
+        cfg.routeNoteFontSize := 12
+        Assert.Equal(12, RouteWidget._ResolveNoteFontSize(cfg, 0),
+            "zero scale falls back to 1.0 → 12 pt unchanged")
+        Assert.Equal(12, RouteWidget._ResolveNoteFontSize(cfg, -1),
+            "negative scale falls back to 1.0 → 12 pt unchanged")
+        Assert.Equal(12, RouteWidget._ResolveNoteFontSize(cfg, "oops"),
+            "non-numeric scale falls back to 1.0 → 12 pt unchanged")
+    }
+
+    resolve_note_font_size_falls_back_to_base_when_cfg_sub_six()
+    {
+        ; Defensive belt-and-suspenders: the AppSettings.FromMap
+        ; clamp already bounds the field at [6, 16] on load, but
+        ; a cfg constructed outside FromMap (e.g. a test that
+        ; mutates the field directly, or a future programmatic
+        ; caller) could land with a sub-6 value. The helper
+        ; rejects it and falls back to NOTE_FONT_SIZE_BASE so the
+        ; render path never tries to draw 3-pt text.
+        cfg := AppSettings.Defaults()
+        cfg.routeNoteFontSize := 4
+        Assert.Equal(8, RouteWidget._ResolveNoteFontSize(cfg, 1.0),
+            "sub-6 cfg value falls back to NOTE_FONT_SIZE_BASE (8 pt)")
+
+        cfg.routeNoteFontSize := 0
+        Assert.Equal(8, RouteWidget._ResolveNoteFontSize(cfg, 1.0),
+            "zero cfg value falls back to NOTE_FONT_SIZE_BASE (8 pt)")
+
+        cfg.routeNoteFontSize := -2
+        Assert.Equal(8, RouteWidget._ResolveNoteFontSize(cfg, 1.0),
+            "negative cfg value falls back to NOTE_FONT_SIZE_BASE (8 pt)")
+    }
+
+    resolve_note_font_size_falls_back_to_base_when_cfg_non_numeric()
+    {
+        ; Same defensive policy for non-numeric values — a
+        ; programmatic caller might set the field to a string
+        ; (the Settings dialog read path goes through _ClampFontSize
+        ; which always returns an Integer, but a direct mutator
+        ; could bypass it).
+        cfg := AppSettings.Defaults()
+        cfg.routeNoteFontSize := "not a number"
+        Assert.Equal(8, RouteWidget._ResolveNoteFontSize(cfg, 1.0),
+            "non-numeric cfg value falls back to NOTE_FONT_SIZE_BASE (8 pt)")
+
+        cfg.routeNoteFontSize := ""
+        Assert.Equal(8, RouteWidget._ResolveNoteFontSize(cfg, 1.0),
+            "empty-string cfg value falls back to NOTE_FONT_SIZE_BASE (8 pt)")
+    }
+
+    resolve_note_font_size_floors_at_six_pt()
+    {
+        ; Even with a valid 6-pt cfg, a very small anchor scale
+        ; (e.g. 0.5) would compute to 3 pt. The final Max(6, ...)
+        ; floor guarantees the rendered text never drops below
+        ; readable. 6 × 0.5 = 3 → floored to 6.
+        cfg := AppSettings.Defaults()
+        cfg.routeNoteFontSize := 6
+        Assert.Equal(6, RouteWidget._ResolveNoteFontSize(cfg, 0.5),
+            "6 × 0.5 = 3 floors at 6 pt")
+
+        ; Same floor protects against a sub-6 cfg getting
+        ; multiplied down further: cfg=4 (sub-6) falls back to
+        ; base 8, then 8 × 0.5 = 4 → floored to 6.
+        cfg.routeNoteFontSize := 4
+        Assert.Equal(6, RouteWidget._ResolveNoteFontSize(cfg, 0.5),
+            "sub-6 cfg + scale 0.5 still floors at 6 pt (8 base × 0.5 = 4 → 6)")
+    }
+
+    ; ============================================================
+    ; _ResolveNoteLineHeight (B4 follow-up: line height tracks font)
+    ; ============================================================
+    ;
+    ; Public-static helper that picks the px line height for the
+    ; note row given the already-scaled noteFontSize. TUGs's first
+    ; report at 16 pt was "cortada na metade" because the old
+    ; formula returned fontSize+2 (=18 px), well below the ~22 px
+    ; Segoe UI actually needs at 16 pt. The 1.75x ratio comes from
+    ; the pre-config baseline (NOTE_LINE_HEIGHT_BASE=14 over
+    ; NOTE_FONT_SIZE_BASE=8) so default renders are unchanged.
+
+    resolve_note_line_height_default_8pt_returns_14_px()
+    {
+        ; Default font: the helper must return exactly 14 px so
+        ; existing renders (every install upgrading over the
+        ; previous version) look identical. Pins the backward-
+        ; compat contract.
+        Assert.Equal(14, RouteWidget._ResolveNoteLineHeight(8, 1.0),
+            "8 pt at scale 1.0 → 14 px (matches NOTE_LINE_HEIGHT_BASE)")
+    }
+
+    resolve_note_line_height_grows_proportionally_with_font()
+    {
+        ; The whole point of the change: larger fonts get
+        ; proportionally taller rows so descenders don't clip.
+        ; The implementation uses Ceil (not Round) on the ratio
+        ; so the .5 boundaries never land a pixel short of the
+        ; glyph height — Round in AHK v2 uses banker's rounding
+        ; which would flip 24.5 → 24 (the unsafe direction).
+        ;
+        ; At Ceil(1.75x):
+        ;   10 → 18 px (Ceil(17.5) = 18; ratio dominates)
+        ;   12 → 21 px (Ceil(21.0) = 21)
+        ;   14 → 25 px (Ceil(24.5) = 25, the case Round() got wrong)
+        ;   16 → 28 px (Ceil(28.0) = 28; the value TUGs needed)
+        Assert.Equal(18, RouteWidget._ResolveNoteLineHeight(10, 1.0),
+            "10 pt × 1.75 = 17.5 → 18 px (Ceil)")
+        Assert.Equal(21, RouteWidget._ResolveNoteLineHeight(12, 1.0),
+            "12 pt × 1.75 = 21 px")
+        Assert.Equal(25, RouteWidget._ResolveNoteLineHeight(14, 1.0),
+            "14 pt × 1.75 = 24.5 → 25 px (Ceil; Round would underflow)")
+        Assert.Equal(28, RouteWidget._ResolveNoteLineHeight(16, 1.0),
+            "16 pt × 1.75 = 28 px (fixes TUGs 'cortada na metade')")
+    }
+
+    resolve_note_line_height_respects_constant_floor_for_small_fonts()
+    {
+        ; At small font sizes the 1.75x ratio drops below the
+        ; absolute 14 px floor (NOTE_LINE_HEIGHT_BASE) and below
+        ; the fontSize+2 floor. The Max() across the three floors
+        ; guarantees the row never gets ridiculously short.
+        ;   6 pt: ratio=11, +2=8, base=14 → Max = 14
+        Assert.Equal(14, RouteWidget._ResolveNoteLineHeight(6, 1.0),
+            "6 pt: 14 px floor wins over ratio (11) and +2 (8)")
+
+        ; At scale 2.0 the constant floor scales too: base=28.
+        ; For a 6 pt font at scale 2.0, ratio=11 (the input is
+        ; already scaled), but constant floor pushes to 28.
+        Assert.Equal(28, RouteWidget._ResolveNoteLineHeight(6, 2.0),
+            "6 pt at scale 2.0: 14*2 = 28 px constant floor wins")
+    }
+
+    resolve_note_line_height_handles_invalid_scale()
+    {
+        ; Invalid scale (zero, negative, non-numeric) falls back
+        ; to 1.0 — a buggy anchor shouldn't zero out the constant
+        ; floor and let the line height collapse.
+        Assert.Equal(28, RouteWidget._ResolveNoteLineHeight(16, 0),
+            "zero scale falls back to 1.0 → same as scale=1.0")
+        Assert.Equal(28, RouteWidget._ResolveNoteLineHeight(16, -1),
+            "negative scale falls back to 1.0")
+        Assert.Equal(28, RouteWidget._ResolveNoteLineHeight(16, "oops"),
+            "non-numeric scale falls back to 1.0")
     }
 }
 

@@ -83,6 +83,21 @@ class SettingsDialog
                             ; buffer entry to write to when the user
                             ; navigates to a different zone (the new
                             ; selection's note then populates the Edit).
+    ; Stable BoundFunc registered via OnMessage(WM_HSCROLL) so the
+    ; route sliders update their value labels DURING the drag, not
+    ; just at mouse release. AHK v2 Slider's OnEvent("Change") fires
+    ; reliably on keyboard navigation and click-to-track jumps but
+    ; can defer to mouse-up for thumb drags depending on the trackbar
+    ; style; WM_HSCROLL (0x114) is the underlying Win32 notification
+    ; that fires on every thumb-track step including mid-drag. The
+    ; handler dispatches by lParam (the source control's hwnd) so a
+    ; SINGLE OnMessage registration covers every slider in the
+    ; dialog (currently rowsVisible + noteFontSize; future sliders
+    ; just add a `_ctrls.Has("<key>") && lParam = ...Hwnd` clause
+    ; in _OnSliderScrollMessage). The field stays "" until _BuildGui
+    ; binds it, and Close() tears it down so a re-open re-binds a
+    ; fresh handler.
+    _sliderScrollFn := ""
 
     __New(bus, settingsRepo, cfg, headless := false, log := "",
           routeRepo := "", routeSvc := "", zonesCat := "")
@@ -176,6 +191,14 @@ class SettingsDialog
 
     Close()
     {
+        ; Tear down the WM_HSCROLL handler before the Gui dies so
+        ; the OnMessage callback can't fire against a destroyed
+        ; slider hwnd on the next system message cycle.
+        if (this._sliderScrollFn != "")
+        {
+            try OnMessage(0x0114, this._sliderScrollFn, 0)
+            this._sliderScrollFn := ""
+        }
         if this._gui
         {
             try this._gui.Destroy()
@@ -518,6 +541,12 @@ class SettingsDialog
             cfg.routeRowsVisible := this._ClampRows(
                 this._ctrls["routeRowsVisible"].Value)
 
+        ; Route note font size: read from slider, clamp [6,16].
+        ; Same fallback-to-existing pattern as routeRowsVisible.
+        if this._ctrls.Has("routeNoteFontSize")
+            cfg.routeNoteFontSize := this._ClampFontSize(
+                this._ctrls["routeNoteFontSize"].Value)
+
         ; Hotkeys: user types in human format ("Ctrl+Alt+F");
         ; HotkeyFormatter.ToAhk converts to internal syntax ("^!f")
         ; before persisting. Old-format input passes through as-is.
@@ -581,6 +610,7 @@ class SettingsDialog
             "pbDisplayMode",        cfg.pbDisplayMode,
             "showOutcomeBanner",    cfg.showOutcomeBanner,
             "routeRowsVisible",     cfg.routeRowsVisible,
+            "routeNoteFontSize",    cfg.routeNoteFontSize,
             "hotkeys",              SettingsDialog._CloneStringMap(cfg.hotkeys)
         )
     }
@@ -600,6 +630,7 @@ class SettingsDialog
         cfg.pbDisplayMode       := snapshot["pbDisplayMode"]
         cfg.showOutcomeBanner   := snapshot["showOutcomeBanner"]
         cfg.routeRowsVisible    := snapshot["routeRowsVisible"]
+        cfg.routeNoteFontSize   := snapshot["routeNoteFontSize"]
         cfg.hotkeys             := snapshot["hotkeys"]          ; the deep clone from snapshot
     }
 
@@ -1050,11 +1081,66 @@ class SettingsDialog
         slider.OnEvent("Change", (*) => this._OnRouteRowsChanged())
         this._ctrls["routeRowsVisible"] := slider
 
+        ; Register a SINGLE WM_HSCROLL handler that dispatches by
+        ; lParam (slider hwnd) so the label tracks the thumb
+        ; DURING the drag, not just at mouse release. AHK v2's
+        ; Slider.OnEvent("Change") fires reliably on keyboard and
+        ; click-to-track, but the mouse-drag case can defer the
+        ; notification to TB_ENDTRACK (mouse up) depending on the
+        ; underlying trackbar style — TUGs reported this as "the
+        ; number doesn't change until you let go of the slider".
+        ; WM_HSCROLL (0x0114) carries the thumb position on every
+        ; TB_THUMBTRACK step, which is the missing signal. The
+        ; handler is bound ONCE here (not per slider) because the
+        ; OnMessage table is global per-process; binding a second
+        ; handler for noteFontSize would mean two separate handlers
+        ; competing for the same message. Instead the single
+        ; _OnSliderScrollMessage filters by lParam internally and
+        ; routes to the appropriate per-slider handler. The bound
+        ; function reference is stored on the instance so Close()
+        ; can detach it cleanly — a stale OnMessage callback
+        ; against a destroyed slider would crash on the next
+        ; message cycle.
+        if (this._sliderScrollFn = "")
+        {
+            this._sliderScrollFn := ObjBindMethod(this, "_OnSliderScrollMessage")
+            try OnMessage(0x0114, this._sliderScrollFn)
+        }
+
         g.SetFont("s9 bold c" Theme.Color("text"), Theme.FONT_UI)
         rowsLabel := g.Add("Text", "x425 y" (y + 2) " w20", String(rows))
         this._ctrls["routeRowsValueLabel"] := rowsLabel
         g.SetFont("s9 c" Theme.Color("muted"), Theme.FONT_UI)
         g.Add("Text", "x450 y" (y + 2) " w80", "(3 - 10)")
+
+        y += 30
+
+        ; Note-font-size slider (6-16 pt). Sits right below the
+        ; rows-visible slider so the two route-overlay knobs are
+        ; grouped. The base font size (cfg.routeNoteFontSize) is
+        ; multiplied by the anchor's render scale inside
+        ; RouteWidget._Render — same scaling behavior as the zone
+        ; rows — so this knob shifts the BASE without affecting
+        ; the rest of the widget's vertical rhythm. Motivated by
+        ; TUGs's feedback ("I can barely see what my notes say"):
+        ; the default 8 pt is on the small side for high-DPI
+        ; setups and the configurability resolves it without
+        ; making everyone read 12 pt notes.
+        this._Label(g, y, "Note font size")
+        fontSize := this._ClampFontSize(this._cfg.routeNoteFontSize)
+        fontSlider := g.Add("Slider",
+            "x180 y" y " w240 h22 Range6-16 Page1 TickInterval2",
+            fontSize)
+        fontSlider.OnEvent("Change",
+            (*) => this._OnRouteNoteFontSizeChanged())
+        this._ctrls["routeNoteFontSize"] := fontSlider
+
+        g.SetFont("s9 bold c" Theme.Color("text"), Theme.FONT_UI)
+        fontLabel := g.Add("Text", "x425 y" (y + 2) " w20",
+            String(fontSize))
+        this._ctrls["routeNoteFontSizeValueLabel"] := fontLabel
+        g.SetFont("s9 c" Theme.Color("muted"), Theme.FONT_UI)
+        g.Add("Text", "x450 y" (y + 2) " w80", "(6 - 16 pt)")
 
         y += 30
 
@@ -1456,6 +1542,47 @@ class SettingsDialog
             String(this._ctrls["routeRowsVisible"].Value)
     }
 
+    ; Mirror of _OnRouteRowsChanged for the note-font-size slider.
+    ; Single-responsibility on purpose — keeping the two handlers
+    ; separate makes future tweaks (e.g. a font-size preview that
+    ; live-updates the overlay during drag) localizable to one
+    ; method without touching the rows-visible behavior.
+    _OnRouteNoteFontSizeChanged()
+    {
+        if !this._ctrls.Has("routeNoteFontSize")
+            return
+        if !this._ctrls.Has("routeNoteFontSizeValueLabel")
+            return
+        try this._ctrls["routeNoteFontSizeValueLabel"].Value :=
+            String(this._ctrls["routeNoteFontSize"].Value)
+    }
+
+    ; WM_HSCROLL (0x0114) handler. Fires during the slider's thumb
+    ; drag on every step, complementing the OnEvent("Change") that
+    ; covers keyboard and click-to-track. Dispatches by lParam (the
+    ; source control's hwnd in Win32 WM_HSCROLL semantics) so a
+    ; single OnMessage registration covers every slider in the
+    ; dialog — new sliders only need a `_ctrls.Has("<key>") &&
+    ; lParam = ...Hwnd` clause below and their own _OnXChanged
+    ; method. Each label update is delegated to the same
+    ; _OnXChanged that the Change event uses so the read path stays
+    ; in one place per slider.
+    _OnSliderScrollMessage(wParam, lParam, msg, hwnd)
+    {
+        if this._ctrls.Has("routeRowsVisible")
+            && lParam = this._ctrls["routeRowsVisible"].Hwnd
+        {
+            this._OnRouteRowsChanged()
+            return
+        }
+        if this._ctrls.Has("routeNoteFontSize")
+            && lParam = this._ctrls["routeNoteFontSize"].Hwnd
+        {
+            this._OnRouteNoteFontSizeChanged()
+            return
+        }
+    }
+
     _OnRouteImport()
     {
         if !this._HasRouteWiring()
@@ -1763,6 +1890,29 @@ class SettingsDialog
         }
         catch
             return 5    ; the AppSettings default — last-resort fallback
+    }
+
+    ; Mirror of _ClampRows for the note-font-size slider. The valid
+    ; range [6, 16] matches the slider's `Range6-16` option and the
+    ; clamp policy in AppSettings.FromMap / SettingsRepository so
+    ; every path that lands a value on cfg.routeNoteFontSize agrees
+    ; on the same domain. Fallback default 8 is the AppSettings
+    ; baseline and also the pre-config NOTE_FONT_SIZE_BASE constant
+    ; in RouteWidget — keeping all three in sync means a user with
+    ; a hand-corrupted INI lands back on the original visual.
+    _ClampFontSize(n)
+    {
+        try
+        {
+            nn := Integer(n + 0)
+            if (nn < 6)
+                return 6
+            if (nn > 16)
+                return 16
+            return nn
+        }
+        catch
+            return 8    ; the AppSettings default — last-resort fallback
     }
 
     ; Sanitizes a profile name into a safe filename stem. Mirrors
