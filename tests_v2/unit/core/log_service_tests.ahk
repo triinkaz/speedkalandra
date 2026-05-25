@@ -40,6 +40,15 @@ class LogServiceTests extends TestCase
         "constructor_does_not_rotate_when_log_under_threshold",
         "constructor_does_not_rotate_when_log_does_not_exist",
 
+        ; --- Constructor: daily rotation on boot (regression: bug
+        ; was that the ctor seeded _currentDate to today BEFORE
+        ; calling _RotateIfNewDay, which short-circuited the fast
+        ; path and prevented the slow path — the only one that
+        ; reads the file's mtime — from ever running on boot) ---
+        "constructor_rotates_log_from_previous_day_on_boot",
+        "constructor_does_not_rotate_log_from_today_on_boot",
+        "constructor_rotates_to_date_stamped_filename",
+
         ; --- Levels and filter ---
         "info_writes_to_file_with_default_buffer",
         "warn_writes_to_file_with_default_buffer",
@@ -198,6 +207,105 @@ class LogServiceTests extends TestCase
 
         Assert.False(FileExist(path))
         Assert.False(FileExist(oldPath))
+    }
+
+    ; ============================================================
+    ; Constructor: daily rotation on boot (regression)
+    ; ============================================================
+    ;
+    ; The bug: the ctor used to seed `_currentDate` to today's
+    ; date BEFORE calling _RotateIfNewDay. _RotateIfNewDay's fast
+    ; path returns immediately when today equals _currentDate —
+    ; which is ALWAYS the case if we just seeded it that way. The
+    ; slow path, which inspects the existing file's mtime and
+    ; performs the actual rename, was therefore unreachable from
+    ; the ctor. A log left over from yesterday would silently keep
+    ; being appended to today's log session, defeating the daily
+    ; rotation feature the comments documented.
+    ;
+    ; The fix: leave `_currentDate` at its field default ("") on
+    ; construction. The first _RotateIfNewDay call then sees
+    ; `today != ""`, falls through to the slow path, and the
+    ; mtime check fires correctly. Subsequent _Log calls keep
+    ; benefiting from the fast path because the slow path sets
+    ; `_currentDate := today` once it has run.
+
+    constructor_rotates_log_from_previous_day_on_boot()
+    {
+        ; Arrange: create a log file and backdate its mtime to
+        ; yesterday. The rotation must move it to a date-stamped
+        ; sibling and clear the active path so the next FileAppend
+        ; starts fresh.
+        path := Fixtures.TempPath("log")
+        FileAppend("content from yesterday`n", path, "UTF-8")
+        Assert.True(FileExist(path), "pre-condition: file exists")
+
+        yesterdayTs := DateAdd(A_Now, -1, "Days")
+        yesterdayDate := SubStr(yesterdayTs, 1, 8)
+        FileSetTime(yesterdayTs, path, "M")
+        ; Register the expected rotated path for teardown cleanup.
+        rotatedPath := path "." yesterdayDate
+        Fixtures.RegisterTempPath(rotatedPath)
+
+        ; Act
+        srvLog := LogService(path, "INFO")
+
+        ; Assert: rotation moved the file to the date-stamped path
+        ; and cleared the active path.
+        Assert.True(FileExist(rotatedPath),
+            "file with yesterday's mtime must be rotated to a date-stamped sibling")
+        Assert.False(FileExist(path),
+            "active log path must be clear after rotation (no appends yet)")
+    }
+
+    constructor_does_not_rotate_log_from_today_on_boot()
+    {
+        ; Defensive: a log file whose mtime is already today must
+        ; NOT be rotated — it belongs to the current session and
+        ; rotating would lose lines from the previous boot of the
+        ; same day (e.g. quick restart).
+        path := Fixtures.TempPath("log")
+        FileAppend("content from today`n", path, "UTF-8")
+        todayDate := FormatTime(A_Now, "yyyyMMdd")
+        ; The file's mtime is already today (just written); make it
+        ; explicit anyway so the test isn't dependent on FileAppend
+        ; timing details.
+        FileSetTime(A_Now, path, "M")
+        rotatedPath := path "." todayDate
+        Fixtures.RegisterTempPath(rotatedPath)
+
+        srvLog := LogService(path, "INFO")
+
+        Assert.True(FileExist(path),
+            "file with today's mtime must NOT be rotated")
+        Assert.False(FileExist(rotatedPath),
+            "no date-stamped sibling should be created for a same-day file")
+    }
+
+    constructor_rotates_to_date_stamped_filename()
+    {
+        ; The rotated path format is `<base>.<yyyyMMdd>` where the
+        ; date stamp comes from the FILE's mtime (not today's
+        ; date). A log abandoned three days ago must rotate to
+        ; `<base>.<that-day's-date>`, not `<base>.<yesterday>` or
+        ; `<base>.<today>`. Also confirms the rotated file
+        ; preserves the original content byte-for-byte.
+        path := Fixtures.TempPath("log")
+        originalContent := "abandoned three days ago`n"
+        FileAppend(originalContent, path, "UTF-8")
+
+        threeDaysAgoTs := DateAdd(A_Now, -3, "Days")
+        threeDaysAgoDate := SubStr(threeDaysAgoTs, 1, 8)
+        FileSetTime(threeDaysAgoTs, path, "M")
+        rotatedPath := path "." threeDaysAgoDate
+        Fixtures.RegisterTempPath(rotatedPath)
+
+        srvLog := LogService(path, "INFO")
+
+        Assert.True(FileExist(rotatedPath),
+            "rotated path must use the FILE's mtime date, not today")
+        Assert.Equal(originalContent, Fixtures.FileReadAll(rotatedPath),
+            "rotated file must preserve the original content")
     }
 
     ; ============================================================

@@ -178,9 +178,18 @@ class JsonFile
         ; null to keep JSON valid (rather than an empty string).
         if (v = "" && !IsNumber(v))
             return '""'    ; explicit empty string
-        if IsNumber(v)
+        ; Concrete-type check rather than IsNumber(v): in AHK v2 a
+        ; STRING that happens to look like a number ("42", "00123",
+        ; "1e5") makes IsNumber return true, which would cause the
+        ; serializer to emit it as a bare JSON number, stripping the
+        ; quotes and — worse — losing leading zeros / fractional
+        ; form. Type(v) distinguishes the actual storage: a value
+        ; with Type = "Integer" or "Float" was created as a number
+        ; and serializes unquoted; any other Type (notably "String")
+        ; falls through to the string branch and gets quoted +
+        ; escaped properly.
+        if (Type(v) = "Integer" || Type(v) = "Float")
         {
-            ; Integer or Float
             ; Format: numbers in AHK v2 already serialize cleanly as strings
             return v . ""
         }

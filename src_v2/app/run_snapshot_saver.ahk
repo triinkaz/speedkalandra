@@ -286,8 +286,32 @@ class RunSnapshotSaver
         }
         catch as ex
         {
+            ; Save failed mid-flow (runHistory.Save threw, the
+            ; statsRecorder.GetSnapshot blew up on bad state, or
+            ; any other unexpected exception). Two things must
+            ; happen here:
+            ;
+            ;   1. Log at WARN so the diagnostics trail is intact.
+            ;   2. Surface a TrayTip to the user — the comment in
+            ;      the outcome-event branch above promises this,
+            ;      and without it the user has no signal that the
+            ;      run wasn't actually persisted (the in-game
+            ;      timer stopped, the hotkey fired, but the
+            ;      history file is silently missing the run).
+            ;
+            ; TrayTip is gated on !this._headless so tests don't
+            ; pop OS-level notifications. Wrapped in try because
+            ; some hardened Windows configurations (group policy)
+            ; can make TrayTip throw — a failed surface attempt
+            ; on top of an already-failed save shouldn't escalate.
             if IsObject(this._log)
                 try this._log.Warn("Failed to save run to history: " ex.Message, "RunSnapshotSaver")
+            if !this._headless
+            {
+                try TrayTip("SpeedKalandra",
+                    "Run NOT saved to history. Check the log for details.",
+                    "Mute Icon!")
+            }
         }
     }
 

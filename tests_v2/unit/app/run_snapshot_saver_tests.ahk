@@ -222,6 +222,24 @@ class _SaverHistoryReturnsFalse extends _SaverStubRunHistory
 }
 
 
+; Variant of _SaverStubRunHistory whose Save THROWS — used to
+; exercise the saver's outer catch block: log a WARN, surface a
+; TrayTip (skipped in headless), don't propagate, don't publish
+; a misleading outcome event. The thrown Error's message is
+; arbitrary; the saver only catches and logs it. saveCalls still
+; increments so tests can confirm the throwing path was actually
+; reached.
+class _SaverHistoryThrows extends _SaverStubRunHistory
+{
+    Save(buildResult)
+    {
+        this.saveCalls += 1
+        this._lastSaved := buildResult
+        throw Error("_SaverHistoryThrows: forced save failure")
+    }
+}
+
+
 ; Minimal stub for ActCheckpointTracker. CaptureCurrentAsCheckpoint
 ; is a no-op; GetCheckpoints returns whatever the test seeded.
 class _SaverStubActCheckpoints
@@ -310,6 +328,13 @@ class RunSnapshotSaverTests extends TestCase
         "outcome_published_dnf_for_cancelled_above_threshold",
         "outcome_silent_when_bus_missing",
         "outcome_silent_when_run_history_save_returns_false",
+
+        ; --- Save failure path (regression: the catch used to be
+        ; log-only, with the inline comment claiming a TrayTip
+        ; was emitted from here; the TrayTip was missing) ---
+        "save_does_not_propagate_when_history_save_throws",
+        "save_logs_warn_when_history_save_throws",
+        "save_publishes_no_outcome_when_history_save_throws",
 
         ; --- Undo state machine ---
         "undo_no_op_when_no_save_marked",
@@ -682,6 +707,92 @@ class RunSnapshotSaverTests extends TestCase
 
         Assert.Equal(0, captured.Length,
             "No outcome event when Save reports a non-success")
+    }
+
+    ; ============================================================
+    ; Save failure path (catch block)
+    ; ============================================================
+    ;
+    ; When runHistory.Save THROWS (vs returns false), the saver's
+    ; outer catch is responsible for three things:
+    ;
+    ;   1. Not propagating the exception — callers of Save() are
+    ;      the OnBeforeFinalize hooks in RunService, which expect
+    ;      a clean return regardless of persistence success.
+    ;   2. Logging at WARN so diagnostics are intact.
+    ;   3. Surfacing a TrayTip to the user so they know the run
+    ;      didn't actually land on disk. This was the gap caught
+    ;      in the senior review: the inline comment in the outcome-
+    ;      event branch above promised the TrayTip would fire from
+    ;      this catch, but the original code only logged. Without
+    ;      the TrayTip the user sees the timer stop, the hotkey
+    ;      fire, and assumes the run was saved — silent data loss.
+    ;
+    ; Tests here use a real EventBus + InMemoryLogger so the
+    ; observable surfaces (log + outcome-event absence) can be
+    ; asserted directly. TrayTip itself is skipped in headless
+    ; mode so it isn't testable here; the contract is that the
+    ; code path is REACHABLE, which the log assertion below pins.
+
+    save_does_not_propagate_when_history_save_throws()
+    {
+        ; The saver runs inside RunService's OnBeforeFinalize hook.
+        ; Letting a Save throw would prevent the lifecycle event
+        ; from publishing and leave the app in a wedged state
+        ; (timer stopped, finalize half-done). The catch must
+        ; swallow.
+        this.runHistory := _SaverHistoryThrows()
+        this.timer.SetRunMs(300000)
+        this.zoneTracker.SetTotals(Map("Mud Burrow", 60000))
+
+        threw := false
+        try this._MakeFullSaver().Save("completed")
+        catch
+            threw := true
+
+        Assert.False(threw,
+            "history.Save throwing must NOT propagate out of saver.Save")
+        Assert.Equal(1, this.runHistory.saveCalls,
+            "the throwing Save path was actually reached")
+    }
+
+    save_logs_warn_when_history_save_throws()
+    {
+        ; The catch must leave a WARN entry citing the exception
+        ; message so post-mortem diagnostics (or the boot-time
+        ; severity TrayTip) can surface the failure. Replaces the
+        ; default NullLogger with an InMemoryLogger for the
+        ; assertion.
+        this.runHistory := _SaverHistoryThrows()
+        this.log := InMemoryLogger()
+        this.timer.SetRunMs(300000)
+        this.zoneTracker.SetTotals(Map("Mud Burrow", 60000))
+
+        this._MakeFullSaver().Save("completed")
+
+        Assert.True(this.log.HasEntry("WARN", "Failed to save run to history"),
+            "the catch must log a WARN summarizing the failure")
+        Assert.True(this.log.HasEntry("WARN", "forced save failure"),
+            "the WARN must carry the underlying exception's message")
+    }
+
+    save_publishes_no_outcome_when_history_save_throws()
+    {
+        ; Symmetric to outcome_silent_when_run_history_save_returns_false:
+        ; an exception from Save means we don't know whether the
+        ; file landed or not. Publishing "saved" would be a lie,
+        ; publishing "dnf" / "too_short" would be wrong shape.
+        ; The saver stays silent on the bus and lets the TrayTip
+        ; surface (untestable in headless) be the user-facing signal.
+        this.runHistory := _SaverHistoryThrows()
+        this.timer.SetRunMs(300000)
+        this.zoneTracker.SetTotals(Map("Mud Burrow", 60000))
+        captured := []
+
+        this._MakeFullSaverWithBus(captured).Save("completed")
+
+        Assert.Equal(0, captured.Length,
+            "a thrown save must NOT result in a misleading outcome event")
     }
 
     ; ============================================================

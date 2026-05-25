@@ -49,6 +49,14 @@ class JsonFileTests extends TestCase
         "stringify_empty_string",
         "stringify_string_with_escape_chars",
         "stringify_string_with_unicode_control_char",
+        ; Regression: numeric-looking STRINGS must stay strings.
+        ; AHK v2's IsNumber("42") returns true, which used to make
+        ; the serializer emit a bare JSON number — stripping the
+        ; quotes and losing leading zeros / scientific-notation form.
+        "stringify_numeric_looking_string_stays_string",
+        "stringify_string_with_leading_zeros_preserves_leading_zeros",
+        "stringify_string_with_scientific_notation_stays_string",
+        "stringify_float_looking_string_stays_string",
 
         ; --- Stringify: wrappers ---
         "stringify_json_bool_true",
@@ -182,6 +190,58 @@ class JsonFileTests extends TestCase
         ; Chr(7) = bell, codepoint 7 (< 32 -> \uXXXX)
         result := JsonFile.Stringify(Chr(7))
         Assert.Equal('"\u0007"', result)
+    }
+
+    ; ------------------------------------------------------------
+    ; Regression: numeric-looking strings must serialize AS strings
+    ; ------------------------------------------------------------
+    ;
+    ; AHK v2's IsNumber() returns true for strings that PARSE as
+    ; numbers ("42", "00123", "1e5"), not just for values whose
+    ; concrete type is Integer or Float. The pre-fix serializer
+    ; used IsNumber(v) to decide between the number and string
+    ; branches, which meant "42" would emit a bare 42 in the JSON
+    ; output — stripping the quotes and losing information when
+    ; the string carried leading zeros ("00123"), scientific
+    ; notation ("1e5"), or any non-canonical form a number-shaped
+    ; string can take. The fix replaces IsNumber with a concrete-
+    ; type check (Type(v) = "Integer" / "Float"), so values that
+    ; were CREATED as strings stay strings regardless of how their
+    ; characters happen to parse.
+
+    stringify_numeric_looking_string_stays_string()
+    {
+        ; The shape that motivated the fix — a plain ASCII numeric
+        ; string. Must come out quoted, not bare.
+        Assert.Equal('"42"', JsonFile.Stringify("42"))
+    }
+
+    stringify_string_with_leading_zeros_preserves_leading_zeros()
+    {
+        ; The pre-fix bug was especially nasty here: "00123" would
+        ; serialize as bare 123, silently losing the leading zeros.
+        ; If a downstream system relied on the string form (zone
+        ; identifiers, zero-padded record IDs), the round-trip
+        ; would corrupt the data without surfacing an error.
+        Assert.Equal('"00123"', JsonFile.Stringify("00123"))
+    }
+
+    stringify_string_with_scientific_notation_stays_string()
+    {
+        ; AHK's IsNumber accepts "1e5" as a number. The serializer
+        ; must still treat it as a string when that's its concrete
+        ; type — emitting bare 1e5 would also change the textual
+        ; form (numeric form in some serializers is 100000), which
+        ; is silently destructive.
+        Assert.Equal('"1e5"', JsonFile.Stringify("1e5"))
+    }
+
+    stringify_float_looking_string_stays_string()
+    {
+        ; Float-shaped strings ("3.14") parse as numbers via
+        ; IsNumber too. Pin the string-stays-string contract for
+        ; them explicitly.
+        Assert.Equal('"3.14"', JsonFile.Stringify("3.14"))
     }
 
     ; ============================================================

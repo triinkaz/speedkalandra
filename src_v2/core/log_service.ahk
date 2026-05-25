@@ -60,7 +60,20 @@ class LogService
     _buffer     := ""  ; Array<string> of pending lines
     _warnCount  := 0   ; counter of WARNs logged since creation/ResetCounts
     _errorCount := 0   ; counter of ERRORs logged since creation/ResetCounts
-    _currentDate := "" ; "YYYYMMDD" of last write — used for daily rotation
+    _currentDate := "" ; "YYYYMMDD" of last write — used for daily rotation.
+                       ; INTENTIONALLY left empty on construction (NOT
+                       ; initialized to today) so the first call to
+                       ; _RotateIfNewDay from the ctor falls into the
+                       ; slow path — it must inspect the existing
+                       ; file's mtime to detect a previous-day log.
+                       ; If we seeded this with FormatTime(A_Now, ...)
+                       ; here, the fast-path `today = _currentDate`
+                       ; check would short-circuit on boot and a log
+                       ; left over from yesterday would never rotate
+                       ; (the slow path is the only place that reads
+                       ; the file's mtime). Bug previously slipped
+                       ; past because the ctor explicitly set this
+                       ; line BEFORE calling _RotateIfNewDay.
 
     __New(logFile, minLevel := "INFO", bufferSize := 1)
     {
@@ -70,7 +83,10 @@ class LogService
         this._minLevel   := this._ParseLevel(minLevel)
         this._bufferSize := bufferSize
         this._buffer     := []
-        this._currentDate := FormatTime(A_Now, "yyyyMMdd")
+        ; _currentDate stays "" here on purpose — see the field's
+        ; comment above. _RotateIfNewDay's slow path needs to be
+        ; reachable on the first call, and the fast path's equality
+        ; check would otherwise eat it.
         this._EnsureLogDir()
         ; Rotate if the log has exceeded MAX_LOG_SIZE since last
         ; boot — keeps the file from growing without bound between
