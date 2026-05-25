@@ -41,6 +41,13 @@ class _PersisterStubRunState
     savedZoneTotals   := ""
     saveLoadingCount  := 0
     saveZoneCount     := 0
+    ; Toggle for SaveZoneTotals to return false instead of true,
+    ; simulating an AtomicWriter exception inside the real
+    ; RunStateRepository.SaveZoneTotals (which catches + warns +
+    ; returns false). Tests that exercise the persister's retry
+    ; loop flip this to false; default true so the existing tests
+    ; that don't care continue to pass.
+    saveZoneSucceeds  := true
 
     SaveLoadingTotal(ms)
     {
@@ -52,6 +59,7 @@ class _PersisterStubRunState
     {
         this.savedZoneTotals := totals
         this.saveZoneCount += 1
+        return this.saveZoneSucceeds
     }
 }
 
@@ -117,6 +125,22 @@ class RunStatePersisterTests extends TestCase
         "tick_skips_zone_totals_when_hash_unchanged",
         "tick_skips_zone_totals_when_run_inactive",
         "tick_calls_persist_tick_on_run_service",
+        ; Regression: Tick used to call GetTotals() instead of
+        ; GetTotalsForSnapshot(), so the active zone's in-flight
+        ; elapsed wasn't included in the persisted image — defeating
+        ; the whole crash-recovery purpose of the 5 s tick. Flush
+        ; was already correct (see flush_uses_totals_for_snapshot_*
+        ; below); the new test mirrors it for Tick.
+        "tick_uses_totals_for_snapshot_for_zone_totals",
+        ; Regression: SaveZoneTotals returns void in the old
+        ; implementation, with the catch swallowing exceptions
+        ; silently. The persister then advanced its skip-cache
+        ; hash on the failed write, so subsequent ticks short-
+        ; circuited without retrying until the totals changed.
+        ; SaveZoneTotals now returns boolean; the persister only
+        ; advances the cache on true.
+        "tick_does_not_advance_cache_when_save_zone_totals_returns_false",
+        "tick_retries_save_zone_totals_on_next_tick_after_failure",
 
         ; --- Flush ---
         "flush_writes_loading_total_even_when_unchanged",
@@ -355,6 +379,98 @@ class RunStatePersisterTests extends TestCase
         persister.Tick()
 
         Assert.Equal(1, runSvc.persistTickCount)
+    }
+
+    tick_uses_totals_for_snapshot_for_zone_totals()
+    {
+        ; Symmetric to flush_uses_totals_for_snapshot_for_zone_totals
+        ; below: the 5 s tick exists precisely to preserve in-flight
+        ; zone time across crashes, which means it MUST read the
+        ; snapshot variant (which folds the active zone's elapsed
+        ; into the per-zone map) rather than the bare _totals map
+        ; (which only contains transitions already closed).
+        ;
+        ; The stub deliberately returns DIFFERENT maps from the
+        ; two getters — totals carries 1 entry, snapshotTotals
+        ; carries 2. If Tick reads from the wrong getter, the
+        ; assertion below fails on the Count.
+        zoneTracker := _PersisterStubZoneTracker()
+        zoneTracker.runActive := true
+        zoneTracker.totals         := Map("Riverbank", 60000)
+        zoneTracker.snapshotTotals := Map("Riverbank", 60000, "Clearfell", 120000)
+        runState    := _PersisterStubRunState()
+        persister   := this._Make(Map(
+            "zoneTracker", zoneTracker,
+            "runState",    runState
+        ))
+
+        persister.Tick()
+
+        Assert.True(IsObject(runState.savedZoneTotals))
+        Assert.Equal(2, runState.savedZoneTotals.Count,
+            "Tick must use GetTotalsForSnapshot (2 entries), not GetTotals (1 entry)")
+    }
+
+    tick_does_not_advance_cache_when_save_zone_totals_returns_false()
+    {
+        ; SaveZoneTotals returns false when the underlying
+        ; AtomicWriter throws (disk full, file lock from antivirus,
+        ; etc.). The persister must NOT advance _lastSavedZoneTotalsHash
+        ; on a false return — doing so would mark the failed write
+        ; as "saved" and skip all subsequent ticks until the totals
+        ; happen to change again. This test pins the no-cache-update
+        ; contract; the follow-up test pins the retry-on-next-tick.
+        zoneTracker := _PersisterStubZoneTracker()
+        zoneTracker.runActive := true
+        zoneTracker.totals := Map("Riverbank", 60000)
+        runState    := _PersisterStubRunState()
+        runState.saveZoneSucceeds := false    ; simulate write failure
+        persister   := this._Make(Map(
+            "zoneTracker", zoneTracker,
+            "runState",    runState
+        ))
+
+        persister.Tick()
+
+        Assert.Equal(1, runState.saveZoneCount,
+            "SaveZoneTotals was attempted")
+        ; Internal field check: the cache hash must NOT have been
+        ; advanced. We can probe by running a second Tick with the
+        ; same totals and verifying it ALSO writes (which it would
+        ; only do if the cache wasn't advanced).
+        persister.Tick()
+        Assert.Equal(2, runState.saveZoneCount,
+            "the next Tick must retry the failed write, not skip via stale cache")
+    }
+
+    tick_retries_save_zone_totals_on_next_tick_after_failure()
+    {
+        ; End-to-end retry: first Tick fails, second Tick still has
+        ; the same totals (no transition happened in between), and
+        ; the disk is healthy again. The persister must (a) retry
+        ; on the second Tick AND (b) advance the cache once the
+        ; retry succeeds, so the third Tick legitimately skips.
+        zoneTracker := _PersisterStubZoneTracker()
+        zoneTracker.runActive := true
+        zoneTracker.totals := Map("Riverbank", 60000)
+        runState    := _PersisterStubRunState()
+        runState.saveZoneSucceeds := false
+        persister   := this._Make(Map(
+            "zoneTracker", zoneTracker,
+            "runState",    runState
+        ))
+
+        persister.Tick()                       ; fails
+        Assert.Equal(1, runState.saveZoneCount)
+
+        runState.saveZoneSucceeds := true      ; disk recovers
+        persister.Tick()                       ; retries, succeeds
+        Assert.Equal(2, runState.saveZoneCount,
+            "second Tick must retry the write")
+
+        persister.Tick()                       ; same totals, cache should now skip
+        Assert.Equal(2, runState.saveZoneCount,
+            "third Tick must skip via cache now that the previous write succeeded")
     }
 
     ; ------------------------------------------------------------

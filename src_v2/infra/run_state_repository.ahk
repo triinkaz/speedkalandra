@@ -199,6 +199,16 @@ class RunStateRepository
     ;
     ; An empty totalsMap writes an empty file (kept for existence
     ; semantics; LoadZoneTotals still returns an empty Map).
+    ;
+    ; Returns true on a confirmed write, false when the underlying
+    ; AtomicWriter throws (the failure is logged to the WarningSink
+    ; either way). Callers must NOT update their dirty-cache hashes
+    ; from a false return — the previous version of this method
+    ; returned void and swallowed exceptions, which let the
+    ; persister's skip-cache mark a failed write as "saved", so
+    ; subsequent ticks would short-circuit without retrying. The
+    ; boolean return is the contract that lets the persister
+    ; condition cache updates on actual persistence success.
     SaveZoneTotals(totalsMap)
     {
         if !(totalsMap is Map)
@@ -221,13 +231,19 @@ class RunStateRepository
         try
         {
             AtomicWriter.WriteAll(this._zoneTotalsPath, content, "UTF-8")
+            return true
         }
         catch as ex
         {
             ; Data loss path: in-progress run zone time fails to
             ; persist. Forwarded to the injected WarningSink so it
             ; shows up in speedkalandra.log under the "RunState" tag.
+            ; The false return signals the failure to the caller so
+            ; the persister's skip-cache hash is NOT advanced —
+            ; without that, a transient disk error would silently
+            ; block all subsequent retries until the totals changed.
             this._warn.Warn("SaveZoneTotals failed for " . this._zoneTotalsPath, ex)
+            return false
         }
     }
 

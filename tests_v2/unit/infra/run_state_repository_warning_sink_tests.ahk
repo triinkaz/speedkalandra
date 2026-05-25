@@ -71,6 +71,12 @@ class RunStateRepositoryWarningSinkTests extends TestCase
         ; --- SaveZoneTotals failure (AtomicWriter throws) ---
         "save_warns_when_atomic_writer_fails",
 
+        ; --- SaveZoneTotals return value (regression: the method
+        ; used to be void, which let callers' skip-cache hashes
+        ; advance on failed writes) ---
+        "save_returns_true_on_successful_write",
+        "save_returns_false_when_atomic_writer_throws",
+
         ; --- Constructor sink validation ---
         "constructor_throws_when_warning_sink_lacks_warn_method"
     ]
@@ -195,6 +201,38 @@ class RunStateRepositoryWarningSinkTests extends TestCase
 
         Assert.Equal(1, this.sink.Count())
         Assert.True(this.sink.HasMessage("SaveZoneTotals failed"))
+    }
+
+    save_returns_true_on_successful_write()
+    {
+        ; The return value is the contract that lets the persister
+        ; condition its skip-cache hash advance on actual write
+        ; success. A true return means the file landed on disk; the
+        ; persister can then mark the totals as "saved" and skip
+        ; the next equal-totals tick.
+        result := this.repo.SaveZoneTotals(Map("Mud Burrow", 215000))
+        Assert.True(result,
+            "successful AtomicWriter.WriteAll must return true")
+    }
+
+    save_returns_false_when_atomic_writer_throws()
+    {
+        ; Symmetric to save_warns_when_atomic_writer_fails: in
+        ; addition to logging the WARN, the method must return
+        ; false so the persister knows NOT to advance its cache.
+        ; The old void-return signature would have masked this
+        ; failure entirely — subsequent ticks would short-circuit
+        ; on a stale-but-equal hash and never retry. Same forced-
+        ; failure trick as the warn test above.
+        parentAsFile := Fixtures.TempPath("txt")
+        FileAppend("not a directory", parentAsFile, "UTF-8")
+        bogus := parentAsFile . "\zones.txt"
+        this.repo._zoneTotalsPath := bogus
+
+        result := this.repo.SaveZoneTotals(Map("Mud Burrow", 215000))
+
+        Assert.False(result,
+            "failed AtomicWriter.WriteAll must return false (caller uses this to gate cache update)")
     }
 
     constructor_throws_when_warning_sink_lacks_warn_method()

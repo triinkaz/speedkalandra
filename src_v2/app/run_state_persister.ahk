@@ -113,12 +113,37 @@ class RunStatePersister
         {
             if IsObject(this._zoneTracker) && this._zoneTracker.IsRunActive()
             {
-                snapshot := this._zoneTracker.GetTotals()
+                ; GetTotalsForSnapshot (not GetTotals) so the in-flight
+                ; elapsed of the active zone is included in the disk
+                ; image. The whole point of the 5 s tick is crash
+                ; recovery for an interrupted run, and the active
+                ; zone's time-since-last-transition is exactly the
+                ; window of data the recovery needs to preserve. The
+                ; comment on GetTotalsForSnapshot in
+                ; zone_tracking_service.ahk explicitly names this
+                ; tick as its caller; the Flush path below already
+                ; uses it. Previous version called GetTotals() which
+                ; froze the snapshot at the LAST transition — a crash
+                ; mid-zone-visit would lose every ms elapsed since
+                ; that transition (up to 5 s normally, more if a
+                ; tick had been delayed).
+                snapshot := this._zoneTracker.GetTotalsForSnapshot()
                 hash := RunStatePersister.ComputeTotalsHash(snapshot)
                 if (hash != this._lastSavedZoneTotalsHash)
                 {
-                    this._runState.SaveZoneTotals(snapshot)
-                    this._lastSavedZoneTotalsHash := hash
+                    ; SaveZoneTotals returns true on a confirmed write
+                    ; and false when the underlying AtomicWriter
+                    ; throws (the repo's catch swallows + warns). Only
+                    ; advance the skip-cache hash on a confirmed
+                    ; write; otherwise a transient disk error would
+                    ; mark the failed write as "saved" and block all
+                    ; subsequent ticks from retrying until the
+                    ; totals changed (which can be minutes in long
+                    ; zones). The next tick re-evaluates the same
+                    ; hash, re-attempts the write, and finally
+                    ; advances the cache once the disk cooperates.
+                    if this._runState.SaveZoneTotals(snapshot)
+                        this._lastSavedZoneTotalsHash := hash
                 }
             }
         }
