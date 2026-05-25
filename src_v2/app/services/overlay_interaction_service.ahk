@@ -214,9 +214,20 @@ class OverlayInteractionService
     ;               new widget position.
     ;   onResize  : callable(steps) or "" — fired on Ctrl+wheel
     ;               (steps = +1 wheel up, -1 down, etc.).
+    ;   groupId   : integer or 0 — opt-in HOVER GROUPING. When set,
+    ;               hovering ANY widget that shares the same group
+    ;               key dims ALL widgets in the group simultaneously.
+    ;               Convention: a "primary" widget (anchor timer)
+    ;               passes its own Hwnd as groupId; satellites
+    ;               (route widget glued below) pass the primary's
+    ;               Hwnd as groupId. The match logic in
+    ;               _IsInHoveredGroup handles both directions, so
+    ;               the satellite doesn't need to know whether the
+    ;               primary registered yet at the moment it joins.
+    ;               Default 0 = no group = legacy per-hwnd dim.
     ; ============================================================
 
-    RegisterHwnd(hwnd, onDragEnd := "", onResize := "")
+    RegisterHwnd(hwnd, onDragEnd := "", onResize := "", groupId := 0)
     {
         if (hwnd = 0)
             return
@@ -228,7 +239,8 @@ class OverlayInteractionService
         this._widgets.Push(Map(
             "hwnd",      hwnd,
             "onDragEnd", onDragEnd,
-            "onResize",  onResize
+            "onResize",  onResize,
+            "groupId",   Integer(groupId)
         ))
         OutputDebug("OverlayInteractionService: RegisterHwnd " hwnd " (total=" this._widgets.Length ")")
 
@@ -319,21 +331,20 @@ class OverlayInteractionService
 
     ; Updates _hoveredHwnd and reapplies visual state on affected widgets.
     ; Idempotent: if hwnd didn't change, no-op.
+    ;
+    ; Reapplies state on ALL registered widgets (not just prev/curr)
+    ; because group-hover propagates: when the cursor leaves one
+    ; member of a group, every other member of that same group also
+    ; needs to flip back from DIMMED to FULL. The cost is trivial —
+    ; we have at most a handful of registered hwnds, and ApplyVisual
+    ; is two cheap Win32 calls. Doing per-hwnd diff-tracking would
+    ; be premature optimization.
     _SetHoveredHwnd(hwnd)
     {
         if (hwnd = this._hoveredHwnd)
             return
-
-        prev := this._hoveredHwnd
         this._hoveredHwnd := hwnd
-
-        ; Restore the previous widget's opacity (left hover)
-        if (prev != 0)
-            this._ApplyVisualState(prev)
-
-        ; Dim the new widget (entered hover)
-        if (hwnd != 0)
-            this._ApplyVisualState(hwnd)
+        this._ApplyVisualStateToAll()
     }
 
     ; ============================================================
@@ -372,7 +383,7 @@ class OverlayInteractionService
     _ApplyVisualState(hwnd)
     {
         transparent := !this._ctrlDown
-        hovered     := !this._ctrlDown && this._hoveredHwnd = hwnd
+        hovered     := !this._ctrlDown && this._IsInHoveredGroup(hwnd)
 
         ; Click-through bit (depends ONLY on Ctrl)
         op := transparent ? "+0x20" : "-0x20"
@@ -389,6 +400,51 @@ class OverlayInteractionService
     {
         for w in this._widgets
             this._ApplyVisualState(w["hwnd"])
+    }
+
+    ; True if `hwnd` should dim along with whatever is currently
+    ; hovered. The match rules (in priority order):
+    ;   1. hwnd IS the hovered one              (trivial self-match)
+    ;   2. hwnd's groupId points to the hovered (satellite → primary)
+    ;   3. hovered's groupId points to hwnd     (primary ← satellite)
+    ;   4. both carry the same non-zero groupId (peers in a group)
+    ;
+    ; Rules 2 + 3 together let either side declare the link without
+    ; needing to know the registration order: the RouteWidget passes
+    ; the anchor's Hwnd as its own groupId, while the WidgetBase
+    ; anchor passes ITS OWN Hwnd as groupId (so anchor.groupId =
+    ; anchor.hwnd = routeWidget.groupId, rule 2 triggers when
+    ; hovering the route widget, rule 3 when hovering the anchor).
+    _IsInHoveredGroup(hwnd)
+    {
+        if (this._hoveredHwnd = 0)
+            return false
+        if (hwnd = this._hoveredHwnd)
+            return true
+
+        thisGroup := this._GetGroupId(hwnd)
+        if (thisGroup != 0 && thisGroup = this._hoveredHwnd)
+            return true
+
+        hoveredGroup := this._GetGroupId(this._hoveredHwnd)
+        if (hoveredGroup != 0 && hoveredGroup = hwnd)
+            return true
+
+        if (thisGroup != 0 && thisGroup = hoveredGroup)
+            return true
+
+        return false
+    }
+
+    _GetGroupId(hwnd)
+    {
+        for w in this._widgets
+        {
+            if (w["hwnd"] != hwnd)
+                continue
+            return w.Has("groupId") ? w["groupId"] : 0
+        }
+        return 0
     }
 
     ; ============================================================

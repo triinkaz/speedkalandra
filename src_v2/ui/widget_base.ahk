@@ -188,10 +188,22 @@ class WidgetBase
         ; click-through (default) + Ctrl drag (interactive). Static
         ; singleton set by the composition root in Start(). In
         ; headless or if the service didn't come up, silent no-op.
+        ;
+        ; The 4th arg (groupId) is set to the widget's own Hwnd so
+        ; satellite surfaces — currently the RouteWidget glued below
+        ; the anchor timer — can declare a hover-group link by
+        ; passing the same value as THEIR groupId. The service's
+        ; _IsInHoveredGroup match rules make the link bidirectional:
+        ; hovering the anchor dims the route widget too, and vice
+        ; versa. A widget with no satellite remains a group of 1
+        ; (groupId = self.Hwnd that no one else points to), so the
+        ; visible behavior for existing widgets is unchanged.
         if (OverlayInteractionService.Instance != "")
             OverlayInteractionService.Instance.RegisterHwnd(
                 this._gui.Hwnd,
-                this._UpdatePositionFromGui.Bind(this)
+                this._UpdatePositionFromGui.Bind(this),
+                "",
+                this._gui.Hwnd
             )
     }
 
