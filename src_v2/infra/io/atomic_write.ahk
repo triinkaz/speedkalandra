@@ -2,7 +2,8 @@
 ; .tmp + rename pattern, to minimize corruption risk when the app
 ; crashes or the system shuts down mid-Save:
 ;
-;   1. Write the entire content to <path>.tmp
+;   1. Write the entire content to <path>.tmp (TRUNCATING any
+;      leftover .tmp from a previous crashed save)
 ;   2. FileMove <path>.tmp → <path> (replacing <path> if it exists)
 ;
 ; Atomicity caveat: this is NOT fully atomic on Windows. AHK's
@@ -25,8 +26,16 @@
 ; where a crash between the two steps lost the file permanently.
 ; AtomicWriter only touches the destination at FileMove time.
 ;
-; Orphans: a leftover .tmp from a prior crashed save is deleted
-; before every write, so FileAppend never appends to stale content.
+; Orphans: a leftover .tmp from a prior crashed save is TRUNCATED
+; on open (FileOpen with "w" mode), so the new content is the
+; only content the .tmp ever holds. The previous version used
+; `try FileDelete(tmpPath)` + `FileAppend`, where a silent
+; FileDelete failure (file locked by antivirus, sharing
+; violation, permission glitch) would leave the .tmp alive and
+; the subsequent FileAppend would concatenate the new content
+; onto the stale one — silently corrupting the next FileMove's
+; destination. FileOpen "w" cannot fail the same way: it either
+; opens with the file truncated, or returns 0 and we throw.
 ;
 ; Surface-level limits:
 ;   Windows / NTFS  — quasi-atomic; fine for single-thread desktop use.
@@ -50,31 +59,49 @@ class AtomicWriter
     ;   path     — final path (e.g. "C:\...\step_summary.csv")
     ;   content  — string. May be empty (creates an empty file).
     ;   encoding — "UTF-8" (default), "UTF-16", "CP1252", …; same
-    ;              values FileAppend accepts.
+    ;              values FileOpen accepts.
     ;
-    ; Throws OSError when FileAppend or FileMove fails (disk full,
-    ; permission denied, invalid path).
+    ; Throws OSError when FileOpen, .Write, or FileMove fails
+    ; (disk full, permission denied, invalid path, file locked).
     static WriteAll(path, content, encoding := "UTF-8")
     {
         if (Trim(String(path)) = "")
             throw ValueError("AtomicWriter.WriteAll: 'path' is required")
 
-        ; Ensure directory (FileAppend does not create it on its own)
+        ; Ensure directory (FileOpen does not create it on its own)
         SplitPath(path, , &dir)
         if (dir != "" && !DirExist(dir))
             DirCreate(dir)
 
         tmpPath := path ".tmp"
 
-        ; Defensive cleanup so FileAppend never appends to a
-        ; leftover .tmp from an earlier crashed save.
-        if FileExist(tmpPath)
+        ; Open the .tmp in write mode. "w" mode TRUNCATES any
+        ; existing content (a leftover from a previous crashed
+        ; save), so the new write is guaranteed not to be
+        ; appended onto stale bytes. FileOpen returns 0 on
+        ; failure (locked file, permission, etc.) — we throw
+        ; an OSError in that case so the caller sees a hard
+        ; failure rather than silently writing nothing.
+        f := FileOpen(tmpPath, "w", encoding)
+        if !IsObject(f)
         {
-            try FileDelete(tmpPath)
+            throw OSError("AtomicWriter.WriteAll: FileOpen('" . tmpPath
+                . "', 'w') failed (A_LastError=" . A_LastError . ")")
         }
 
-        ; Write the entire content to .tmp.
-        FileAppend(content, tmpPath, encoding)
+        ; Use the file object's Write + Close. If .Write throws
+        ; (rare; usually only disk-full mid-write), we still need
+        ; to release the handle before propagating — AHK v2 has
+        ; no `finally`, so the writeError pattern handles both
+        ; paths uniformly.
+        writeError := ""
+        try
+            f.Write(content)
+        catch as ex
+            writeError := ex
+        f.Close()
+        if (writeError != "")
+            throw writeError
 
         ; Replace the destination. MoveFileEx with
         ; MOVEFILE_REPLACE_EXISTING does delete-then-rename, leaving

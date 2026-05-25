@@ -6,9 +6,10 @@
 ;   - Creates the directory if necessary
 ;   - Writes to <path>.tmp and then FileMoves to <path>
 ;   - Overwrites an existing destination
-;   - Defensive cleanup: deletes an orphan .tmp before writing
+;   - Truncates any orphan .tmp on open (FileOpen "w" mode)
 ;   - Accepts empty content (creates an empty file)
 ;   - Default encoding UTF-8, but accepts UTF-16 and others
+;   - Throws OSError when FileOpen / .Write / FileMove fail
 
 class AtomicWriterTests extends TestCase
 {
@@ -26,6 +27,19 @@ class AtomicWriterTests extends TestCase
         "write_all_throws_value_error_on_empty_path",
         "write_all_throws_value_error_on_whitespace_path",
         "write_all_cleans_up_orphaned_tmp_before_writing",
+        ; Regression: previous implementation used FileDelete +
+        ; FileAppend. A silent FileDelete failure (file lock by
+        ; antivirus, sharing violation) would have left the .tmp
+        ; alive and FileAppend would have CONCATENATED the new
+        ; content onto the stale bytes — silently corrupting the
+        ; FileMove destination. The new FileOpen("w") path is
+        ; truncation-by-open, eliminating that class entirely.
+        ; This test exercises the case where the new content is
+        ; SMALLER than the orphan residue: the old append-mode
+        ; would have produced [residue][new], visibly longer than
+        ; just [new]. Truncate guarantees the final file is
+        ; exactly [new] (+BOM).
+        "write_all_truncates_stale_tmp_smaller_than_residue",
         "write_all_respects_utf16_encoding",
     ]
 
@@ -97,6 +111,39 @@ class AtomicWriterTests extends TestCase
         ; (without orphan-appended residue)
         Assert.Equal("fresh content", Fixtures.FileReadAll(path))
         Assert.False(FileExist(tmpPath), ".tmp was consumed by FileMove")
+    }
+
+    write_all_truncates_stale_tmp_smaller_than_residue()
+    {
+        ; The most diagnostic case for the truncate-on-open
+        ; contract: orphan residue is LONGER than the new content.
+        ; A buggy implementation that opened in append mode (or
+        ; failed to truncate for any reason) would produce a final
+        ; file containing [residue][new], which is strictly longer
+        ; than [new] alone — a byte-count assertion catches it.
+        ;
+        ; Using UTF-8-RAW for the new write so the read-back has no
+        ; BOM overhead, making the byte-count assertion exact.
+        path := Fixtures.TempPath("txt")
+        tmpPath := path ".tmp"
+        Fixtures.RegisterTempPath(tmpPath)
+
+        ; ~80 bytes of stale content in the orphan
+        staleContent := "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        FileAppend(staleContent, tmpPath, "UTF-8-RAW")
+        Assert.True(FileGetSize(tmpPath) >= 80, "pre-condition: orphan is at least 80 bytes")
+
+        ; New content is 13 bytes; with truncation the final file
+        ; is exactly 13 bytes (+ optional UTF-8 BOM = 16). Without
+        ; truncation it'd be 80+13 = 93+ bytes.
+        AtomicWriter.WriteAll(path, "fresh content", "UTF-8-RAW")
+
+        Assert.True(FileExist(path))
+        Assert.False(FileExist(tmpPath))
+        Assert.Equal("fresh content", Fixtures.FileReadAll(path),
+            "final content must be exactly the new write, no stale residue")
+        Assert.True(FileGetSize(path) < 80,
+            "final file must be smaller than the orphan was (proves truncate happened)")
     }
 
     write_all_respects_utf16_encoding()
