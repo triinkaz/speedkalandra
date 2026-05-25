@@ -47,7 +47,13 @@
 class SettingsDialog
 {
     static WINDOW_W := 880
-    static WINDOW_H := 620
+    ; Tab control reorganization (B7) made the dialog auto-fit each
+    ; tab's content; the worst case is ROUTE at ~380 px. With Tab3
+    ; h=430 and a footer row at y=490, the total window comes in
+    ; at ~540 px — well under any reasonable screen, no longer
+    ; needing the cap to fit. The cap + +Resize stay as defense in
+    ; depth (see _BuildGui).
+    static WINDOW_H := 540
 
     _bus           := ""
     _settingsRepo  := ""
@@ -210,13 +216,14 @@ class SettingsDialog
 
     _BuildGui()
     {
-        ; +Resize enabled so the user can stretch the window when
-        ; the contents exceed the screen height. The previous fixed
-        ; size traded DWM repaint cost during overlay drags for the
-        ; window-always-fits guarantee, but once the ROUTE section
-        ; (B4 Commit 3) pushed total height past ~1080px on most
-        ; displays, close/min/Save/Cancel buttons started landing
-        ; outside the viewport. Resize is the lesser cost.
+        ; +Resize kept as defense in depth alongside the Tab
+        ; reorganization. Tab3 makes each tab autonomous — the
+        ; worst case (ROUTE) sits at ~380 px of content within a
+        ; h=430 tab body, so the total window (~540 px) fits any
+        ; reasonable screen without the cap. The cap + +Resize only
+        ; kick in if a future section pushes a SINGLE tab past the
+        ; screen height; that would itself be a smell worth
+        ; addressing structurally rather than papering over.
         g := Gui("+AlwaysOnTop +Resize", "SpeedKalandra " . Version.STRING . " - Settings")
         g.BackColor := Theme.Color("bg")
         g.MarginX := 16
@@ -229,10 +236,50 @@ class SettingsDialog
         g.SetFont("s12 bold c" Theme.Color("text"), Theme.FONT_UI)
         g.Add("Text", "x16 y14 w520", "SpeedKalandra Settings")
 
-        ; ============ General ============
-        y := 50
-        this._SectionHeader(g, y, "GENERAL")
-        y += 22
+        ; ============ Tab control ============
+        ; Tab3 (NOT Tab/Tab2) is the modern AHK v2 variant — the
+        ; older Tab class had z-order and focus issues when
+        ; controls overlapped the tab header. The 5 tabs map to
+        ; the 9 original sections grouped by user intent:
+        ;
+        ;   General    : profile + log file path
+        ;   Automation : auto-start, auto-finalize, vendor shortcuts
+        ;   Behavior   : rules (autoPause, deathPenalty), layouts,
+        ;                display (PB mode, outcome banner)
+        ;   Route      : zone list editor + per-zone notes panel
+        ;                (only rendered when route deps are wired)
+        ;   Hotkeys    : capture/clear for every registered hotkey
+        ;
+        ; Decision (BACKLOG B7): tabs picked over (A) a native
+        ; vertical scrollbar via WM_VSCROLL + SetScrollInfo and
+        ; (C) a separate "Route..." dialog. Scrollbar resolves the
+        ; symptom but adds ~80-150 lines of manual scroll plumbing
+        ; and edge cases (FileSelect mid-scroll, Edit focus while
+        ; scrolled). Separate dialog only defers the problem —
+        ; when another section grows (e.g. HOTKEYS expanding for
+        ; B1 cruel/interlude commands), the parent dialog is tall
+        ; again. Tabs resolve it structurally: each tab is
+        ; independent, and a future section grows ITS tab, not
+        ; the global height.
+        ;
+        ; The Route tab is added to the label array conditionally
+        ; — mirrors the original render-skip when _HasRouteWiring()
+        ; is false. Position-by-name (tabs.UseTab("Route")) keeps
+        ; this conditional clean: no integer index drift when the
+        ; tab is absent.
+        tabLabels := ["General", "Automation", "Behavior"]
+        if this._HasRouteWiring()
+            tabLabels.Push("Route")
+        tabLabels.Push("Hotkeys")
+
+        tabs := g.Add("Tab3",
+            "x16 y46 w848 h430",
+            tabLabels)
+        this._ctrls["tabs"] := tabs
+
+        ; ------------ Tab: General ------------
+        tabs.UseTab("General")
+        y := 80
 
         ; UI label is "Build": the persisted field in AppSettings is
         ; still `profileName` (and the ctrl key stays "profileName" so
@@ -242,7 +289,7 @@ class SettingsDialog
         ; / SettingsRepository / DeathLogRepository are unaffected.
         this._Label(g, y, "Build")
         this._ctrls["profileName"] := this._AddEdit(g, 180, y, 360, this._cfg.profileName)
-        y += 26
+        y += 30
 
         ; cfg.gamePatch isn't editable in the dialog — it's preserved
         ; internally (default "Unknown") for back-compat with old
@@ -252,23 +299,22 @@ class SettingsDialog
         this._ctrls["logFile"] := this._AddEdit(g, 180, y, 280, this._cfg.logFile)
         btnBrowse := g.Add("Button", "x466 y" (y - 2) " w74 h22", "Browse...")
         btnBrowse.OnEvent("Click", (*) => this._OnBrowseLog())
-        y += 32
 
-        ; ============ AutoStart ============
+        ; ------------ Tab: Automation ------------
+        tabs.UseTab("Automation")
+        y := 80
         this._SectionHeader(g, y, "AUTO-START (starts run when regex matches in log)")
         y += 22
         this._Label(g, y, "Regex (empty = off)")
         this._ctrls["autoStartRegex"] := this._AddEdit(g, 180, y, 360, this._cfg.autoStartRegex)
-        y += 32
+        y += 36
 
-        ; ============ AutoFinalize ============
         this._SectionHeader(g, y, "AUTO-FINALIZE (finalizes run when regex matches in log)")
         y += 22
         this._Label(g, y, "Regex (empty = off)")
         this._ctrls["autoFinalizeRegex"] := this._AddEdit(g, 180, y, 360, this._cfg.autoFinalizeRegex)
-        y += 32
+        y += 36
 
-        ; ============ Vendor Regex Slots ============
         ; Edits limited to 250 chars via "Limit250" (PoE 0.x raised
         ; the in-game vendor filter cap from 50 to 250). V1/V2/V3
         ; buttons in CompactLayoutWidget copy each slot to clipboard
@@ -285,9 +331,10 @@ class SettingsDialog
             this._ctrls["vendorRegex" i] := this._AddEdit(g, 180, y, 360, val, "Limit250")
             y += 26
         }
-        y += 6
 
-        ; ============ Rules ============
+        ; ------------ Tab: Behavior ------------
+        tabs.UseTab("Behavior")
+        y := 80
         this._SectionHeader(g, y, "RULES")
         y += 22
         g.SetFont("s9 c" Theme.Color("text"), Theme.FONT_UI)
@@ -309,7 +356,6 @@ class SettingsDialog
         this._ctrls["deathPenaltySec"] := this._AddEdit(g, 180, y, 120, penaltySec, "Number")
         y += 36
 
-        ; ============ Layouts (BETA) ============
         ; Opt-in switch between the Classic widgets (default) and the
         ; experimental Plus variants. Read once at boot — a change
         ; here requires a restart, surfaced via SpeedKalandraMsgBox in
@@ -322,7 +368,6 @@ class SettingsDialog
             'Use experimental "Plus" layouts (requires restart)')
         y += 32
 
-        ; ============ Display ============
         ; Toggle between the all-time PB and the latest-5-run
         ; average for every widget that surfaces a PB-related
         ; value. Hot-reloadable via Evt.PbDisplayModeChanged on
@@ -342,27 +387,27 @@ class SettingsDialog
         this._ctrls["showOutcomeBanner"] := g.Add("Checkbox",
             "x180 y" y (this._cfg.showOutcomeBanner ? " Checked" : ""),
             "Show run-outcome banner after each run")
-        y += 32
 
-        ; ============ Route ============
-        ; The section renders only when routeRepo + routeService +
-        ; zonesCatalog are all wired (production composition root
-        ; provides them; old headless test setups don't). When
-        ; skipped, HOTKEYS follows immediately after DISPLAY with
-        ; no visible gap — the y cursor flows straight through.
+        ; ------------ Tab: Route (conditional) ------------
         if this._HasRouteWiring()
-            y := this._BuildRouteSection(g, y)
+        {
+            tabs.UseTab("Route")
+            ; _BuildRouteSection returns the new y but we discard
+            ; it — inside a tab body the y cursor doesn't flow into
+            ; anything afterwards (Hotkeys lives in its own tab).
+            this._BuildRouteSection(g, 80)
+        }
 
-        ; ============ Hotkeys ============
-        this._SectionHeader(g, y, "HOTKEYS")
-        y += 22
+        ; ------------ Tab: Hotkeys ------------
+        tabs.UseTab("Hotkeys")
+        y := 80
 
         ; Hint about the capture UX — the Edit field is ReadOnly;
         ; the user only interacts via Capture + Clear buttons.
         g.SetFont("s8 c" Theme.Color("muted"), Theme.FONT_UI)
-        g.Add("Text", "x16 y" y " w520",
+        g.Add("Text", "x32 y" y " w800",
             "Click 'Capture' to record a key combo (Esc cancels). 'Clear' to unbind.")
-        y += 18
+        y += 22
 
         ; Sort actions alphabetically
         this._hotkeyActions := []
@@ -393,9 +438,18 @@ class SettingsDialog
 
             y += 24
         }
-        y += 12
 
-        ; ============ Buttons ============
+        ; ============ Footer (outside any tab) ============
+        ; UseTab() with no argument resets so subsequent Add calls
+        ; land on the dialog body, not on whichever tab was last
+        ; active. Save/Cancel are common across every tab —
+        ; clicking Save persists ALL fields from ALL tabs, not just
+        ; the currently-visible one (snapshot/restore semantics in
+        ; _OnSave + _PersistAndPublishCfg are unchanged by the
+        ; tab refactor).
+        tabs.UseTab()
+
+        y := 490
         g.SetFont("s9 c" Theme.Color("text"), Theme.FONT_UI)
         btnSave := g.Add("Button", "x180 y" y " w120 h28", "Save")
         btnSave.OnEvent("Click", (*) => this._OnSave())
@@ -403,22 +457,16 @@ class SettingsDialog
         btnCancel.OnEvent("Click", (*) => this.Close())
 
         finalH := y + 50
-        ; Cap at screen height minus a margin for taskbar + window
-        ; decorations. Without this, finalH can exceed the display
-        ; height (the ROUTE section pushed B4 Commit 3 right up to
-        ; the boundary) and Windows places the window with its
-        ; bottom — or top, if the user later moves it — outside the
-        ; viewport, hiding either Save/Cancel or close/minimize.
-        ; +Resize on the Gui (set in _BuildGui header) lets the user
-        ; stretch back if the cap clipped useful content.
+        ; Cap kept as defense in depth — see WINDOW_H comment. With
+        ; Tab3 the worst-case tab body fits, so finalH (~540) sits
+        ; comfortably under maxH on any realistic screen; the cap
+        ; only kicks in for a degenerate display (e.g. very low
+        ; vertical resolution).
         maxH := A_ScreenHeight - 80
         if (finalH > maxH)
             finalH := maxH
         ; Center forces the window to start centered on the active
-        ; monitor instead of Windows' default top-left placement,
-        ; which on a maxed-out finalH means controls below the
-        ; centerline are at risk regardless of placement — but
-        ; centering at least guarantees the title bar is visible.
+        ; monitor instead of Windows' default top-left placement.
         g.Show("Center w" SettingsDialog.WINDOW_W " h" finalH)
     }
 
@@ -1004,16 +1052,17 @@ class SettingsDialog
 
         ; Listbox + side button column.
         items := this._BuildRouteListBoxItems()
-        ; Width 420 leaves an 80px column on the right for the
-        ; three reorder/remove buttons. Listbox height h100 shows
-        ; ~5 rows at the default font; the slider below already
-        ; lets the user control how many rows the LIVE widget
-        ; surfaces, so the editor's compact view is acceptable.
-        ; Originally h140 in the first draft of Commit 3 but that
-        ; pushed the dialog past 1080p screens — see _BuildGui
-        ; header note on the +Resize switch.
+        ; Width 420 leaves an 80 px column on the right for the
+        ; three reorder/remove buttons. Listbox height h140 shows
+        ; ~7 rows at the default font — enough lookahead to
+        ; reorder a multi-act route without scrolling for every
+        ; move. The Tab control reorganization (B7) freed enough
+        ; vertical real estate to revert from the h100 stopgap
+        ; that B4 Commit 3 used to keep the all-in-one dialog
+        ; under 1080p; now the Route tab body has its own h=430
+        ; budget and h140 fits comfortably.
         lb := g.Add("ListBox",
-            "x32 y" (y + 22) " w420 h100",
+            "x32 y" (y + 22) " w420 h140",
             items)
         ; Wire the selection-change handler so navigating between
         ; zones in the listbox stashes the current Edit content to
@@ -1031,8 +1080,9 @@ class SettingsDialog
         ; Right-side button column. Three buttons stacked with
         ; small gaps; ▲ at the top, ▼ just below, Remove at the
         ; bottom (aligned to the listbox's bottom edge so the
-        ; deletion control is visually anchored). Heights h28
-        ; (was h36) so all three fit in the shrunk h100 listbox.
+        ; deletion control is visually anchored). With listbox
+        ; h=140, the listbox spans y+22 to y+162; Remove sits at
+        ; y+134 to bottom-align (h28 fits within y+134..y+162).
         g.SetFont("s10 c" Theme.Color("text"), Theme.FONT_UI)
         btnUp := g.Add("Button", "x460 y" (y + 22) " w80 h28", "▲")
         btnUp.OnEvent("Click", (*) => this._OnRouteMoveUp())
@@ -1043,12 +1093,12 @@ class SettingsDialog
         this._ctrls["routeBtnDown"] := btnDown
 
         g.SetFont("s9 c" Theme.Color("text"), Theme.FONT_UI)
-        btnDel := g.Add("Button", "x460 y" (y + 94) " w80 h28", "Remove")
+        btnDel := g.Add("Button", "x460 y" (y + 134) " w80 h28", "Remove")
         btnDel.OnEvent("Click", (*) => this._OnRouteRemove())
         this._ctrls["routeBtnRemove"] := btnDel
 
         ; Move past the listbox row.
-        y += 22 + 100 + 8
+        y += 22 + 140 + 8
 
         ; Add-zone row: label + non-town dropdown + Add button.
         this._Label(g, y, "Add zone")
