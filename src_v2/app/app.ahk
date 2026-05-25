@@ -90,8 +90,8 @@ class SpeedKalandraApp
     ; <profile>.ini. The service holds the active Route in memory
     ; and subscribes to ZoneEntered + run lifecycle to advance
     ; _currentIdx. The widget glues itself below the active
-    ; timer widget (micro / micro_plus / steve / steve_plus)
-    ; via an anchor resolver constructed inline below.
+    ; timer widget (micro / steve) via an anchor resolver
+    ; constructed inline below.
     routeRepo    := ""
     routeService := ""
     routeWidget  := ""
@@ -440,69 +440,34 @@ class SpeedKalandraApp
 
         this._persistFn := () => this._persister.PersistSettings()
 
-        ; Compact widget: Classic vs Plus chosen by cfg.layoutVariant.
-        ; Both share WIDGET_ID and constructor signature, so Plus is
-        ; a drop-in replacement at this site. The avgService is
-        ; passed as the final positional arg so cfg.pbDisplayMode =
-        ; "avg5" can route through it without a widget rebuild.
-        if (this._cfg.layoutVariant = "plus")
-        {
-            this.compactWidget := CompactLayoutPlusWidget(
-                this.bus, compactPos, this._persistFn,
-                this.timer, this.zoneTracker, this.xpService,
-                this.zonesCatalog, this.loadingTotals, this._cfg,
-                this.personalBest, this.runAverage
-            )
-        }
-        else
-        {
-            this.compactWidget := CompactLayoutWidget(
-                this.bus, compactPos, this._persistFn,
-                this.timer, this.zoneTracker, this.xpService,
-                this.zonesCatalog, this.loadingTotals, this._cfg,
-                this.personalBest, this.runAverage
-            )
-        }
+        ; Compact widget. The avgService is passed as the final
+        ; positional arg so cfg.pbDisplayMode = "avg5" can route
+        ; through it without a widget rebuild.
+        this.compactWidget := CompactLayoutWidget(
+            this.bus, compactPos, this._persistFn,
+            this.timer, this.zoneTracker, this.xpService,
+            this.zonesCatalog, this.loadingTotals, this._cfg,
+            this.personalBest, this.runAverage
+        )
 
-        ; Micro widget: Classic vs Plus chosen by cfg.layoutVariant.
-        ; Plus re-injects zoneTracker / zonesCatalog / personalBest;
-        ; Classic doesn't need them (only timer + xp).
-        if (this._cfg.layoutVariant = "plus")
-        {
-            this.microWidget := MicroLayoutPlusWidget(
-                this.bus, microPos, this._persistFn,
-                this.timer, this.zoneTracker, this.xpService,
-                this.zonesCatalog, this.personalBest, this._cfg, this.runAverage
-            )
-        }
-        else
-        {
-            this.microWidget := MicroLayoutWidget(
-                this.bus, microPos, this._persistFn,
-                this.timer, this.xpService
-            )
-        }
+        ; Micro widget. Injects zoneTracker / zonesCatalog /
+        ; personalBest so the live-timer colour can compare against
+        ; the per-act PB.
+        this.microWidget := MicroLayoutWidget(
+            this.bus, microPos, this._persistFn,
+            this.timer, this.zoneTracker, this.xpService,
+            this.zonesCatalog, this.personalBest, this._cfg, this.runAverage
+        )
 
-        ; Steve widget: Classic vs Plus chosen by cfg.layoutVariant.
-        ; Plus re-injects loadingTotals + cfg. The flag is read once
-        ; at boot; SettingsDialog prompts the user to restart on flip.
-        if (this._cfg.layoutVariant = "plus")
-        {
-            this.steveWidget := SteveLayoutPlusWidget(
-                this.bus, stevePos, this._persistFn,
-                this.timer, this.zoneTracker, this.xpService,
-                this.zonesCatalog, this.personalBest,
-                this.loadingTotals, this._cfg, this.runAverage
-            )
-        }
-        else
-        {
-            this.steveWidget := SteveLayoutWidget(
-                this.bus, stevePos, this._persistFn,
-                this.timer, this.zoneTracker, this.xpService,
-                this.zonesCatalog, this.personalBest, this._cfg, this.runAverage
-            )
-        }
+        ; Steve widget. Injects loadingTotals (distribution footer)
+        ; + cfg (pbDisplayMode, route widget visibility) + the
+        ; avg service (cfg.pbDisplayMode = "avg5").
+        this.steveWidget := SteveLayoutWidget(
+            this.bus, stevePos, this._persistFn,
+            this.timer, this.zoneTracker, this.xpService,
+            this.zonesCatalog, this.personalBest,
+            this.loadingTotals, this._cfg, this.runAverage
+        )
 
         this.widgets := Map()
         this.widgets["compactLayout"] := this.compactWidget
@@ -572,10 +537,10 @@ class SpeedKalandraApp
         ; outcome banner — not user-positionable, doesn't participate
         ; in mode switching, its geometry is derived from an anchor
         ; rather than from cfg.overlay. The anchor resolver
-        ; closure picks the active timer widget (micro or steve,
-        ; classic or plus) based on which one is currently
-        ; mode-visible. Compact mode returns "", which the widget
-        ; treats as "hide the route surface".
+        ; closure picks the active timer widget (micro or steve)
+        ; based on which one is currently mode-visible. Compact
+        ; mode returns "", which the widget treats as "hide the
+        ; route surface".
         anchorResolver := () => this._ResolveRouteAnchor()
         this.routeWidget := RouteWidget(
             this.bus, this._cfg, this.routeService,
@@ -951,13 +916,12 @@ class SpeedKalandraApp
     ; RouteWidget to hide rather than render orphaned.
     ;
     ; Eligibility is the two large timer widgets: compact and
-    ; steve (classic + plus variants of each). The user opted
-    ; these in because they have enough screen real estate for
-    ; the route panel to sit comfortably below; the micro widget
-    ; is intentionally too small to host a route surface anchored
-    ; to it. Preference is compact > steve so the closer-to-the-
-    ; top widget wins when both are mode-visible (in practice
-    ; only one is at a time, but the order is the tie-break).
+    ; steve. They have enough screen real estate for the route
+    ; panel to sit comfortably below; the micro widget is
+    ; intentionally too small to host a route surface anchored to
+    ; it. Preference is compact > steve so the closer-to-the-top
+    ; widget wins when both are mode-visible (in practice only
+    ; one is at a time, but the order is the tie-break).
     _ResolveRouteAnchor()
     {
         if (IsObject(this.compactWidget) && this.compactWidget.IsModeVisible())

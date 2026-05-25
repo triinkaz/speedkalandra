@@ -1,5 +1,5 @@
 ; ============================================================
-; SteveLayoutPlusWidgetTests
+; SteveLayoutWidgetTests
 ; ============================================================
 ;
 ; Pure helpers + constants. Construction with mocks is heavy
@@ -7,10 +7,10 @@
 ; Win32 — both tested via the integration suite, not here.
 ;
 ; What this file pins:
-;   - WIDGET_ID and base dimensions match SteveLayoutWidget so the
-;     [Overlay] slot is shared across the Classic↔Plus toggle. A
-;     regression that diverged these would silently orphan the
-;     user's persisted position when they flipped the flag.
+;   - WIDGET_ID and base dimensions of SteveLayoutWidget so the
+;     [Overlay] slot keys stay stable. A regression that changed
+;     these would silently orphan the user's persisted position
+;     across an upgrade.
 ;   - _FormatMs and _FormatMsShort produce the exact strings the
 ;     mono-timer and PB chips render. A drift in either changes
 ;     what the user reads on the overlay.
@@ -18,13 +18,13 @@
 ;     paints — anti-regression of the under-PB/over-PB heuristic.
 
 
-class SteveLayoutPlusWidgetTests extends TestCase
+class SteveLayoutWidgetTests extends TestCase
 {
     static Tests := [
-        ; --- Constants (shared with Classic) ---
-        "constants_share_widget_id_with_classic",
-        "constants_share_fixed_size_with_classic",
-        "constants_display_name_differs_from_classic",
+        ; --- Constants ---
+        "constants_widget_id_is_steve_layout",
+        "constants_fixed_size_matches_spec",
+        "constants_display_name_is_layout_steve",
 
         ; --- _FormatMs (live timer, with centiseconds < 1h) ---
         "format_ms_zero_returns_zero_padded",
@@ -55,38 +55,26 @@ class SteveLayoutPlusWidgetTests extends TestCase
     ]
 
     ; ============================================================
-    ; Constants (shared with Classic)
+    ; Constants
     ; ============================================================
 
-    constants_share_widget_id_with_classic()
+    constants_widget_id_is_steve_layout()
     {
-        ; Anti-regression: both variants persist into [Overlay]
-        ; under the same key. A divergence here would orphan the
-        ; user's position the moment they flipped the toggle.
-        Assert.Equal(SteveLayoutWidget.WIDGET_ID,
-                     SteveLayoutPlusWidget.WIDGET_ID,
-                     "Steve Classic and Plus must share WIDGET_ID")
-        Assert.Equal("steveLayout", SteveLayoutPlusWidget.WIDGET_ID)
+        ; Anti-regression: the user's persisted position is keyed
+        ; by WIDGET_ID under [Overlay]. A change here would orphan
+        ; that position the moment the upgrade landed.
+        Assert.Equal("steveLayout", SteveLayoutWidget.WIDGET_ID)
     }
 
-    constants_share_fixed_size_with_classic()
+    constants_fixed_size_matches_spec()
     {
-        ; A divergence here would resize the widget on the toggle
-        ; and force the user to reposition.
-        Assert.Equal(SteveLayoutWidget.FIXED_W, SteveLayoutPlusWidget.FIXED_W,
-            "FIXED_W must match Classic")
-        Assert.Equal(SteveLayoutWidget.FIXED_H, SteveLayoutPlusWidget.FIXED_H,
-            "FIXED_H must match Classic")
+        Assert.Equal(380, SteveLayoutWidget.FIXED_W)
+        Assert.Equal(64, SteveLayoutWidget.FIXED_H)
     }
 
-    constants_display_name_differs_from_classic()
+    constants_display_name_is_layout_steve()
     {
-        ; Pure UI surface: the OverlayModeApplier inspects the
-        ; instance, not the DisplayName, so this just locks the
-        ; user-facing label so it doesn't get reused for a different
-        ; widget by accident.
-        Assert.NotEqual(SteveLayoutWidget.DISPLAY_NAME,
-                        SteveLayoutPlusWidget.DISPLAY_NAME)
+        Assert.Equal("Layout Steve", SteveLayoutWidget.DISPLAY_NAME)
     }
 
     ; ============================================================
@@ -95,33 +83,33 @@ class SteveLayoutPlusWidgetTests extends TestCase
 
     format_ms_zero_returns_zero_padded()
     {
-        Assert.Equal("00:00.00", SteveLayoutPlusWidget._FormatMs(0))
+        Assert.Equal("00:00.00", SteveLayoutWidget._FormatMs(0))
     }
 
     format_ms_under_minute()
     {
         ; 47.5 s = 47500 ms → "00:47.50"
-        Assert.Equal("00:47.50", SteveLayoutPlusWidget._FormatMs(47500))
+        Assert.Equal("00:47.50", SteveLayoutWidget._FormatMs(47500))
     }
 
     format_ms_under_hour_includes_centiseconds()
     {
         ; 2 min 31 s 234 ms → "02:31.23"
-        Assert.Equal("02:31.23", SteveLayoutPlusWidget._FormatMs(151234))
+        Assert.Equal("02:31.23", SteveLayoutWidget._FormatMs(151234))
     }
 
     format_ms_over_hour_drops_centiseconds()
     {
         ; 1 h 23 min 45 s → "1:23:45" (centiseconds dropped to avoid
         ; crop on the right edge of the timer slot).
-        Assert.Equal("1:23:45", SteveLayoutPlusWidget._FormatMs(5025000))
+        Assert.Equal("1:23:45", SteveLayoutWidget._FormatMs(5025000))
     }
 
     format_ms_negative_treated_as_zero()
     {
         ; Defensive: a corrupt clock or under-flow shouldn't crash
         ; the timer render. Negative is normalized to 0.
-        Assert.Equal("00:00.00", SteveLayoutPlusWidget._FormatMs(-100))
+        Assert.Equal("00:00.00", SteveLayoutWidget._FormatMs(-100))
     }
 
     format_ms_at_exactly_one_hour()
@@ -129,7 +117,7 @@ class SteveLayoutPlusWidgetTests extends TestCase
         ; Threshold case: 3600 s = 3600000 ms is the first ms that
         ; switches to the H:MM:SS format. Pinned so a `>=` vs `>` flip
         ; in _FormatMs doesn't go unnoticed.
-        Assert.Equal("1:00:00", SteveLayoutPlusWidget._FormatMs(3600000))
+        Assert.Equal("1:00:00", SteveLayoutWidget._FormatMs(3600000))
     }
 
     ; ============================================================
@@ -140,7 +128,7 @@ class SteveLayoutPlusWidgetTests extends TestCase
     {
         ; 0 is rare in practice (callers gate on pbMs > 0) but the
         ; helper still has to return a sane string.
-        Assert.Equal("0:00", SteveLayoutPlusWidget._FormatMsShort(0))
+        Assert.Equal("0:00", SteveLayoutWidget._FormatMsShort(0))
     }
 
     format_ms_short_under_hour_no_centiseconds()
@@ -148,17 +136,17 @@ class SteveLayoutPlusWidgetTests extends TestCase
         ; 2 min 15 s → "2:15"  (no leading zero on the minute digit,
         ; no centiseconds — PB chips show stable values, the cs
         ; digits would be visual noise without info gain).
-        Assert.Equal("2:15", SteveLayoutPlusWidget._FormatMsShort(135000))
+        Assert.Equal("2:15", SteveLayoutWidget._FormatMsShort(135000))
     }
 
     format_ms_short_over_hour()
     {
-        Assert.Equal("1:23:45", SteveLayoutPlusWidget._FormatMsShort(5025000))
+        Assert.Equal("1:23:45", SteveLayoutWidget._FormatMsShort(5025000))
     }
 
     format_ms_short_negative_treated_as_zero()
     {
-        Assert.Equal("0:00", SteveLayoutPlusWidget._FormatMsShort(-1))
+        Assert.Equal("0:00", SteveLayoutWidget._FormatMsShort(-1))
     }
 
     ; ============================================================
@@ -171,7 +159,7 @@ class SteveLayoutPlusWidgetTests extends TestCase
         ; timer shows in neutral text color until the user
         ; finishes a run.
         Assert.Equal(Theme.Color("text"),
-            SteveLayoutPlusWidget._ResolveTimerColor(15000, 0))
+            SteveLayoutWidget._ResolveTimerColor(15000, 0))
     }
 
     resolve_timer_color_zero_current_returns_text()
@@ -180,7 +168,7 @@ class SteveLayoutPlusWidgetTests extends TestCase
         ; the start of a run). Avoid flashing "under PB" green when
         ; the run hasn't begun.
         Assert.Equal(Theme.Color("text"),
-            SteveLayoutPlusWidget._ResolveTimerColor(0, 60000))
+            SteveLayoutWidget._ResolveTimerColor(0, 60000))
     }
 
     resolve_timer_color_under_pb_returns_good_strong()
@@ -188,7 +176,7 @@ class SteveLayoutPlusWidgetTests extends TestCase
         ; Current 45 s < PB 60 s → vivid green so the under-PB
         ; signal pops against the over-PB red.
         Assert.Equal(Theme.Color("goodStrong"),
-            SteveLayoutPlusWidget._ResolveTimerColor(45000, 60000))
+            SteveLayoutWidget._ResolveTimerColor(45000, 60000))
     }
 
     resolve_timer_color_at_pb_returns_good_strong()
@@ -196,13 +184,13 @@ class SteveLayoutPlusWidgetTests extends TestCase
         ; <= boundary: tying the PB still counts as "under" — the
         ; user is on pace.
         Assert.Equal(Theme.Color("goodStrong"),
-            SteveLayoutPlusWidget._ResolveTimerColor(60000, 60000))
+            SteveLayoutWidget._ResolveTimerColor(60000, 60000))
     }
 
     resolve_timer_color_over_pb_returns_danger()
     {
         Assert.Equal(Theme.Color("danger"),
-            SteveLayoutPlusWidget._ResolveTimerColor(75000, 60000))
+            SteveLayoutWidget._ResolveTimerColor(75000, 60000))
     }
 
     ; ============================================================
@@ -220,7 +208,7 @@ class SteveLayoutPlusWidgetTests extends TestCase
     {
         ; 6 chars x 9 x 0.6 = ~32 px estimate; well under 200 avail.
         Assert.Equal("Act 1",
-            SteveLayoutPlusWidget._TruncateToWidth("Act 1", 9, 200))
+            SteveLayoutWidget._TruncateToWidth("Act 1", 9, 200))
     }
 
     truncate_long_text_appends_ellipsis()
@@ -228,7 +216,7 @@ class SteveLayoutPlusWidgetTests extends TestCase
         ; "Act 1 · Clearfell Encampment" is the canonical case from
         ; the design discussion: 28 chars x 9 x 0.6 = ~151 px,
         ; over the ~140 px available next to the wide mono timer.
-        result := SteveLayoutPlusWidget._TruncateToWidth(
+        result := SteveLayoutWidget._TruncateToWidth(
             "Act 1 " Chr(0x00B7) " Clearfell Encampment", 9, 100)
         Assert.Equal("...", SubStr(result, -3),
             "Truncated text must end in '...': got '" result "'")
@@ -238,7 +226,7 @@ class SteveLayoutPlusWidgetTests extends TestCase
 
     truncate_empty_text_returns_empty()
     {
-        Assert.Equal("", SteveLayoutPlusWidget._TruncateToWidth("", 9, 200))
+        Assert.Equal("", SteveLayoutWidget._TruncateToWidth("", 9, 200))
     }
 
     truncate_very_narrow_avail_returns_just_ellipsis()
@@ -247,8 +235,8 @@ class SteveLayoutPlusWidgetTests extends TestCase
         ; signals truncation visually) rather than a half-rendered
         ; ellipsis or crashing.
         Assert.Equal("...",
-            SteveLayoutPlusWidget._TruncateToWidth("anything", 9, 5))
+            SteveLayoutWidget._TruncateToWidth("anything", 9, 5))
     }
 }
 
-TestRegistry.Register(SteveLayoutPlusWidgetTests)
+TestRegistry.Register(SteveLayoutWidgetTests)

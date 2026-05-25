@@ -105,22 +105,32 @@ class CompactLayoutWidgetTests extends TestCase
         ; --- _GetFixedSize ---
         "get_fixed_size_returns_380_by_96_at_scale_1",
 
-        ; --- Static: _EstimateTextW ---
-        "estimate_text_w_grows_with_string_length",
-        "estimate_text_w_grows_with_font_size",
-        "estimate_text_w_zero_for_empty_string",
-
-        ; --- Static: _SegmentLabel ---
-        "segment_label_empty_when_width_below_min_pct_w",
-        "segment_label_pct_only_when_width_between_min_pct_w_and_min_label_w",
-        "segment_label_name_and_pct_when_width_above_min_label_w",
-
-        ; --- Pure instance methods ---
-        "format_act_returns_em_dash_when_act_unknown",
-        "format_act_returns_act_n_when_known",
+        ; --- Static: _ResolveTimerColor (live timer colour vs PB) ---
         "resolve_timer_color_neutral_when_pb_absent",
         "resolve_timer_color_under_pb_is_good_strong",
         "resolve_timer_color_over_pb_is_danger",
+
+        ; --- Static: _FormatMs (live mono timer, no centiseconds) ---
+        "format_ms_zero_returns_zero_padded",
+        "format_ms_under_hour_no_centiseconds",
+        "format_ms_over_hour",
+        "format_ms_negative_treated_as_zero",
+
+        ; --- Static: _FormatMsShort (PB chips, no centiseconds) ---
+        "format_ms_short_under_hour",
+        "format_ms_short_over_hour",
+
+        ; --- Static: _SplitToTwoWords (left-column layout) ---
+        "split_to_two_words_empty_string",
+        "split_to_two_words_single_word",
+        "split_to_two_words_two_words",
+        "split_to_two_words_three_words_drops_third",
+
+        ; --- Static: _TruncateToWidth (zone-name overflow) ---
+        "truncate_short_text_returns_as_is",
+        "truncate_long_text_appends_ellipsis",
+        "truncate_empty_text_returns_empty",
+        "truncate_very_narrow_avail_returns_just_ellipsis",
 
         ; --- Bus event handlers ---
         "on_death_detected_increments_counter",
@@ -128,7 +138,6 @@ class CompactLayoutWidgetTests extends TestCase
         "on_zone_entered_mutates_current_zone_and_act",
 
         ; --- Defensive: extremely long zone names ---
-        "estimate_text_w_handles_200_char_zone_name_linearly",
         "on_zone_entered_accepts_200_char_zone_name_without_throwing",
 
         ; --- Lifecycle ---
@@ -189,123 +198,198 @@ class CompactLayoutWidgetTests extends TestCase
     }
 
     ; ============================================================
-    ; Static: _EstimateTextW
+    ; Static: _ResolveTimerColor — colour branch coverage
     ; ============================================================
-
-    estimate_text_w_grows_with_string_length()
-    {
-        ; _EstimateTextW = chars × fontSize × 0.6. Used in
-        ; _RefreshZoneText to shrink the zone-label font when the
-        ; text doesn't fit the available width. Linearity in string
-        ; length is the property the shrink loop relies on.
-        w5  := CompactLayoutWidget._EstimateTextW("AAAAA",  10)
-        w10 := CompactLayoutWidget._EstimateTextW("AAAAAAAAAA", 10)
-        Assert.True(w10 > w5,
-            "longer string yields wider estimate (" w10 " > " w5 ")")
-        ; Roughly 2× length should yield ~2× width.
-        Assert.True(w10 >= w5 * 1.5,
-            "10 chars are at least 1.5× wider than 5 chars at the same font")
-    }
-
-    estimate_text_w_grows_with_font_size()
-    {
-        wSmall := CompactLayoutWidget._EstimateTextW("AAAAA", 8)
-        wLarge := CompactLayoutWidget._EstimateTextW("AAAAA", 14)
-        Assert.True(wLarge > wSmall,
-            "larger font yields wider estimate (" wLarge " > " wSmall ")")
-    }
-
-    estimate_text_w_zero_for_empty_string()
-    {
-        ; Edge case: an empty zone (between zones) gives 0 — the
-        ; shrink loop would otherwise loop on impossible math.
-        Assert.Equal(0, CompactLayoutWidget._EstimateTextW("", 10))
-    }
-
-    ; ============================================================
-    ; Static: _SegmentLabel
-    ; ============================================================
-
-    segment_label_empty_when_width_below_min_pct_w()
-    {
-        ; Below the percent-only threshold: empty label. The bar
-        ; renders an unlabeled colored segment — readable but no
-        ; text to squeeze in.
-        result := CompactLayoutWidget._SegmentLabel("Map", 5, 10, 30, 70)
-        Assert.Equal("", result, "narrow segment shows no label")
-    }
-
-    segment_label_pct_only_when_width_between_min_pct_w_and_min_label_w()
-    {
-        ; Between thresholds: just the percentage. Tight but
-        ; informative — the user still knows what fraction of the
-        ; run this segment represents.
-        result := CompactLayoutWidget._SegmentLabel("Map", 25, 50, 30, 70)
-        Assert.Equal("25%", result, "medium segment shows only pct")
-    }
-
-    segment_label_name_and_pct_when_width_above_min_label_w()
-    {
-        ; Above the label threshold: full "Name pct%" — the
-        ; ergonomic case the layout aims for at default scale.
-        result := CompactLayoutWidget._SegmentLabel("Map", 70, 100, 30, 70)
-        Assert.Equal("Map 70%", result, "wide segment shows name + pct")
-    }
-
-    ; ============================================================
-    ; Pure instance methods
-    ; ============================================================
-
-    format_act_returns_em_dash_when_act_unknown()
-    {
-        ; With _currentAct=0 (not yet entered a zone), the display
-        ; shows "Act —". This is the cold-start state right after
-        ; constructor before any ZoneEntered fires.
-        ;
-        ; Uses Chr(0x2014) instead of a literal em-dash so the
-        ; comparison doesn't depend on the test file's encoding
-        ; matching the source file's encoding bit-for-bit.
-        emDash := Chr(0x2014)
-        Assert.Equal(0, this.widget._currentAct, "sanity: cold-start act")
-        Assert.Equal("Act " emDash, this.widget._FormatAct())
-    }
-
-    format_act_returns_act_n_when_known()
-    {
-        this.widget._currentAct := 3
-        Assert.Equal("Act 3", this.widget._FormatAct())
-    }
+    ;
+    ; The canonical Compact widget exposes _ResolveTimerColor as a
+    ; static helper (no `this`-state dependency). The widget calls
+    ; it twice per refresh: once for the ZONE block (current zone
+    ; ms vs zone PB) and once for the RUN block (run ms vs run PB
+    ; for the current act). The same helper is also pinned by the
+    ; Steve / Micro tests; keeping it tested in each widget's suite
+    ; catches a copy-paste regression in any one of them without
+    ; cross-suite coupling.
 
     resolve_timer_color_neutral_when_pb_absent()
     {
-        ; Two paths to "neutral" (Theme.Color("text")):
-        ;   - PB absent (player hasn't completed a run yet)
-        ;   - Timer at zero (run hasn't started)
-        ; Both legitimately mean "no comparison to color against".
+        ; Two paths to neutral (Theme.Color("text")):
+        ;   pbMs=0       — no PB yet (first run, or PB file fresh)
+        ;   currentMs=0  — timer hasn't started ticking
+        ; Both legitimately mean "no comparison to colour against".
         neutralColor := Theme.Color("text")
-        Assert.Equal(neutralColor, this.widget._ResolveTimerColor(60000, 0),
-            "PB=0 => neutral color")
-        Assert.Equal(neutralColor, this.widget._ResolveTimerColor(0, 60000),
-            "timer=0 => neutral color")
+        Assert.Equal(neutralColor,
+            CompactLayoutWidget._ResolveTimerColor(60000, 0),
+            "PB=0 => neutral colour")
+        Assert.Equal(neutralColor,
+            CompactLayoutWidget._ResolveTimerColor(0, 60000),
+            "timer=0 => neutral colour")
     }
 
     resolve_timer_color_under_pb_is_good_strong()
     {
         ; Under PB: vibrant green. goodStrong (not the desaturated
         ; "good") is intentional — the user needs the "under PB"
-        ; color to pop against the desaturated red for "over PB".
+        ; colour to pop against the desaturated red for "over PB".
         expected := Theme.Color("goodStrong")
-        Assert.Equal(expected, this.widget._ResolveTimerColor(50000, 60000),
+        Assert.Equal(expected,
+            CompactLayoutWidget._ResolveTimerColor(50000, 60000),
             "current < PB => goodStrong (green)")
-        Assert.Equal(expected, this.widget._ResolveTimerColor(60000, 60000),
+        Assert.Equal(expected,
+            CompactLayoutWidget._ResolveTimerColor(60000, 60000),
             "tie counts as under PB (favours the player)")
     }
 
     resolve_timer_color_over_pb_is_danger()
     {
         Assert.Equal(Theme.Color("danger"),
-            this.widget._ResolveTimerColor(70000, 60000),
+            CompactLayoutWidget._ResolveTimerColor(70000, 60000),
             "current > PB => danger (red)")
+    }
+
+    ; ============================================================
+    ; Static: _FormatMs — live mono timer, no centiseconds
+    ; ============================================================
+    ;
+    ; Compact intentionally drops centiseconds from the live timer:
+    ; the widget sits next to a static zone-name column on the
+    ; left and ticking cs digits compete visually with the steady
+    ; text. PB sub-labels are already cs-free via _FormatMsShort,
+    ; so both rows end up with the same MM:SS shape. (Compact and
+    ; Steve match; Micro keeps centiseconds — see micro tests.)
+
+    format_ms_zero_returns_zero_padded()
+    {
+        Assert.Equal("00:00", CompactLayoutWidget._FormatMs(0))
+    }
+
+    format_ms_under_hour_no_centiseconds()
+    {
+        ; 2 min 31 s 234 ms — the ms tail is dropped (NOT rounded
+        ; up). MM:SS shape so the column width is stable.
+        Assert.Equal("02:31", CompactLayoutWidget._FormatMs(151234))
+    }
+
+    format_ms_over_hour()
+    {
+        ; 1 h 23 min 45 s → "1:23:45" — switches to H:MM:SS so
+        ; the column can hold the longer string without crop.
+        Assert.Equal("1:23:45", CompactLayoutWidget._FormatMs(5025000))
+    }
+
+    format_ms_negative_treated_as_zero()
+    {
+        ; Defensive: a corrupt clock or under-flow shouldn't
+        ; crash the timer render. Negative is normalized to 0.
+        Assert.Equal("00:00", CompactLayoutWidget._FormatMs(-100))
+    }
+
+    ; ============================================================
+    ; Static: _FormatMsShort — PB chip, no centiseconds, no leading zero
+    ; ============================================================
+    ;
+    ; PB sub-labels render with this format so the chip stays
+    ; compact even at scale=0.8. "2:15" not "02:15"; "1:23:45"
+    ; matches _FormatMs at the 1 h+ boundary so the live timer
+    ; and the PB chip read the same shape under a long run.
+
+    format_ms_short_under_hour()
+    {
+        ; 2 min 15 s → "2:15" (no leading zero on minutes).
+        Assert.Equal("2:15", CompactLayoutWidget._FormatMsShort(135000))
+    }
+
+    format_ms_short_over_hour()
+    {
+        Assert.Equal("1:23:45",
+            CompactLayoutWidget._FormatMsShort(5025000))
+    }
+
+    ; ============================================================
+    ; Static: _SplitToTwoWords — left-column layout
+    ; ============================================================
+    ;
+    ; The Compact widget's left column stacks two zone-name lines,
+    ; one word each. Showing partial tails ("Strand" of "The
+    ; Twilight Strand") would clutter without communicating the
+    ; rest, so words after the second are dropped. Truncation of
+    ; a single overlong word falls back to _TruncateToWidth in
+    ; the rendering path.
+
+    split_to_two_words_empty_string()
+    {
+        result := CompactLayoutWidget._SplitToTwoWords("")
+        Assert.Equal("", result["line1"])
+        Assert.Equal("", result["line2"])
+    }
+
+    split_to_two_words_single_word()
+    {
+        ; Single word → first line; second line blank so the
+        ; second control renders empty rather than echoing line1.
+        result := CompactLayoutWidget._SplitToTwoWords("Crypt")
+        Assert.Equal("Crypt", result["line1"])
+        Assert.Equal("",      result["line2"])
+    }
+
+    split_to_two_words_two_words()
+    {
+        result := CompactLayoutWidget._SplitToTwoWords("Mud Burrow")
+        Assert.Equal("Mud",    result["line1"])
+        Assert.Equal("Burrow", result["line2"])
+    }
+
+    split_to_two_words_three_words_drops_third()
+    {
+        ; "The Twilight Strand" — third word dropped on purpose.
+        result := CompactLayoutWidget._SplitToTwoWords("The Twilight Strand")
+        Assert.Equal("The",      result["line1"])
+        Assert.Equal("Twilight", result["line2"])
+    }
+
+    ; ============================================================
+    ; Static: _TruncateToWidth — zone-name overflow guard
+    ; ============================================================
+    ;
+    ; Used in the rendering path when a zone name is a single
+    ; overlong word (so _SplitToTwoWords can't help) or when the
+    ; widget is at scale < 1.0 and the left column is narrower
+    ; than even the two-word split needs. Reserves space for
+    ; "..." up front so the visible prefix doesn't need to be
+    ; retrimmed after the ellipsis is appended.
+
+    truncate_short_text_returns_as_is()
+    {
+        ; "Crypt" at 10pt × 0.6 = ~30 px estimate; far under 100.
+        Assert.Equal("Crypt",
+            CompactLayoutWidget._TruncateToWidth("Crypt", 10, 100))
+    }
+
+    truncate_long_text_appends_ellipsis()
+    {
+        ; 29-char string at 10pt × 0.6 = ~174 px, over a 60 px
+        ; budget. Returns "<prefix>..." that ends with the
+        ; ellipsis and is strictly shorter than the input.
+        bigName := "Clearfell Encampment Mountain"
+        result := CompactLayoutWidget._TruncateToWidth(bigName, 10, 60)
+        Assert.Equal("...", SubStr(result, -3),
+            "truncated must end in '...': got '" result "'")
+        Assert.True(StrLen(result) < StrLen(bigName),
+            "truncated must be shorter than the original")
+    }
+
+    truncate_empty_text_returns_empty()
+    {
+        Assert.Equal("",
+            CompactLayoutWidget._TruncateToWidth("", 10, 100))
+    }
+
+    truncate_very_narrow_avail_returns_just_ellipsis()
+    {
+        ; availW < ellipsisW: helper returns "..." alone (still
+        ; signals truncation visually) rather than a half-
+        ; rendered ellipsis or crashing.
+        Assert.Equal("...",
+            CompactLayoutWidget._TruncateToWidth("anything", 10, 5))
     }
 
     ; ============================================================
@@ -381,29 +465,10 @@ class CompactLayoutWidgetTests extends TestCase
     ; The widget must not throw on the state-mutation path —
     ; rendering (font shrink, clipping) is delegated to the lazy
     ; _Refresh tick guarded by `if !this._gui return`, which we
-    ; can't exercise headless. The pure-helper _EstimateTextW must
-    ; remain linear at this length so the font-shrink loop in the
-    ; real render path terminates instead of looping on bad math.
-
-    estimate_text_w_handles_200_char_zone_name_linearly()
-    {
-        ; 200-char string at font size 10. The estimator is
-        ; chars × fontSize × 0.6; for 200 chars that's exactly
-        ; 1200, well below INT_MAX. The test asserts the value is
-        ; in the expected range and that there's no overflow,
-        ; truncation, or wraparound to a negative number.
-        bigName := ""
-        loop 200
-            bigName .= "A"
-        w200 := CompactLayoutWidget._EstimateTextW(bigName, 10)
-        ; Expected exact value at the documented formula:
-        ;   chars * fontSize * 0.6 = 200 * 10 * 0.6 = 1200
-        Assert.True(w200 > 0,
-            "estimator returns a positive number (got " w200 ")")
-        Assert.True(w200 >= 1000 && w200 <= 1400,
-            "estimator stays close to the documented chars*fontSize*0.6 "
-            . "formula (got " w200 ", expected ~1200)")
-    }
+    ; can't exercise headless. The static helpers exercised above
+    ; (_TruncateToWidth, _SplitToTwoWords) carry the heavy lifting
+    ; for the real render path; this section pins the headless
+    ; entry point.
 
     on_zone_entered_accepts_200_char_zone_name_without_throwing()
     {

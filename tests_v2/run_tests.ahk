@@ -220,11 +220,8 @@ SkTestOnError(err, mode) {
 #Include ..\src_v2\ui\layout_widget_base.ahk
 #Include ..\src_v2\ui\line_chart_renderer.ahk
 #Include ..\src_v2\ui\compact_layout_widget.ahk
-#Include ..\src_v2\ui\compact_layout_plus_widget.ahk
 #Include ..\src_v2\ui\micro_layout_widget.ahk
-#Include ..\src_v2\ui\micro_layout_plus_widget.ahk
 #Include ..\src_v2\ui\steve_layout_widget.ahk
-#Include ..\src_v2\ui\steve_layout_plus_widget.ahk
 #Include ..\src_v2\ui\run_outcome_banner_widget.ahk
 #Include ..\src_v2\ui\route_toggle_arrow.ahk
 #Include ..\src_v2\ui\route_widget.ahk
@@ -361,9 +358,8 @@ SpeedKalandraMsgBox(text, title := "", options := "") {
 #Include unit\ui\widget_base_tests.ahk
 #Include unit\ui\layout_widget_base_tests.ahk
 #Include unit\ui\compact_layout_widget_tests.ahk
-#Include unit\ui\compact_layout_plus_widget_tests.ahk
-#Include unit\ui\micro_layout_plus_widget_tests.ahk
-#Include unit\ui\steve_layout_plus_widget_tests.ahk
+#Include unit\ui\micro_layout_widget_tests.ahk
+#Include unit\ui\steve_layout_widget_tests.ahk
 #Include unit\ui\run_stats_plot_dialog_tests.ahk
 #Include unit\ui\death_stats_dialog_tests.ahk
 #Include unit\ui\settings_dialog_tests.ahk

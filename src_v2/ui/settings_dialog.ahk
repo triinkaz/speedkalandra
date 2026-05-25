@@ -14,7 +14,7 @@
 ;   Layouts (BETA)    LayoutVariant (classic | plus)
 ;   Display           PbDisplayMode (pb | avg5; live-reloadable), ShowOutcomeBanner (live-reloadable)
 ;   Route             Per-profile zone list (listbox + ▲▼ reorder + Remove +
-;                     non-town dropdown + Add + Visible rows slider +
+;                     non-town dropdown with click-to-add + Visible rows slider +
 ;                     Import/Export). Rendered only when routeRepo,
 ;                     routeService and zonesCatalog are all wired; the
 ;                     dialog accepts those three as optional ctor args so
@@ -1100,21 +1100,33 @@ class SettingsDialog
         ; Move past the listbox row.
         y += 22 + 140 + 8
 
-        ; Add-zone row: label + non-town dropdown + Add button.
+        ; Add-zone row: label + non-town dropdown with
+        ; click-to-add (B11). Picking a zone from the dropdown
+        ; adds it to the route IMMEDIATELY — no separate Add
+        ; button. TUGs feedback: "95% of the time you want to
+        ; add what you clicked anyway". Dedupe in _OnRouteAdd
+        ; surfaces a specific MsgBox on the rare misclick that
+        ; lands on a zone already in the route, and Remove is
+        ; one click, so the cost of a 5% misclick is low.
+        ;
+        ; The dropdown spans the full inner width (was 280 px
+        ; with a 74 px Add button to its right; now 360 px
+        ; matches the listbox's available width). The Change
+        ; OnEvent is wired AFTER the initial dd.Choose(1) so the
+        ; pre-selection of row 1 at build time can't accidentally
+        ; fire the add handler against a freshly-built dialog —
+        ; AHK v2 doesn't fire Change for programmatic Choose() in
+        ; practice, but ordering this way is belt-and-suspenders.
         this._Label(g, y, "Add zone")
         nonTowns := this._BuildNonTownZoneNames()
         g.SetFont(Theme.InputFont(), Theme.FONT_UI)
         dd := g.Add("DropDownList",
-            "x180 y" y " w280 " Theme.InputBg(),
+            "x180 y" y " w360 " Theme.InputBg(),
             nonTowns)
         if (nonTowns.Length > 0)
             try dd.Choose(1)
+        dd.OnEvent("Change", (*) => this._OnRouteAddFromDropdown())
         this._ctrls["routeAddDropdown"] := dd
-
-        g.SetFont("s9 c" Theme.Color("text"), Theme.FONT_UI)
-        btnAdd := g.Add("Button", "x466 y" (y - 1) " w74 h24", "+ Add")
-        btnAdd.OnEvent("Click", (*) => this._OnRouteAdd())
-        this._ctrls["routeBtnAdd"] := btnAdd
 
         y += 30
 
@@ -1458,6 +1470,25 @@ class SettingsDialog
         ; (header restates the new zone name; Edit is empty since
         ; freshly-added zones have no note).
         this._RefreshNotePanelForSelection()
+    }
+
+    ; Click-to-add wrapper (B11). Reads the current selection
+    ; from the "Add zone" dropdown and delegates to _OnRouteAdd.
+    ; Wired on the dropdown's Change event so picking a zone
+    ; adds it immediately, with no separate Add button. Tests
+    ; still drive _OnRouteAdd directly via its zoneOverride arg
+    ; — this wrapper exists only to source the zone name from
+    ; the live GUI control when present. No-op when the dropdown
+    ; wasn't built (headless / non-route configurations).
+    _OnRouteAddFromDropdown()
+    {
+        if !this._ctrls.Has("routeAddDropdown")
+            return
+        zoneName := ""
+        try zoneName := Trim(String(this._ctrls["routeAddDropdown"].Text))
+        if (zoneName = "")
+            return
+        this._OnRouteAdd(zoneName)
     }
 
     ; Reads the route ListBox selection; returns 0 when there's no
