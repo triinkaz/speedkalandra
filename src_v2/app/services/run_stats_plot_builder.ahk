@@ -244,11 +244,11 @@ class RunStatsPlotBuilder
 
     ; Walks loadingEvents and emits one "loading" detail per event.
     ; Each event's `note` is derived from the destination zone's act
-    ; via the catalog ("Act N"), so the Max Act filter can drop
-    ; loading rows that cross into truncated acts. Loadings whose
-    ; toZone is unknown to the catalog get an empty note and always
-    ; pass the filter — better to over-include than to silently
-    ; lose data on an uncatalogued zone.
+    ; via the catalog ("Act N"), so the act filter can drop
+    ; loading rows that cross into other acts. Loadings whose
+    ; toZone is unknown to the catalog get an empty note and are
+    ; dropped under any active filter (exact-match semantics:
+    ; unattributable entries are noise, not missing data).
     _AddLoadingDetails(data, snapshot)
     {
         if !snapshot.Has("loadingEvents") || !IsObject(snapshot["loadingEvents"])
@@ -273,7 +273,7 @@ class RunStatsPlotBuilder
             ; Derive note from the destination zone's act when the
             ; catalog knows it. The destination is the act the
             ; player is ABOUT TO play in, which is the right
-            ; attribution for the Max Act filter (a loading into
+            ; attribution for the act filter (a loading into
             ; Act 2 belongs to Act 2's budget, not Act 1's).
             note := ""
             if (toZ != "" && IsObject(this._zonesCatalog))
@@ -361,30 +361,47 @@ class RunStatsPlotBuilder
     static _FormatMs(ms) => Duration.FormatMs(ms)
 
     ; ============================================================
-    ; FilterByMaxAct(data, maxAct)
+    ; FilterByAct(data, actFilter)
     ; ============================================================
     ;
     ; Returns a NEW data Map filtered to include only details whose
-    ; `note` references an act <= maxAct, with `totals` and `totalMs`
-    ; recomputed over the retained details. The input Map is NOT
-    ; mutated — callers like RunStatsPlotDialog rebuild the view by
-    ; reapplying the filter to the current source data on every
-    ; dropdown change.
+    ; `note` references the EXACT act selected by the user, with
+    ; `totals` and `totalMs` recomputed over the retained details.
+    ; The input Map is NOT mutated — callers like RunStatsPlotDialog
+    ; rebuild the view by reapplying the filter to the current
+    ; source data on every dropdown change.
     ;
     ; Filter semantics:
-    ;   maxAct = 0  -> no-op, returns a shallow copy of `data`. Used
-    ;                  for both "All" (idx 1) and the "Interlude"
-    ;                  placeholder (idx 6 maps to a sentinel >= 999
-    ;                  which never matches a real act number).
-    ;   maxAct >= 1 -> keep details with parsed act in [1, maxAct],
-    ;                  AND details whose category is "morte" (deaths
-    ;                  carry no timing/act in the current snapshot
-    ;                  schema — see P2=a in BACKLOG B2; rather than
-    ;                  silently dropping them, we surface the full
-    ;                  death count in the KPIs even under a strict
-    ;                  filter), AND details whose `note` doesn't
-    ;                  parse to any act (legacy data, uncatalogued
-    ;                  zones) — same over-include principle.
+    ;   actFilter = 0    -> no-op, returns a shallow copy of `data`.
+    ;                       Used for "All" (idx 1).
+    ;   actFilter >= 999 -> no-op (Interlude placeholder). BACKLOG
+    ;                       B1 wires cruel/interlude tracking through
+    ;                       the pipeline; until then, no real detail
+    ;                       ever has act >= 999, so an exact-match
+    ;                       under that sentinel would always return
+    ;                       empty — pin the placeholder semantic
+    ;                       explicitly so the dialog's "Interlude"
+    ;                       option stays a usable no-op.
+    ;   actFilter >= 1   -> keep details with parsed act EXACTLY
+    ;                       equal to actFilter (an Act 2 filter
+    ;                       shows only Act 2 details, not Act 1+2 —
+    ;                       the old "cut-above" semantics gave the
+    ;                       cumulative view that misled users into
+    ;                       thinking the chart was hiding their
+    ;                       maps). Deaths (category=morte) bypass
+    ;                       the filter because they carry no
+    ;                       timing/act in the current snapshot
+    ;                       schema (BACKLOG B2 traces the path that
+    ;                       would add per-zone deaths); the full
+    ;                       death count surfaces in the KPIs even
+    ;                       when a specific act is selected.
+    ;                       Details whose `note` doesn't parse to
+    ;                       any act (legacy data, uncatalogued
+    ;                       zones, loadings into uncatalogued
+    ;                       destinations) are DROPPED under an
+    ;                       active filter — under exact-match
+    ;                       semantics, an unattributable entry adds
+    ;                       noise rather than missing data.
     ;
     ; The act is extracted from `note` via the same regex used by
     ; `_DeriveMaxAct` and `_SegsByAct`, accepting both "Act N"
@@ -392,11 +409,15 @@ class RunStatsPlotBuilder
     ;
     ; `maxActReached` carries through unchanged — it describes the
     ; underlying run, not the filtered view.
-    static FilterByMaxAct(data, maxAct)
+    static FilterByAct(data, actFilter)
     {
         if !IsObject(data)
             return data
-        if !IsNumber(maxAct) || maxAct <= 0
+        if !IsNumber(actFilter) || actFilter <= 0
+            return RunStatsPlotBuilder._ShallowCloneData(data)
+        ; Interlude placeholder — see header. Treated as no-op
+        ; until BACKLOG B1 lands cruel/interlude tracking.
+        if (actFilter >= 999)
             return RunStatsPlotBuilder._ShallowCloneData(data)
 
         srcDetails := data.Has("details") && IsObject(data["details"])
@@ -413,7 +434,7 @@ class RunStatsPlotBuilder
         {
             if !IsObject(d)
                 continue
-            if !RunStatsPlotBuilder._DetailPassesMaxAct(d, maxAct)
+            if !RunStatsPlotBuilder._DetailPassesAct(d, actFilter)
                 continue
             filteredDetails.Push(d)
             cat := d.Has("category") ? d["category"] : ""
@@ -435,8 +456,8 @@ class RunStatsPlotBuilder
     }
 
     ; Returns true if the detail should be retained under the
-    ; maxAct filter. See FilterByMaxAct header for the policy.
-    static _DetailPassesMaxAct(detail, maxAct)
+    ; act filter. See FilterByAct header for the policy.
+    static _DetailPassesAct(detail, actFilter)
     {
         ; Deaths bypass the filter (no timing info).
         cat := detail.Has("category") ? detail["category"] : ""
@@ -444,15 +465,18 @@ class RunStatsPlotBuilder
             return true
 
         note := detail.Has("note") ? detail["note"] : ""
-        ; No parsed act -> over-include (legacy data, uncatalogued
-        ; zone, loading into a zone the catalog doesn't know).
+        ; No parsed act -> drop under an active filter (exact-match
+        ; semantics: unattributable entries are noise, not missing
+        ; data). The unfiltered no-op path in FilterByAct already
+        ; short-circuits actFilter=0 before reaching here, so this
+        ; branch is only hit when the user picked a specific act.
         if !RegExMatch(note, "(?:Ato|Act)\s+(\d+)", &m)
-            return true
+            return false
 
         act := Integer(m[1] + 0)
         if (act <= 0)
-            return true
-        return act <= maxAct
+            return false
+        return act = actFilter
     }
 
     ; Returns a shallow clone of the data Map so the caller can

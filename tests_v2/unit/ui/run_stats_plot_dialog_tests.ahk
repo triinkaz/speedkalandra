@@ -113,7 +113,7 @@ class RunStatsPlotDialogTests extends TestCase
         "build_line_chart_series_marks_absent_label_as_not_present",
 
         ; --- Filters ---
-        "collect_runs_for_chart_keeps_all_runs_under_max_act_filter",
+        "collect_runs_for_chart_keeps_all_runs_under_act_filter",
         "collect_runs_for_chart_filters_by_profile",
         "get_available_profiles_dedups_and_sorts_alphabetically",
 
@@ -421,31 +421,36 @@ class RunStatsPlotDialogTests extends TestCase
     ; Filters
     ; ============================================================
 
-    collect_runs_for_chart_keeps_all_runs_under_max_act_filter()
+    collect_runs_for_chart_keeps_all_runs_under_act_filter()
     {
-        ; The Max Act filter cuts data above the chosen act WITHIN
-        ; each run; it never drops a historical run from the chart
-        ; based on what it reached. A run that only completed Act 1
-        ; still appears under a "Act 2" filter — it just contributes
-        ; only its Act 1 data to each series. This is a deliberate
-        ; departure from the previous Min Act filter, which dropped
-        ; runs by `maxActReached < N`; the new filter operates on
-        ; `details` instead and is documented in RunStatsPlotBuilder
-        ; .FilterByMaxAct. The detail-level cut itself is exercised
-        ; in run_stats_plot_builder_tests — here we only pin the
-        ; dialog-level invariant: all runs survive collection.
+        ; The act filter slices `details` WITHIN each run (exact
+        ; match on parsed act); it never drops a historical run
+        ; from the chart based on what it reached. A run that
+        ; only completed Act 1 still appears under an "Act 2"
+        ; filter — it just contributes no data to the visible
+        ; series, so the line breaks at its index. This is a
+        ; deliberate departure from the previous Min Act filter,
+        ; which dropped runs by `maxActReached < N`; the new
+        ; filter operates on `details` and is documented in
+        ; RunStatsPlotBuilder.FilterByAct. The detail-level cut
+        ; itself is exercised in run_stats_plot_builder_tests —
+        ; here we only pin the dialog-level invariant: all runs
+        ; survive collection regardless of which act they reached.
         this.runHistory.Save(this._MakeBuildResult("P", 200000, 1))   ; act 1
         this.runHistory.Save(this._MakeBuildResult("P", 400000, 3))   ; act 3
         currentData := this._MakeBuildResult("P", 500000, 2)
 
-        this.dialog._maxActFilter := 2
+        this.dialog._actFilter := 2
         this.dialog._profileFilter := ""    ; ensure profile filter doesn't interfere
 
         runs := this.dialog._CollectRunsForChart(currentData)
-        ; All 3 runs survive under the new semantics: the 2 saved
-        ; runs (act 1 and act 3) plus the current run (act 2).
+        ; All 3 runs survive: the 2 saved runs (act 1 and act 3)
+        ; plus the current run (act 2). The act-1 and act-3 saved
+        ; runs will simply contribute no visible series under the
+        ; actFilter=2 view — but they're still present in the
+        ; chart's x-axis.
         Assert.Equal(3, runs.Length,
-            "Max Act filter does NOT drop runs by maxActReached; "
+            "act filter does NOT drop runs by maxActReached; "
             . "all historical runs appear")
     }
 
@@ -459,7 +464,7 @@ class RunStatsPlotDialogTests extends TestCase
         currentData := this._MakeBuildResult("Alice", 500000, 3)
 
         this.dialog._profileFilter := "Alice"
-        this.dialog._maxActFilter  := 0
+        this.dialog._actFilter     := 0
 
         runs := this.dialog._CollectRunsForChart(currentData)
         ; Expect: Alice saved + current (also Alice). Bob dropped.

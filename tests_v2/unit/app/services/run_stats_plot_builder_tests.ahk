@@ -131,21 +131,21 @@ class RunStatsPlotBuilderTests extends TestCase
         "build_aggregates_100_plus_zone_entries_without_overflow",
         "build_aggregates_100_plus_loading_events_without_overflow",
 
-        ; --- FilterByMaxAct (static) ---
-        "filter_by_max_act_zero_is_no_op",
-        "filter_by_max_act_negative_is_no_op",
-        "filter_by_max_act_drops_details_above_max",
-        "filter_by_max_act_keeps_details_at_or_below_max",
-        "filter_by_max_act_keeps_deaths_regardless_of_act",
-        "filter_by_max_act_keeps_details_without_parsed_act",
-        "filter_by_max_act_keeps_loading_with_act_at_or_below_max",
-        "filter_by_max_act_drops_loading_with_act_above_max",
-        "filter_by_max_act_recomputes_totals",
-        "filter_by_max_act_recomputes_total_ms",
-        "filter_by_max_act_preserves_max_act_reached",
-        "filter_by_max_act_preserves_metadata_fields",
-        "filter_by_max_act_does_not_mutate_input",
-        "filter_by_max_act_interlude_sentinel_is_no_op_today"
+        ; --- FilterByAct (static) ---
+        "filter_by_act_zero_is_no_op",
+        "filter_by_act_negative_is_no_op",
+        "filter_by_act_keeps_only_exact_match",
+        "filter_by_act_drops_lower_acts_under_specific_filter",
+        "filter_by_act_keeps_deaths_regardless_of_act",
+        "filter_by_act_drops_details_without_parsed_act",
+        "filter_by_act_keeps_loading_with_matching_act",
+        "filter_by_act_drops_loading_with_non_matching_act",
+        "filter_by_act_recomputes_totals",
+        "filter_by_act_recomputes_total_ms",
+        "filter_by_act_preserves_max_act_reached",
+        "filter_by_act_preserves_metadata_fields",
+        "filter_by_act_does_not_mutate_input",
+        "filter_by_act_interlude_sentinel_is_no_op_today"
     ]
 
     ; ============================================================
@@ -472,10 +472,9 @@ class RunStatsPlotBuilderTests extends TestCase
 
     loading_event_note_includes_act_from_to_zone()
     {
-        ; Loadings get `note: "Act N"` derived from the destination
-        ; zone's act via the catalog — used by FilterByMaxAct to
-        ; drop loadings that cross into a truncated act. "Vastiri
-        ; Outskirts" is seeded as act=2 in Setup.
+        ; Loadings into act-1 zones survive an actFilter=1 cut
+        ; because their note is "Act 1" (derived from toZone).
+        ; Loading note empty when toZone is unknown.
         data := this.builder.Build(Map("loadingEvents", [
             Map("durationMs", 3000, "fromZone", "Mud Burrow", "toZone", "Vastiri Outskirts")
         ]))
@@ -485,8 +484,9 @@ class RunStatsPlotBuilderTests extends TestCase
     loading_event_note_empty_when_to_zone_unknown()
     {
         ; Catalog doesn't recognize "Mystery Place" → note stays
-        ; empty. The filter then over-includes the loading (better
-        ; than silently dropping uncatalogued data).
+        ; empty. Under exact-match filtering an empty-note loading
+        ; is dropped (no act attribution → can't match any
+        ; specific act).
         data := this.builder.Build(Map("loadingEvents", [
             Map("durationMs", 2000, "fromZone", "Mud Burrow", "toZone", "Mystery Place")
         ]))
@@ -708,75 +708,91 @@ class RunStatsPlotBuilderTests extends TestCase
     }
 
     ; ============================================================
-    ; FilterByMaxAct (static)
+    ; FilterByAct (static)
     ; ============================================================
     ;
     ; The filter is applied by RunStatsPlotDialog on every dropdown
     ; change to the cached unfiltered build result, so it has to be
-    ; idempotent, non-mutating, and cheap. These tests pin the
-    ; semantics documented in the FilterByMaxAct header in
-    ; run_stats_plot_builder.ahk.
+    ; idempotent, non-mutating, and cheap. Semantics is exact-match:
+    ; an Act 2 filter shows ONLY Act 2 details (not Act 1+2). See
+    ; the FilterByAct header in run_stats_plot_builder.ahk for the
+    ; full policy on deaths, unparseable notes, and the Interlude
+    ; placeholder.
 
-    filter_by_max_act_zero_is_no_op()
+    filter_by_act_zero_is_no_op()
     {
-        ; maxAct = 0 means "All". Returns a shallow copy of data
-        ; with the same details, totals, totalMs — nothing dropped.
+        ; actFilter = 0 means "All". Returns a shallow copy of
+        ; data with the same details, totals, totalMs — nothing
+        ; dropped.
         data := this.builder.Build(Map("zoneTotals", Map(
             "Mud Burrow",        60000,   ; act 1
             "Vastiri Outskirts", 40000    ; act 2
         )))
-        filtered := RunStatsPlotBuilder.FilterByMaxAct(data, 0)
+        filtered := RunStatsPlotBuilder.FilterByAct(data, 0)
         Assert.Equal(data["details"].Length, filtered["details"].Length)
         Assert.Equal(data["totalMs"],        filtered["totalMs"])
         Assert.Equal(data["totals"]["mapa"], filtered["totals"]["mapa"])
     }
 
-    filter_by_max_act_negative_is_no_op()
+    filter_by_act_negative_is_no_op()
     {
-        ; Defensive: negative or non-numeric maxAct lands on the
-        ; same no-op path as 0 (rather than throw, which would
+        ; Defensive: negative or non-numeric actFilter lands on
+        ; the same no-op path as 0 (rather than throw, which would
         ; crash the dialog mid-render).
         data := this.builder.Build(Map("zoneTotals", Map("Mud Burrow", 60000)))
-        filtered := RunStatsPlotBuilder.FilterByMaxAct(data, -1)
+        filtered := RunStatsPlotBuilder.FilterByAct(data, -1)
         Assert.Equal(1, filtered["details"].Length)
         Assert.Equal(60000, filtered["totalMs"])
     }
 
-    filter_by_max_act_drops_details_above_max()
+    filter_by_act_keeps_only_exact_match()
     {
-        ; maxAct = 1: act-2 detail must be dropped, act-1 retained.
+        ; Exact match: actFilter = 1 keeps only the act-1 detail,
+        ; not act-2. The semantics flipped from "<= maxAct" to
+        ; "== actFilter" — see commit history and the FilterByAct
+        ; header for the rationale (user wanted "see only the
+        ; selected act", not "include up to N").
         data := this.builder.Build(Map("zoneTotals", Map(
             "Mud Burrow",        60000,   ; act 1
             "Vastiri Outskirts", 40000    ; act 2
         )))
-        filtered := RunStatsPlotBuilder.FilterByMaxAct(data, 1)
+        filtered := RunStatsPlotBuilder.FilterByAct(data, 1)
         Assert.Equal(1, filtered["details"].Length,
-            "only the act-1 zone survives a maxAct=1 cut")
+            "only the act-1 zone survives an actFilter=1 exact match")
         Assert.Equal("Mud Burrow", filtered["details"][1]["label"])
     }
 
-    filter_by_max_act_keeps_details_at_or_below_max()
+    filter_by_act_drops_lower_acts_under_specific_filter()
     {
-        ; Boundary: a detail with act == maxAct must be RETAINED
-        ; (filter is <=, not <). The Sandswept Marsh entry (act 3)
-        ; sits exactly at the boundary.
+        ; New invariant under exact-match: an act-1 detail is
+        ; dropped under an actFilter=2 cut. Under the old cut-above
+        ; semantics it would have survived (act 1 <= maxAct 2),
+        ; which produced the cumulative view that misled users
+        ; into thinking the chart was hiding their maps. This test
+        ; explicitly pins the change so a future refactor can't
+        ; silently regress to cumulative behavior.
         data := this.builder.Build(Map("zoneTotals", Map(
-            "Mud Burrow",        10000,   ; act 1
-            "Vastiri Outskirts", 20000,   ; act 2
-            "Sandswept Marsh",   30000    ; act 3 (at the boundary)
+            "Mud Burrow",        10000,   ; act 1 (must be dropped)
+            "Vastiri Outskirts", 20000,   ; act 2 (must survive)
+            "Sandswept Marsh",   30000    ; act 3 (must be dropped)
         )))
-        filtered := RunStatsPlotBuilder.FilterByMaxAct(data, 3)
-        Assert.Equal(3, filtered["details"].Length,
-            "act 1, 2, AND 3 survive a maxAct=3 cut")
+        filtered := RunStatsPlotBuilder.FilterByAct(data, 2)
+        Assert.Equal(1, filtered["details"].Length,
+            "only the act-2 zone survives — lower AND higher acts both dropped")
+        Assert.Equal("Vastiri Outskirts", filtered["details"][1]["label"])
+        Assert.Equal(20000, filtered["totals"]["mapa"])
     }
 
-    filter_by_max_act_keeps_deaths_regardless_of_act()
+    filter_by_act_keeps_deaths_regardless_of_act()
     {
         ; Deaths (category=morte) carry no act in the current
         ; snapshot schema (BACKLOG B2 traces the path that would
         ; add per-zone deaths). They must pass the filter unchanged
-        ; — dropping them silently under a strict maxAct would
-        ; under-report the run's death cost.
+        ; — dropping them silently under a specific actFilter would
+        ; under-report the run's death cost in the KPIs. The user
+        ; sees "this is how the act went, with N deaths" rather
+        ; than "this act had 0 deaths (because we can't attribute
+        ; them)".
         cfg := AppSettings.Defaults()
         cfg.deathPenaltyEnabled := true
         cfg.deathPenaltyMs := 60000
@@ -785,8 +801,9 @@ class RunStatsPlotBuilderTests extends TestCase
             "zoneTotals", Map("Vastiri Outskirts", 10000),    ; act 2
             "deathCount", 2
         ))
-        filtered := RunStatsPlotBuilder.FilterByMaxAct(data, 1)
-        ; act-2 zone dropped, but the morte detail survives.
+        filtered := RunStatsPlotBuilder.FilterByAct(data, 1)
+        ; act-2 zone dropped under actFilter=1, but the morte
+        ; detail survives.
         deathDetailFound := false
         for _, d in filtered["details"]
         {
@@ -797,61 +814,66 @@ class RunStatsPlotBuilderTests extends TestCase
             }
         }
         Assert.True(deathDetailFound,
-            "morte details bypass the maxAct filter")
+            "morte details bypass the act filter")
         Assert.Equal(120000, filtered["totals"]["morte"],
             "morte total survives intact: 2 deaths * 60s")
     }
 
-    filter_by_max_act_keeps_details_without_parsed_act()
+    filter_by_act_drops_details_without_parsed_act()
     {
-        ; Unknown zones produce details with empty note. The filter
-        ; over-includes these rather than dropping silently — same
-        ; principle as deaths. Legacy runs and uncatalogued zones
-        ; keep contributing to the totals under any maxAct.
+        ; Inverted from the old cut-above semantics: an
+        ; uncatalogued zone with empty note used to be over-
+        ; included (kept regardless of maxAct). Under exact-match,
+        ; an unattributable entry is noise rather than missing
+        ; data — dropped under any active filter. The unfiltered
+        ; (actFilter=0) and Interlude-sentinel (actFilter>=999)
+        ; paths short-circuit at the top of FilterByAct, so
+        ; "Mystery Place" still survives both of those.
         data := this.builder.Build(Map("zoneTotals", Map(
             "Vastiri Outskirts", 20000,    ; act 2 -> note "Act 2"
             "Mystery Place",     30000     ; not in catalog -> note ""
         )))
-        filtered := RunStatsPlotBuilder.FilterByMaxAct(data, 1)
-        ; Vastiri Outskirts dropped (act 2 > maxAct 1).
-        ; Mystery Place retained (no parsed act).
+        filtered := RunStatsPlotBuilder.FilterByAct(data, 2)
+        ; Vastiri Outskirts kept (act 2 == actFilter 2).
+        ; Mystery Place DROPPED (no parsed act → noise).
         Assert.Equal(1, filtered["details"].Length)
-        Assert.Equal("Mystery Place", filtered["details"][1]["label"])
+        Assert.Equal("Vastiri Outskirts", filtered["details"][1]["label"])
     }
 
-    filter_by_max_act_keeps_loading_with_act_at_or_below_max()
+    filter_by_act_keeps_loading_with_matching_act()
     {
-        ; Loadings into act-1 zones survive a maxAct=1 cut because
-        ; their note is "Act 1" (derived from toZone).
+        ; Loadings into act-1 zones survive an actFilter=1 cut
+        ; because their note is "Act 1" (derived from toZone).
         data := this.builder.Build(Map("loadingEvents", [
             Map("durationMs", 3000, "fromZone", "Clearfell Encampment", "toZone", "Mud Burrow")
         ]))
-        filtered := RunStatsPlotBuilder.FilterByMaxAct(data, 1)
+        filtered := RunStatsPlotBuilder.FilterByAct(data, 1)
         Assert.Equal(1, filtered["details"].Length)
         Assert.Equal(3000, filtered["totals"]["loading"])
     }
 
-    filter_by_max_act_drops_loading_with_act_above_max()
+    filter_by_act_drops_loading_with_non_matching_act()
     {
-        ; Loadings into act-2 zones are dropped by maxAct=1 because
-        ; their note ("Act 2") parses to an act > maxAct. This is the
-        ; whole point of attributing loadings to toZone in
-        ; _AddLoadingDetails — without it, every loading would be
-        ; over-included.
+        ; Loadings into act-2 zones are dropped by actFilter=1
+        ; because their note ("Act 2") doesn't match the filter
+        ; exactly. This is the whole point of attributing loadings
+        ; to toZone in _AddLoadingDetails — without it, every
+        ; loading would either be over- or under-included.
         data := this.builder.Build(Map("loadingEvents", [
             Map("durationMs", 3000, "fromZone", "Mud Burrow", "toZone", "Vastiri Outskirts")
         ]))
-        filtered := RunStatsPlotBuilder.FilterByMaxAct(data, 1)
+        filtered := RunStatsPlotBuilder.FilterByAct(data, 1)
         Assert.Equal(0, filtered["details"].Length,
-            "loading into act 2 is dropped under maxAct=1")
+            "loading into act 2 is dropped under actFilter=1")
         Assert.Equal(0, filtered["totals"]["loading"])
     }
 
-    filter_by_max_act_recomputes_totals()
+    filter_by_act_recomputes_totals()
     {
-        ; Totals must reflect the FILTERED details, not the original.
-        ; Without recomputation, the KPIs would still show pre-filter
-        ; values — defeating the whole purpose of the filter.
+        ; Totals must reflect the FILTERED details, not the
+        ; original. Without recomputation, the KPIs would still
+        ; show pre-filter values — defeating the whole purpose of
+        ; the filter.
         data := this.builder.Build(Map("zoneTotals", Map(
             "Mud Burrow",        60000,   ; act 1
             "Vastiri Outskirts", 40000    ; act 2
@@ -859,12 +881,12 @@ class RunStatsPlotBuilderTests extends TestCase
         Assert.Equal(100000, data["totals"]["mapa"],
             "sanity: unfiltered total is 60k + 40k")
 
-        filtered := RunStatsPlotBuilder.FilterByMaxAct(data, 1)
+        filtered := RunStatsPlotBuilder.FilterByAct(data, 1)
         Assert.Equal(60000, filtered["totals"]["mapa"],
             "filtered total reflects only act-1 contribution")
     }
 
-    filter_by_max_act_recomputes_total_ms()
+    filter_by_act_recomputes_total_ms()
     {
         ; totalMs is recomputed as the sum of all category totals
         ; under the filter. Tests the same invariant as the totals
@@ -883,34 +905,35 @@ class RunStatsPlotBuilderTests extends TestCase
         ; Unfiltered: 60k + 40k + 1k + 2k = 103000
         Assert.Equal(103000, data["totalMs"])
 
-        filtered := RunStatsPlotBuilder.FilterByMaxAct(data, 1)
+        filtered := RunStatsPlotBuilder.FilterByAct(data, 1)
         ; Filtered: 60k (act 1 zone) + 1k (act 1 loading) = 61000
         Assert.Equal(61000, filtered["totalMs"])
     }
 
-    filter_by_max_act_preserves_max_act_reached()
+    filter_by_act_preserves_max_act_reached()
     {
         ; maxActReached describes the underlying run — the highest
         ; act the player visited. It must NOT shift with the view
         ; filter; a player who reached act 3 in a run still has
-        ; maxActReached=3 even when looking at the run under a
-        ; maxAct=1 filter.
+        ; maxActReached=3 even when looking at the run under an
+        ; actFilter=1 view.
         data := this.builder.Build(Map("zoneTotals", Map(
             "Mud Burrow",        60000,   ; act 1
             "Sandswept Marsh",   30000    ; act 3
         )))
         Assert.Equal(3, data["maxActReached"], "sanity")
 
-        filtered := RunStatsPlotBuilder.FilterByMaxAct(data, 1)
+        filtered := RunStatsPlotBuilder.FilterByAct(data, 1)
         Assert.Equal(3, filtered["maxActReached"],
             "maxActReached survives the filter — descriptive, not gated")
     }
 
-    filter_by_max_act_preserves_metadata_fields()
+    filter_by_act_preserves_metadata_fields()
     {
-        ; runId, profile, patch, firstTs, deathCount survive in the
-        ; shallow clone. The dialog reads them for the header, so a
-        ; missing field after the filter would blank the header.
+        ; runId, profile, patch, firstTs, deathCount survive in
+        ; the shallow clone. The dialog reads them for the header,
+        ; so a missing field after the filter would blank the
+        ; header.
         snapshot := Map(
             "runId",      "20260523_104500_test",
             "profile",    "Speedrunner",
@@ -920,7 +943,7 @@ class RunStatsPlotBuilderTests extends TestCase
             "zoneTotals", Map("Mud Burrow", 60000)
         )
         data := this.builder.Build(snapshot)
-        filtered := RunStatsPlotBuilder.FilterByMaxAct(data, 1)
+        filtered := RunStatsPlotBuilder.FilterByAct(data, 1)
         Assert.Equal("20260523_104500_test", filtered["runId"])
         Assert.Equal("Speedrunner",          filtered["profile"])
         Assert.Equal("0.4",                  filtered["patch"])
@@ -928,14 +951,15 @@ class RunStatsPlotBuilderTests extends TestCase
         Assert.Equal(2,                      filtered["deathCount"])
     }
 
-    filter_by_max_act_does_not_mutate_input()
+    filter_by_act_does_not_mutate_input()
     {
-        ; Critical invariant: the caller (RunStatsPlotDialog) caches
-        ; the original data in _currentData and reapplies the filter
-        ; on every dropdown change. If FilterByMaxAct mutated the
-        ; input, the second call would filter an already-filtered
-        ; cache and progressively shrink the data — a silent bug
-        ; that would only surface on the third+ dropdown change.
+        ; Critical invariant: the caller (RunStatsPlotDialog)
+        ; caches the original data in _currentData and reapplies
+        ; the filter on every dropdown change. If FilterByAct
+        ; mutated the input, the second call would filter an
+        ; already-filtered cache and progressively shrink the data
+        ; — a silent bug that would only surface on the third+
+        ; dropdown change.
         data := this.builder.Build(Map("zoneTotals", Map(
             "Mud Burrow",        60000,   ; act 1
             "Vastiri Outskirts", 40000    ; act 2
@@ -944,7 +968,7 @@ class RunStatsPlotBuilderTests extends TestCase
         originalMapaTotal  := data["totals"]["mapa"]
         originalTotalMs    := data["totalMs"]
 
-        RunStatsPlotBuilder.FilterByMaxAct(data, 1)
+        RunStatsPlotBuilder.FilterByAct(data, 1)
 
         Assert.Equal(originalDetailsLen, data["details"].Length,
             "input details array was not mutated")
@@ -954,21 +978,22 @@ class RunStatsPlotBuilderTests extends TestCase
             "input totalMs scalar was not mutated")
     }
 
-    filter_by_max_act_interlude_sentinel_is_no_op_today()
+    filter_by_act_interlude_sentinel_is_no_op_today()
     {
         ; The dialog maps the "Interlude" dropdown entry to 999.
-        ; Since the zones catalog tops out at act 4, no real detail
-        ; ever has act > 4, and 999 effectively means "include
-        ; everything" — same as "All". This will change when
-        ; BACKLOG B1 lands cruel/interlude tracking; for now we
-        ; pin the placeholder semantic explicitly so a future
-        ; refactor can't silently break the contract.
+        ; Under exact-match an actFilter of 999 would always return
+        ; empty (no real detail has act 999), so the FilterByAct
+        ; method short-circuits actFilter>=999 at the top — same
+        ; behavior as "All" — until BACKLOG B1 lands
+        ; cruel/interlude tracking. This test pins the placeholder
+        ; semantic explicitly so a future refactor can't silently
+        ; break the contract.
         data := this.builder.Build(Map("zoneTotals", Map(
             "Mud Burrow",        60000,
             "Vastiri Outskirts", 40000,
             "Sandswept Marsh",   30000
         )))
-        filtered := RunStatsPlotBuilder.FilterByMaxAct(data, 999)
+        filtered := RunStatsPlotBuilder.FilterByAct(data, 999)
         Assert.Equal(data["details"].Length, filtered["details"].Length,
             "Interlude sentinel (999) acts as no-op today")
         Assert.Equal(data["totalMs"], filtered["totalMs"])
