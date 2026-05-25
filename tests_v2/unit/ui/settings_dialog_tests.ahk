@@ -296,7 +296,6 @@ class SettingsDialogTests extends TestCase
         cfg.autoPauseOnFocus    := false
         cfg.deathPenaltyEnabled := true
         cfg.deathPenaltyMs      := 12345
-        cfg.layoutVariant       := "plus"
         cfg.pbDisplayMode       := "avg5"
         cfg.showOutcomeBanner   := false
         cfg.routeRowsVisible    := 7
@@ -312,7 +311,6 @@ class SettingsDialogTests extends TestCase
         Assert.False(snap["autoPauseOnFocus"])
         Assert.True(snap["deathPenaltyEnabled"])
         Assert.Equal(12345,               snap["deathPenaltyMs"])
-        Assert.Equal("plus",              snap["layoutVariant"])
         Assert.Equal("avg5",              snap["pbDisplayMode"])
         Assert.False(snap["showOutcomeBanner"],
             "showOutcomeBanner round-trips through snapshot")
@@ -378,7 +376,6 @@ class SettingsDialogTests extends TestCase
         cfg.autoPauseOnFocus    := true
         cfg.deathPenaltyEnabled := false
         cfg.deathPenaltyMs      := 10000
-        cfg.layoutVariant       := "classic"
         cfg.pbDisplayMode       := "pb"
         cfg.showOutcomeBanner   := true
         cfg.routeRowsVisible    := 4
@@ -395,7 +392,6 @@ class SettingsDialogTests extends TestCase
         cfg.autoPauseOnFocus    := false
         cfg.deathPenaltyEnabled := true
         cfg.deathPenaltyMs      := 99999
-        cfg.layoutVariant       := "plus"
         cfg.pbDisplayMode       := "avg5"
         cfg.showOutcomeBanner   := false
         cfg.routeRowsVisible    := 9
@@ -409,7 +405,6 @@ class SettingsDialogTests extends TestCase
         Assert.True(cfg.autoPauseOnFocus)
         Assert.False(cfg.deathPenaltyEnabled)
         Assert.Equal(10000,               cfg.deathPenaltyMs)
-        Assert.Equal("classic",           cfg.layoutVariant)
         Assert.Equal("pb",                cfg.pbDisplayMode)
         Assert.True(cfg.showOutcomeBanner,
             "showOutcomeBanner restores to pre-mutation value")

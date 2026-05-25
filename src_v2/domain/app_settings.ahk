@@ -11,7 +11,6 @@
 ;   [AutoStart]     Regex (PCRE, empty = disabled)
 ;   [VendorRegexes] Slot1, Slot2, Slot3 (max 250 chars each)
 ;   [Diagnostics]   EventTracingEnabled (opt-in)
-;   [Layouts]       Variant (classic | plus)
 ;   [Display]       PbMode (pb | avg5), ShowOutcomeBanner (bool)
 ;   [Route]         WidgetVisible (bool), RowsVisible (int 3..10), NoteFontSize (int 6..16)
 ;   [Disclaimer]    Acknowledged (do-not-show-again flag)
@@ -73,39 +72,11 @@ class AppSettings
     ; for diagnostics.
     eventTracingEnabled := false
 
-    ; --- Layouts (BETA) ---
-    ; Selects between Classic (current widgets) and Plus (experimental
-    ; variants with mono timer, percent-based reflow, resize-by-border).
-    ; Read once at boot by the composition root; switching requires a
-    ; restart. See PLUS_LAYOUTS_SPEC.md.
-    layoutVariant := "classic"
-
     ; --- Display ---
-    ; Toggles what the PB display surfaces show (Steve Plus bare
-    ; value, Compact Plus block sub-label, Compact Classic line2
-    ; chip) AND what the live-timer color compares against. Two
-    ; values:
-    ;   "pb"   — the all-time PersonalBestService values. Default.
-    ;            Original behavior; widgets render "PB MM:SS" / a
-    ;            bare teal value, and the live timer turns green
-    ;            when current <= PB.
-    ;   "avg5" — average across the latest five completed runs from
-    ;            data\runs\*.ini, computed by RunAverageService.
-    ;            Widgets render "AVG MM:SS" (or a tilde-prefixed
-    ;            bare value for the Steve Plus chip) and the live
-    ;            timer turns green when current <= avg5. "Below
-    ;            target" still means green either way, so the
-    ;            comparison semantics stay consistent across modes.
-    ;
-    ; Hot-reload: SettingsDialog publishes Evt.PbDisplayModeChanged
-    ; on save; widgets subscribe and re-render without restart
-    ; (unlike layoutVariant, which rebuilds widget GUIs).
-    ;
-    ; Defensive default: any value that isn't recognizably "avg5"
-    ; normalizes to "pb" in FromMap and in SettingsRepository—so a
-    ; hand-edited INI with a typo lands on the safe original
-    ; behavior rather than an undefined runtime branch. See
-    ; PLUS_LAYOUTS_SPEC.md §13 for the full feature spec.
+    ; cfg.pbDisplayMode toggles widgets between PB and avg5 (latest
+    ; 5 runs) for both the visible value and the live-timer colour
+    ; comparison target. Hot-reloadable via Evt.PbDisplayModeChanged.
+    ; Any value other than "avg5" normalizes to "pb" defensively.
     pbDisplayMode := "pb"
 
     ; Toggles the transient run-outcome banner (top-center, ~4 s)
@@ -123,11 +94,11 @@ class AppSettings
     ; boot after the feature lands, so a returning user upgrading
     ; over an existing install doesn't get an unsolicited extra
     ; surface on screen. The user opts in by Ctrl+Clicking the
-    ; little arrow at the bottom-right of any of the four eligible
-    ; timer widgets (micro / micro_plus / steve / steve_plus).
-    ; Persisted to [Route].WidgetVisible so the choice survives
-    ; restarts. Live-toggled via Cmd.ToggleRouteVisibilityRequested
-    ; → Evt.RouteVisibilityToggled.
+    ; little arrow at the bottom-right of any of the two eligible
+    ; timer widgets (micro / steve). Persisted to [Route].
+    ; WidgetVisible so the choice survives restarts. Live-toggled
+    ; via Cmd.ToggleRouteVisibilityRequested → Evt.
+    ; RouteVisibilityToggled.
     routeWidgetVisible := false
 
     ; Number of route rows the widget shows at once, starting from
@@ -240,23 +211,11 @@ class AppSettings
         ; --- Diagnostics ---
         cfg.eventTracingEnabled := AppSettings._GetBool(data, "eventTracingEnabled", cfg.eventTracingEnabled)
 
-        ; --- Layouts ---
-        ; Any value that isn't exactly "plus" normalizes to "classic".
-        ; A hand-edited INI with a typo ("Plus", "plus_v2", "") falls
-        ; back to the safe default rather than entering an undefined
-        ; runtime branch.
-        if data.Has("layoutVariant")
-        {
-            v := String(data["layoutVariant"])
-            cfg.layoutVariant := (v = "plus") ? "plus" : "classic"
-        }
-
         ; --- Display (PB mode) ---
-        ; Same normalization pattern as layoutVariant: anything that
-        ; isn't recognizably "avg5" falls back to the safe "pb"
-        ; default. AHK v2 `=` is case-insensitive, so "AVG5" / "Avg5"
-        ; / "avg5" all load as the average mode (matching the
-        ; tolerance applied to "plus" / "Plus" / "PLUS" above).
+        ; Any value other than "avg5" normalizes to "pb". AHK v2 `=`
+        ; is case-insensitive so "AVG5" / "Avg5" / "avg5" all load
+        ; as avg5; everything else (typo / future name / whitespace)
+        ; lands on the safe default.
         if data.Has("pbDisplayMode")
         {
             v := String(data["pbDisplayMode"])

@@ -11,7 +11,6 @@
 ;   - deathPenaltyEnabled, deathPenaltyMs
 ;   - disclaimerAcknowledged
 ;   - eventTracingEnabled (opt-in)
-;   - layoutVariant (classic | plus; opt-in BETA)
 ;   - autoFinalizeRegex (strict: "" reverts to default)
 ;   - autoStartRegex (allow empty: "" accepted explicitly)
 ;   - vendorRegexes (NOT read by FromMap; repository handles it)
@@ -38,7 +37,6 @@ class AppSettingsTests extends TestCase
         "defaults_death_penalty_settings",
         "defaults_disclaimer_not_acknowledged",
         "defaults_event_tracing_disabled_by_default",
-        "defaults_layout_variant_is_classic",
         "defaults_pb_display_mode_is_pb",
         "defaults_show_outcome_banner_is_true",
         "defaults_route_widget_visible_is_false",
@@ -62,9 +60,6 @@ class AppSettingsTests extends TestCase
         "from_map_clamps_negative_death_penalty_ms_to_zero",
         "from_map_reads_disclaimer_acknowledged",
         "from_map_reads_event_tracing_enabled",
-        "from_map_reads_layout_variant_plus",
-        "from_map_layout_variant_invalid_falls_back_to_classic",
-        "from_map_layout_variant_accepts_case_variations_as_plus",
         "from_map_reads_pb_display_mode_avg5",
         "from_map_pb_display_mode_invalid_falls_back_to_pb",
         "from_map_pb_display_mode_accepts_case_variations_as_avg5",
@@ -201,18 +196,10 @@ class AppSettingsTests extends TestCase
         Assert.False(AppSettings.Defaults().eventTracingEnabled)
     }
 
-    defaults_layout_variant_is_classic()
-    {
-        ; Plus is opt-in BETA. A fresh install boots the Classic
-        ; widgets. See PLUS_LAYOUTS_SPEC.md §1.
-        Assert.Equal("classic", AppSettings.Defaults().layoutVariant)
-    }
-
     defaults_pb_display_mode_is_pb()
     {
         ; A fresh install keeps the original PB-driven behavior.
         ; "avg5" is opt-in via the Display section in Settings.
-        ; See PLUS_LAYOUTS_SPEC.md §13.
         Assert.Equal("pb", AppSettings.Defaults().pbDisplayMode)
     }
 
@@ -394,53 +381,6 @@ class AppSettingsTests extends TestCase
         Assert.False(cfg3.eventTracingEnabled)
     }
 
-    from_map_reads_layout_variant_plus()
-    {
-        cfg := AppSettings.FromMap(Map("layoutVariant", "plus"))
-        Assert.Equal("plus", cfg.layoutVariant)
-
-        ; Missing key keeps the default
-        cfg2 := AppSettings.FromMap(Map())
-        Assert.Equal("classic", cfg2.layoutVariant)
-
-        ; Explicit "classic" round-trips too
-        cfg3 := AppSettings.FromMap(Map("layoutVariant", "classic"))
-        Assert.Equal("classic", cfg3.layoutVariant)
-    }
-
-    from_map_layout_variant_invalid_falls_back_to_classic()
-    {
-        ; Hand-edited INI typo, future-variant name, accidental
-        ; whitespace — anything that's not recognizably "plus"
-        ; normalizes to "classic" rather than enter an undefined
-        ; runtime branch. Case variations of "plus" are accepted
-        ; (see from_map_layout_variant_accepts_case_variations_as_plus)
-        ; because AHK v2 string compare is case-insensitive by default
-        ; and a user editing the INI by hand might type "Plus".
-        for _, badValue in ["experimental", "plus_v2", "", " plus ", "plusv2", "klassik"]
-        {
-            cfg := AppSettings.FromMap(Map("layoutVariant", badValue))
-            Assert.Equal("classic", cfg.layoutVariant,
-                "Invalid value '" badValue "' must normalize to classic")
-        }
-    }
-
-    from_map_layout_variant_accepts_case_variations_as_plus()
-    {
-        ; AHK v2 `=` is case-insensitive. A hand-edited INI with
-        ; "Plus" or "PLUS" loads as the plus variant — the user's
-        ; intent is clear, and forcing strict case here would
-        ; require fighting the language default everywhere else.
-        ; The SettingsDialog always writes the canonical lowercase
-        ; "plus", so this is only a tolerance for hand edits.
-        for _, variant in ["Plus", "PLUS", "pLuS"]
-        {
-            cfg := AppSettings.FromMap(Map("layoutVariant", variant))
-            Assert.Equal("plus", cfg.layoutVariant,
-                "Case variation '" variant "' must load as plus")
-        }
-    }
-
     from_map_reads_pb_display_mode_avg5()
     {
         cfg := AppSettings.FromMap(Map("pbDisplayMode", "avg5"))
@@ -457,10 +397,9 @@ class AppSettingsTests extends TestCase
 
     from_map_pb_display_mode_invalid_falls_back_to_pb()
     {
-        ; Same defensive normalization as layoutVariant: anything
-        ; other than the literal "avg5" normalizes to "pb". Hand-
-        ; edited INI typos, future-mode names, or stray whitespace
-        ; land on the safe original behavior rather than an
+        ; Anything other than the literal "avg5" normalizes to "pb".
+        ; Hand-edited INI typos, future-mode names, or stray
+        ; whitespace land on the safe default rather than enter an
         ; undefined runtime branch.
         for _, badValue in ["average", "avg10", "", " avg5 ", "random", "av5"]
         {
@@ -472,9 +411,9 @@ class AppSettingsTests extends TestCase
 
     from_map_pb_display_mode_accepts_case_variations_as_avg5()
     {
-        ; AHK v2 `=` is case-insensitive (mirroring the layoutVariant
-        ; tolerance). The Settings dialog writes lowercase "avg5";
-        ; this only covers hand-edited INIs with "Avg5" / "AVG5".
+        ; AHK v2 `=` is case-insensitive. The Settings dialog writes
+        ; lowercase "avg5"; this only covers hand-edited INIs with
+        ; "Avg5" / "AVG5".
         for _, variant in ["Avg5", "AVG5", "aVg5"]
         {
             cfg := AppSettings.FromMap(Map("pbDisplayMode", variant))

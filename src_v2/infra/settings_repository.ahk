@@ -13,15 +13,14 @@
 ;   [VendorRegexes]  Slot1, Slot2, Slot3
 ;   [Disclaimer]     Acknowledged
 ;   [Diagnostics]    EventTracingEnabled (opt-in; off by default)
-;   [Layouts]        Variant (classic | plus; opt-in BETA)
 ;   [Display]        PbMode (pb | avg5; toggles PB chip / live-timer color target), ShowOutcomeBanner (bool)
 ;   [Route]          WidgetVisible (bool; master visibility flag for RouteWidget), RowsVisible (int 3..10), NoteFontSize (int 6..16)
 ;   [Hotkeys]        <action> -> keyBind
 ;   [Window]         MicroLocked, SteveLocked
 ;   [Overlay]        <widgetId>.{left,top,scale,visible,centered} + hoverHide
 ;
-; Orphan keys in old INIs (PanelOverlayKeys, GamePauseDetectionEnabled)
-; are not read or written, so they sit inert.
+; Orphan keys in old INIs (PanelOverlayKeys, GamePauseDetectionEnabled,
+; Layouts.Variant) are not read or written, so they sit inert.
 ;
 ; Construction:
 ;   ini  := IniFile(A_ScriptDir "\speedkalandra.ini")
@@ -56,7 +55,6 @@ class SettingsRepository
         this._LoadVendorRegexes(cfg)
         this._LoadDisclaimer(cfg)
         this._LoadDiagnostics(cfg)
-        this._LoadLayouts(cfg)
         this._LoadDisplay(cfg)
         this._LoadRoute(cfg)
         this._LoadHotkeys(cfg)
@@ -136,7 +134,6 @@ class SettingsRepository
             this._SaveVendorRegexes(cfg)
             this._SaveDisclaimer(cfg)
             this._SaveDiagnostics(cfg)
-            this._SaveLayouts(cfg)
             this._SaveDisplay(cfg)
             this._SaveRoute(cfg)
             this._SaveHotkeys(cfg)
@@ -457,39 +454,15 @@ class SettingsRepository
     }
 
     ; ============================================================
-    ; [Layouts]
-    ;
-    ; Selects between Classic (default) and Plus overlay variants.
-    ; Read once at boot by the composition root; switching requires
-    ; a restart. Any value other than the literal "plus" normalizes
-    ; to "classic" so a typo in a hand-edited INI lands on the safe
-    ; branch. See PLUS_LAYOUTS_SPEC.md §1.
-    ; ============================================================
-    _LoadLayouts(cfg)
-    {
-        v := this._ini.Read("Layouts", "Variant", "classic")
-        cfg.layoutVariant := (v = "plus") ? "plus" : "classic"
-    }
-
-    _SaveLayouts(cfg)
-    {
-        v := (cfg.layoutVariant = "plus") ? "plus" : "classic"
-        this._ini.Write(v, "Layouts", "Variant")
-    }
-
-    ; ============================================================
     ; [Display]
     ;
-    ; PbMode toggles what the PB display surfaces (Steve Plus bare
-    ; value, Compact Plus block sub-labels, Compact Classic line2
-    ; chip) show, AND what the live-timer color comparison uses as a
-    ; target. "pb" (default) keeps the original PersonalBestService-
-    ; driven behavior; "avg5" routes both through RunAverageService
-    ; (average of the latest five runs in data\runs\). Any value
-    ; other than the literal "avg5" normalizes to "pb" so a typo in
-    ; a hand-edited INI lands on the safe branch — same pattern as
-    ; _LoadLayouts. See AppSettings.pbDisplayMode and
-    ; PLUS_LAYOUTS_SPEC.md §13.
+    ; PbMode toggles what the PB display surfaces show AND what
+    ; the live-timer colour comparison uses as a target. "pb"
+    ; (default) keeps PersonalBestService-driven behaviour; "avg5"
+    ; routes both through RunAverageService (average of the
+    ; latest five runs in data\runs\). Any value other than
+    ; "avg5" normalizes to "pb" so a typo lands on the safe
+    ; branch. See AppSettings.pbDisplayMode.
     ; ============================================================
     _LoadDisplay(cfg)
     {

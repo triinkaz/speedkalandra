@@ -11,7 +11,6 @@
 ;   AutoFinalize      Regex
 ;   VendorRegexes     3 slots (max 250 chars each) for V1/V2/V3 shortcuts
 ;   Rules             AutoPauseOnFocus, DeathPenaltyEnabled + seconds
-;   Layouts (BETA)    LayoutVariant (classic | plus)
 ;   Display           PbDisplayMode (pb | avg5; live-reloadable), ShowOutcomeBanner (live-reloadable)
 ;   Route             Per-profile zone list (listbox + ▲▼ reorder + Remove +
 ;                     non-town dropdown with click-to-add + Visible rows slider +
@@ -244,7 +243,7 @@ class SettingsDialog
         ;
         ;   General    : profile + log file path
         ;   Automation : auto-start, auto-finalize, vendor shortcuts
-        ;   Behavior   : rules (autoPause, deathPenalty), layouts,
+        ;   Behavior   : rules (autoPause, deathPenalty),
         ;                display (PB mode, outcome banner)
         ;   Route      : zone list editor + per-zone notes panel
         ;                (only rendered when route deps are wired)
@@ -356,22 +355,9 @@ class SettingsDialog
         this._ctrls["deathPenaltySec"] := this._AddEdit(g, 180, y, 120, penaltySec, "Number")
         y += 36
 
-        ; Opt-in switch between the Classic widgets (default) and the
-        ; experimental Plus variants. Read once at boot — a change
-        ; here requires a restart, surfaced via SpeedKalandraMsgBox in
-        ; _OnSave. See PLUS_LAYOUTS_SPEC.md §1.
-        this._SectionHeader(g, y, "LAYOUTS (BETA)")
-        y += 22
-        g.SetFont("s9 c" Theme.Color("text"), Theme.FONT_UI)
-        this._ctrls["layoutVariantPlus"] := g.Add("Checkbox",
-            "x180 y" y (this._cfg.layoutVariant = "plus" ? " Checked" : ""),
-            'Use experimental "Plus" layouts (requires restart)')
-        y += 32
-
         ; Toggle between the all-time PB and the latest-5-run
         ; average for every widget that surfaces a PB-related
-        ; value. Hot-reloadable via Evt.PbDisplayModeChanged on
-        ; save — no restart, unlike layoutVariant.
+        ; value. Hot-reloadable via Evt.PbDisplayModeChanged on save.
         this._SectionHeader(g, y, "DISPLAY")
         y += 22
         g.SetFont("s9 c" Theme.Color("text"), Theme.FONT_UI)
@@ -560,17 +546,9 @@ class SettingsDialog
         catch
             cfg.deathPenaltyMs := 150000
 
-        ; Layout variant (BETA opt-in). Defensive ternary: anything
-        ; other than a checked box maps to "classic". AppSettings and
-        ; SettingsRepository both normalize on load too, so a typo
-        ; here would round-trip through "classic" anyway, but staying
-        ; defensive keeps the in-memory cfg unambiguous.
-        cfg.layoutVariant := (this._ctrls.Has("layoutVariantPlus")
-            && this._ctrls["layoutVariantPlus"].Value = 1) ? "plus" : "classic"
-
         ; Display mode: "avg5" when the box is checked, "pb"
-        ; otherwise. Same defensive ternary pattern as above so an
-        ; un-built dialog (headless) lands on the safe default.
+        ; otherwise. Defensive ternary so an un-built dialog
+        ; (headless) lands on the safe default.
         cfg.pbDisplayMode := (this._ctrls.Has("pbDisplayModeAvg5")
             && this._ctrls["pbDisplayModeAvg5"].Value = 1) ? "avg5" : "pb"
 
@@ -641,10 +619,7 @@ class SettingsDialog
     static _SnapshotMutableCfg(cfg)
     {
         ; Deep-copies vendorRegexes (Array) and hotkeys (Map);
-        ; primitives don't need copying. layoutVariant captured
-        ; here too so the success path's MsgBox is driven from
-        ; the snapshot, not from a re-read of cfg (which might
-        ; have been restored mid-flight).
+        ; primitives don't need copying.
         return Map(
             "profileName",          cfg.profileName,
             "logFile",              cfg.logFile,
@@ -654,7 +629,6 @@ class SettingsDialog
             "autoPauseOnFocus",     cfg.autoPauseOnFocus,
             "deathPenaltyEnabled",  cfg.deathPenaltyEnabled,
             "deathPenaltyMs",       cfg.deathPenaltyMs,
-            "layoutVariant",        cfg.layoutVariant,
             "pbDisplayMode",        cfg.pbDisplayMode,
             "showOutcomeBanner",    cfg.showOutcomeBanner,
             "routeRowsVisible",     cfg.routeRowsVisible,
@@ -674,7 +648,6 @@ class SettingsDialog
         cfg.autoPauseOnFocus    := snapshot["autoPauseOnFocus"]
         cfg.deathPenaltyEnabled := snapshot["deathPenaltyEnabled"]
         cfg.deathPenaltyMs      := snapshot["deathPenaltyMs"]
-        cfg.layoutVariant       := snapshot["layoutVariant"]
         cfg.pbDisplayMode       := snapshot["pbDisplayMode"]
         cfg.showOutcomeBanner   := snapshot["showOutcomeBanner"]
         cfg.routeRowsVisible    := snapshot["routeRowsVisible"]
@@ -745,27 +718,11 @@ class SettingsDialog
                 "oldRegexes", snapshot["vendorRegexes"],
                 "newRegexes", SettingsDialog._CloneStringArray(cfg.vendorRegexes)))
         }
-        ; Layout variant change → no event published. Widgets are
-        ; instantiated once at boot, so a hot-reload would have to
-        ; tear down GUI handles, re-position from INI, and re-wire
-        ; bus subscriptions — too much complexity for a flag a user
-        ; toggles a handful of times in the life of the app. A MsgBox
-        ; tells them to restart instead.
-        if (snapshot["layoutVariant"] != cfg.layoutVariant)
-        {
-            targetLabel := (cfg.layoutVariant = "plus") ? "Plus (experimental)" : "Classic"
-            try SpeedKalandraMsgBox(
-                "Layout variant changed to " . targetLabel . ".`n`n"
-                . "Restart SpeedKalandra to apply.",
-                "Layout change",
-                "Iconi")
-        }
         ; PB display mode change → publish so every widget that
         ; surfaces a PB-related value re-renders against the new
-        ; source. Unlike layoutVariant, this is hot-reloadable:
-        ; widgets keep their GUI handles and only reset their
-        ; derived caches (timer colour, PB chip text) before the
-        ; next Refresh writes the new mode's values.
+        ; source. Widgets keep their GUI handles and only reset
+        ; their derived caches (timer colour, PB chip text) before
+        ; the next Refresh writes the new mode's values.
         if (snapshot["pbDisplayMode"] != cfg.pbDisplayMode)
         {
             try this._bus.Publish(Events.PbDisplayModeChanged, Map(

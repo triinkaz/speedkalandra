@@ -25,7 +25,7 @@ A minimalist Path of Exile 2 speedrun tracker for Windows.
 
 ### Overlay
 
-![Overlay showcase — Classic and Minimalist layouts in Compact, Micro, and Steve modes](assets/overlay-showcase.png)
+![Overlay showcase — Compact, Micro, and Steve modes](assets/overlay-showcase.png)
 
 ### Functional windows
 
