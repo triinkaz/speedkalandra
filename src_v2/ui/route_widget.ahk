@@ -395,8 +395,8 @@ class RouteWidget
         noteLineH := RouteWidget._ResolveNoteLineHeight(noteFontSize, scale)
         currentNote  := this._GetCurrentNoteFromSlice(slice)
 
-        ; Width matches the anchor exactly per the visual-continuation contract documented in the header.
-        width  := aw
+        ; Width matches the anchor exactly per the visual-continuation contract documented in the header. DPI conversion lives in the helper.
+        width  := RouteWidget._ResolveAnchorLogicalWidth(anchorHwnd, aw)
         ; Note row width is the full inner width (uses both the
         ; name column AND the time column) since it has nothing to
         ; align against on the right — it's a free-form text block.
@@ -918,5 +918,59 @@ class RouteWidget
             noteFontSize + 2,
             Ceil(noteFontSize * 1.75),
             Round(RouteWidget.NOTE_LINE_HEIGHT_BASE * effectiveScale))
+    }
+
+    ; Converts a physical-pixel width (as returned by WinGetPos)
+    ; into the logical-pixel width that Gui.Show expects for a
+    ; DPI-aware Gui. Pure function so it can be unit-tested without
+    ; touching the Win32 DPI APIs.
+    ;
+    ; Why this exists:
+    ;   AHK v2 Guis are per-monitor-DPI-aware by default. When you
+    ;   call Gui.Show("W 350") on a 150% monitor, the window is
+    ;   actually 525 physical pixels wide. WinGetPos on that same
+    ;   window returns 525 (physical). If you take that 525 and
+    ;   feed it back into another Gui.Show as W, the OS scales it
+    ;   AGAIN — 525 logical -> 787 physical. That's the bug TUGs
+    ;   reported: route surface overhanging anchor on his 150% 4K
+    ;   primary monitor (the secondary 100% monitor showed the
+    ;   same overhang because AHK fixes the DPI awareness at
+    ;   process start, so both Guis use the system DPI regardless
+    ;   of which monitor they render on).
+    ;
+    ;   Inverse formula: logical = physical * 96 / dpi.
+    ;
+    ; Fallbacks:
+    ;   1. physicalWidth not a number, or <= 0  -> return 0. Caller
+    ;      already hides on (aw <= 0), but a separate code path
+    ;      could send junk; defensive.
+    ;   2. dpi not a number, or < 72 (sub-Win95 territory, never
+    ;      happens in practice)  -> coerce to 96. Effectively a
+    ;      no-op at standard DPI — keeps the function safe to call
+    ;      with raw DllCall return values.
+    static _LogicalWidthFromPhysical(physicalWidth, dpi)
+    {
+        if (!IsNumber(physicalWidth) || physicalWidth <= 0)
+            return 0
+        if (!IsNumber(dpi) || dpi < 72)
+            dpi := 96
+        return Round(physicalWidth * 96.0 / dpi)
+    }
+
+    ; Thin wrapper: queries the anchor window's actual per-monitor
+    ; DPI via GetDpiForWindow and forwards to the pure helper. Kept
+    ; minimal because the DllCall path is not unit-testable; all
+    ; the math lives in _LogicalWidthFromPhysical.
+    ;
+    ; GetDpiForWindow exists since Windows 10 1607. On older
+    ; Windows the DllCall throws or returns 0, both caught by the
+    ; helper's dpi-fallback to 96 — and on those legacy systems
+    ; the OS doesn't do per-monitor scaling anyway, so the
+    ; physical=logical equivalence holds in practice.
+    static _ResolveAnchorLogicalWidth(anchorHwnd, physicalWidth)
+    {
+        dpi := 96
+        try dpi := DllCall("User32\GetDpiForWindow", "Ptr", anchorHwnd, "UInt")
+        return RouteWidget._LogicalWidthFromPhysical(physicalWidth, dpi)
     }
 }

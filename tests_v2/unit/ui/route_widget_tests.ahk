@@ -182,7 +182,15 @@ class RouteWidgetTests extends TestCase
         "resolve_note_line_height_default_8pt_returns_14_px",
         "resolve_note_line_height_grows_proportionally_with_font",
         "resolve_note_line_height_respects_constant_floor_for_small_fonts",
-        "resolve_note_line_height_handles_invalid_scale"
+        "resolve_note_line_height_handles_invalid_scale",
+
+        ; --- _LogicalWidthFromPhysical (DPI conversion for the
+        ;     route-anchor width handoff; TUGs's 150% 4K overhang) ---
+        "logical_width_from_physical_no_op_at_96_dpi",
+        "logical_width_from_physical_unscales_125_percent",
+        "logical_width_from_physical_unscales_150_percent",
+        "logical_width_from_physical_falls_back_to_96_when_dpi_invalid",
+        "logical_width_from_physical_returns_zero_for_non_positive_width"
     ]
 
     ; ============================================================
@@ -1194,6 +1202,84 @@ class RouteWidgetTests extends TestCase
             "negative scale falls back to 1.0")
         Assert.Equal(28, RouteWidget._ResolveNoteLineHeight(16, "oops"),
             "non-numeric scale falls back to 1.0")
+    }
+
+    ; ============================================================
+    ; _LogicalWidthFromPhysical (DPI conversion)
+    ; ============================================================
+    ;
+    ; Pure helper that inverts the DPI scaling AHK v2 applies to
+    ; DPI-aware Guis. WinGetPos returns physical pixels but
+    ; Gui.Show treats W as logical and re-applies the DPI factor;
+    ; without this inverse the route surface overhangs the anchor
+    ; on any monitor scaled above 100% (the exact bug TUGs hit on
+    ; his 150% 4K primary). The DllCall wrapper around this helper
+    ; (_ResolveAnchorLogicalWidth) is not unit-tested — it's a
+    ; trivial dispatch onto this function, and the Win32 API call
+    ; can't be exercised meaningfully in a headless test.
+
+    logical_width_from_physical_no_op_at_96_dpi()
+    {
+        ; 100% DPI (Rafael's PC, default Windows install) — the
+        ; helper must be a perfect no-op or it would regress every
+        ; user who never had the bug.
+        Assert.Equal(350, RouteWidget._LogicalWidthFromPhysical(350, 96),
+            "96 dpi: physical = logical")
+        Assert.Equal(100, RouteWidget._LogicalWidthFromPhysical(100, 96),
+            "96 dpi at smaller widths: still no-op")
+    }
+
+    logical_width_from_physical_unscales_125_percent()
+    {
+        ; 125% scaling = 120 dpi. A logical 350 anchor renders as
+        ; 437 physical (Round(350 * 1.25)); the inverse takes 437
+        ; back to ~350. Round(437 * 96 / 120) = Round(349.6) = 350.
+        Assert.Equal(350, RouteWidget._LogicalWidthFromPhysical(437, 120),
+            "125% scaling: 437 physical → 350 logical")
+    }
+
+    logical_width_from_physical_unscales_150_percent()
+    {
+        ; The exact case TUGs was hitting on his 4K 32" primary.
+        ; A logical 350 anchor renders as 525 physical; the
+        ; inverse takes 525 back to 350. Regression here means
+        ; the route surface overhangs the anchor again.
+        Assert.Equal(350, RouteWidget._LogicalWidthFromPhysical(525, 144),
+            "150% scaling: 525 physical → 350 logical (TUGs's setup)")
+    }
+
+    logical_width_from_physical_falls_back_to_96_when_dpi_invalid()
+    {
+        ; GetDpiForWindow can return 0 or throw on pre-Win10-1607
+        ; systems. The wrapper catches the throw and leaves dpi at
+        ; 96; the helper itself also defends against 0 / non-numeric
+        ; / sub-72 values, all coerced to 96. Net effect: legacy
+        ; systems fall through the no-op branch (physical = logical)
+        ; which matches what they actually do at the OS level.
+        Assert.Equal(525, RouteWidget._LogicalWidthFromPhysical(525, 0),
+            "dpi=0 coerces to 96, physical preserved")
+        Assert.Equal(525, RouteWidget._LogicalWidthFromPhysical(525, ""),
+            "dpi='' coerces to 96")
+        Assert.Equal(525, RouteWidget._LogicalWidthFromPhysical(525, "garbage"),
+            "non-numeric dpi coerces to 96")
+        Assert.Equal(525, RouteWidget._LogicalWidthFromPhysical(525, 50),
+            "sub-72 dpi (impossible in practice) coerces to 96")
+    }
+
+    logical_width_from_physical_returns_zero_for_non_positive_width()
+    {
+        ; The _Render path already early-returns on (aw <= 0), but
+        ; a future refactor could route through the helper with
+        ; junk; defend against silent negative-pixel widths
+        ; reaching Gui.Show.
+        Assert.Equal(0, RouteWidget._LogicalWidthFromPhysical(0, 96),
+            "width=0 returns 0 (no rendering possible)")
+        Assert.Equal(0, RouteWidget._LogicalWidthFromPhysical(-50, 96),
+            "negative width returns 0")
+        Assert.Equal(0, RouteWidget._LogicalWidthFromPhysical("", 96),
+            "empty-string width returns 0")
+        Assert.Equal(0, RouteWidget._LogicalWidthFromPhysical("garbage", 96),
+            "non-numeric width returns 0")
     }
 }
 
