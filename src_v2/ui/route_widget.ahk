@@ -68,7 +68,6 @@ class RouteWidget
     static ROW_HEIGHT_BASE := 18
     static PADDING_BASE    := 6
     static FONT_SIZE_BASE  := 10
-    static MIN_WIDTH       := 120
     static MIN_SCALE       := 0.5
     ; Time column reservation (right side of each row). Holds
     ; "99:59" comfortably and clips "H:MM:SS" gracefully (longest
@@ -396,7 +395,8 @@ class RouteWidget
         noteLineH := RouteWidget._ResolveNoteLineHeight(noteFontSize, scale)
         currentNote  := this._GetCurrentNoteFromSlice(slice)
 
-        width  := aw < RouteWidget.MIN_WIDTH ? RouteWidget.MIN_WIDTH : aw
+        ; Width matches the anchor exactly per the visual-continuation contract documented in the header.
+        width  := aw
         ; Note row width is the full inner width (uses both the
         ; name column AND the time column) since it has nothing to
         ; align against on the right — it's a free-form text block.
