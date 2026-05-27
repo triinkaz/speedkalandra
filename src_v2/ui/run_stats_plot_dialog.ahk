@@ -1284,11 +1284,17 @@ class RunStatsPlotDialog
         this._ShowWithData(bres)
     }
 
-    ; Details popup. Splits the details list into two tabs so the
+    ; Details popup. Splits the details list into three tabs so the
     ; user isn't overwhelmed:
-    ;   Activities — map / town / death entries
+    ;   Activities — map / town / death entries (everything
+    ;                non-loading)
     ;   Loading    — loading events on their own (a typical run has
     ;                50+ loadings vs ~30 zones, very different cadence)
+    ;   Deaths     — convenience FILTER view of the morte rows; the
+    ;                same rows still appear in Activities, this tab
+    ;                just gives a faster scan when the user wants to
+    ;                see only the deaths and the zone of each. See
+    ;                SplitDetailsForPopup for the partition rules.
     ; Entries within each tab are already in chronological order
     ; (the builder sorted them). Entries without a timestamp
     ; (legacy / aggregated) end up at the bottom of their tab.
@@ -1317,28 +1323,21 @@ class RunStatsPlotDialog
         g.OnEvent("Escape", (*) => this._CloseDetailsPopup())
         this._detailsGui := g
 
-        ; Split details into activities + loading. The builder already
-        ; sorted them chronologically, so a single pass preserves order.
-        activityDetails := []
-        loadingDetails  := []
-        if IsObject(details)
-        {
-            for _, row in details
-            {
-                if !IsObject(row)
-                    continue
-                cat := row.Has("category") ? row["category"] : ""
-                if (cat = "loading")
-                    loadingDetails.Push(row)
-                else
-                    activityDetails.Push(row)
-            }
-        }
+        ; Split details into activities + loading + deaths. The
+        ; builder already sorted details chronologically, so a single
+        ; pass preserves order in each bucket. Deaths appear in BOTH
+        ; activities and deaths (filter view, not partition) — see
+        ; SplitDetailsForPopup header for the rule.
+        split           := RunStatsPlotDialog.SplitDetailsForPopup(details)
+        activityDetails := split["activities"]
+        loadingDetails  := split["loading"]
+        deathDetails    := split["deaths"]
 
         g.SetFont("s9 c" Theme.Color("text"), Theme.FONT_UI)
         tab := g.Add("Tab3", "x14 y14 w780 h360",
             ["Activities (" activityDetails.Length ")",
-             "Loading (" loadingDetails.Length ")"])
+             "Loading ("    loadingDetails.Length  ")",
+             "Deaths ("     deathDetails.Length    ")"])
 
         ; --- Tab 1: Activities (map + town + death) ---
         tab.UseTab(1)
@@ -1377,6 +1376,30 @@ class RunStatsPlotDialog
         for _, row in loadingDetails
         {
             lvLoading.Add(,
+                row.Has("label")     ? row["label"]     : "",
+                RunStatsPlotBuilder.FormatMs(row.Has("ms") ? row["ms"] : 0),
+                row.Has("timestamp") ? row["timestamp"] : ""
+            )
+        }
+
+        ; --- Tab 3: Deaths (filter view of category=morte) ---
+        ; Same rows that already appear in Activities, but isolated
+        ; so the user can scan "where did I die this run" without
+        ; sifting through 30+ map/town entries. Three columns are
+        ; enough: Type is redundant (every row is a death), Note is
+        ; typically empty for morte entries. Time = how long the
+        ; player spent dead before respawn (the run penalty).
+        tab.UseTab(3)
+        g.SetFont("s9 c" Theme.Color("text"), Theme.FONT_UI)
+        lvDeaths := g.Add("ListView",
+            "x24 y44 w760 h318 Background" Theme.Color("surface2"),
+            ["Zone", "Time", "When"])
+        lvDeaths.ModifyCol(1, 380)
+        lvDeaths.ModifyCol(2, 100)
+        lvDeaths.ModifyCol(3, 200)
+        for _, row in deathDetails
+        {
+            lvDeaths.Add(,
                 row.Has("label")     ? row["label"]     : "",
                 RunStatsPlotBuilder.FormatMs(row.Has("ms") ? row["ms"] : 0),
                 row.Has("timestamp") ? row["timestamp"] : ""
@@ -1422,5 +1445,54 @@ class RunStatsPlotDialog
             i++
         }
         return RunStatsPlotDialog._PaletteAt(Abs(h))
+    }
+
+    ; ============================================================
+    ; SplitDetailsForPopup — partitions a run's details for the
+    ; Details popup tabs.
+    ;
+    ; Returns a Map with three Array<Map> entries:
+    ;   "activities" — everything except loading (map, town, death,
+    ;                  etc.). Preserves the previous tab's contents
+    ;                  intact, so users used to finding deaths in
+    ;                  Activities still find them there.
+    ;   "loading"    — just loading entries (typically 50+ in a full
+    ;                  run, very different cadence from the rest).
+    ;   "deaths"     — deaths only, as a CONVENIENCE FILTER. These
+    ;                  rows ALSO appear in "activities"; the Deaths
+    ;                  tab is a filtered view, not a separate bucket.
+    ;                  The (N) labels in each tab title are filter
+    ;                  counts, not a partition assertion.
+    ;
+    ; Defensive against non-array input (returns three empty arrays)
+    ; and non-Map rows (skipped). Pure function; no side effects;
+    ; tested headless in run_stats_plot_dialog_tests.
+    ; ============================================================
+    static SplitDetailsForPopup(details)
+    {
+        activities := []
+        loading    := []
+        deaths     := []
+        if !IsObject(details)
+            return Map("activities", activities, "loading", loading, "deaths", deaths)
+        for _, row in details
+        {
+            if !IsObject(row)
+                continue
+            cat := row.Has("category") ? row["category"] : ""
+            if (cat = "loading")
+            {
+                loading.Push(row)
+                continue
+            }
+            ; Everything non-loading lands in activities — this keeps
+            ; the existing tab's behaviour intact. The "morte" rows
+            ; ALSO land in `deaths` (the filter view), which is a
+            ; subset of activities, not a separate bucket.
+            activities.Push(row)
+            if (cat = "morte")
+                deaths.Push(row)
+        }
+        return Map("activities", activities, "loading", loading, "deaths", deaths)
     }
 }

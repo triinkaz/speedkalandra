@@ -97,6 +97,12 @@ class RunStatsPlotDialogTests extends TestCase
         "color_for_label_is_deterministic_for_same_label",
         "color_for_label_handles_empty_string",
 
+        ; --- Static: SplitDetailsForPopup ---
+        "split_details_for_popup_partitions_by_category",
+        "split_details_for_popup_deaths_appear_in_both_activities_and_deaths",
+        "split_details_for_popup_handles_empty_details",
+        "split_details_for_popup_handles_non_array_input",
+
         ; --- Headless lifecycle ---
         "headless_open_with_data_marks_is_open_true",
         "close_resets_is_open_to_false",
@@ -249,6 +255,98 @@ class RunStatsPlotDialogTests extends TestCase
         Assert.True(StrLen(c) = 6, "empty label returns a valid color")
         Assert.Equal(c, RunStatsPlotDialog._PaletteAt(0),
             "empty label deterministically maps to palette[0]")
+    }
+
+    ; ============================================================
+    ; Static: SplitDetailsForPopup
+    ; ============================================================
+
+    split_details_for_popup_partitions_by_category()
+    {
+        ; The Details popup splits a run's details into three
+        ; buckets for its three tabs:
+        ;   activities = everything except loading
+        ;                (map / town / death)
+        ;   loading    = loading entries only
+        ;   deaths     = morte entries only (subset of activities)
+        ; Tested as a pure static so the popup's Gui doesn't need
+        ; to be exercised — the visual rendering itself is out of
+        ; scope for headless tests (see the file header).
+        details := [
+            Map("category", "mapa",    "label", "Mud Burrow",  "ms", 100000, "note", "Act 1", "timestamp", "2026-01-01 12:00:00"),
+            Map("category", "loading", "label", "Mud->Town",   "ms", 5000,   "note", "",      "timestamp", "2026-01-01 12:01:40"),
+            Map("category", "cidade",  "label", "Clearfell",   "ms", 30000,  "note", "Act 1", "timestamp", "2026-01-01 12:01:45"),
+            Map("category", "morte",   "label", "Mud Burrow",  "ms", 12000,  "note", "",      "timestamp", "2026-01-01 12:02:15"),
+            Map("category", "loading", "label", "Town->Mud",   "ms", 6000,   "note", "",      "timestamp", "2026-01-01 12:02:21"),
+            Map("category", "mapa",    "label", "Cemetery",    "ms", 200000, "note", "Act 1", "timestamp", "2026-01-01 12:02:27")
+        ]
+        split := RunStatsPlotDialog.SplitDetailsForPopup(details)
+
+        Assert.True(split.Has("activities") && split.Has("loading") && split.Has("deaths"),
+            "returns Map with three named buckets")
+        ; 4 non-loading rows: 2 mapa + 1 cidade + 1 morte
+        Assert.Equal(4, split["activities"].Length,
+            "activities = all non-loading rows (including the morte)")
+        Assert.Equal(2, split["loading"].Length,
+            "loading = 2 loading rows")
+        Assert.Equal(1, split["deaths"].Length,
+            "deaths = 1 morte row")
+    }
+
+    split_details_for_popup_deaths_appear_in_both_activities_and_deaths()
+    {
+        ; Explicit invariant: the Deaths tab is a CONVENIENCE FILTER,
+        ; not a separate bucket. Death rows still appear in
+        ; Activities so users used to finding deaths there don't
+        ; regress, and the new tab just gives them a faster scan
+        ; path. If this ever breaks, the previous tab's behaviour
+        ; changed — flag it.
+        details := [
+            Map("category", "morte", "label", "Mud Burrow",  "ms", 12000, "note", "", "timestamp", "2026-01-01 12:00:00"),
+            Map("category", "morte", "label", "Clearfell",   "ms", 8000,  "note", "", "timestamp", "2026-01-01 12:05:00")
+        ]
+        split := RunStatsPlotDialog.SplitDetailsForPopup(details)
+
+        Assert.Equal(2, split["activities"].Length,
+            "deaths land in activities too (preserves the tab's previous behaviour)")
+        Assert.Equal(2, split["deaths"].Length,
+            "deaths bucket has the same 2 rows")
+        Assert.Equal(0, split["loading"].Length,
+            "no loading rows in this fixture")
+        ; Same row objects in both buckets — both arrays reference
+        ; the same Map instances, so a future caller mutating a row
+        ; in one would affect the other. That's fine in practice
+        ; (the popup never mutates) but pinning the contract here
+        ; makes the relation explicit for whoever reads the helper
+        ; next.
+        Assert.True(split["activities"][1] = split["deaths"][1],
+            "same row references shared across the two buckets")
+    }
+
+    split_details_for_popup_handles_empty_details()
+    {
+        ; Fresh run with no recorded events (no zone changes, no
+        ; deaths, no loadings) — three empty arrays. The popup
+        ; renders three tabs labeled "(0)" without crashing.
+        split := RunStatsPlotDialog.SplitDetailsForPopup([])
+        Assert.True(split.Has("activities") && split.Has("loading") && split.Has("deaths"))
+        Assert.Equal(0, split["activities"].Length)
+        Assert.Equal(0, split["loading"].Length)
+        Assert.Equal(0, split["deaths"].Length)
+    }
+
+    split_details_for_popup_handles_non_array_input()
+    {
+        ; Defensive: if a legacy / corrupted run somehow loads
+        ; without a details field, _OpenDetailsPopup pulls "" out
+        ; of its conditional read and passes it here. Without the
+        ; IsObject guard the for-loop would throw. Returns three
+        ; empty arrays so the popup still opens to three empty
+        ; tabs instead of crashing mid-render.
+        split := RunStatsPlotDialog.SplitDetailsForPopup("")
+        Assert.Equal(0, split["activities"].Length)
+        Assert.Equal(0, split["loading"].Length)
+        Assert.Equal(0, split["deaths"].Length)
     }
 
     ; ============================================================
