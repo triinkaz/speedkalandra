@@ -41,6 +41,12 @@ class RunStateRepositoryTests extends TestCase
         "save_loading_total_coerces_negative_to_zero",
         "save_loading_total_coerces_non_number_to_zero",
 
+        ; --- DeathCount ---
+        "load_death_count_returns_zero_default",
+        "load_death_count_parses_existing",
+        "save_death_count_coerces_negative_to_zero",
+        "save_death_count_coerces_non_number_to_zero",
+
         ; --- LoadZoneTotals / SaveZoneTotals / Clear ---
         "load_zone_totals_returns_empty_when_file_missing",
         "load_zone_totals_parses_key_equals_value",
@@ -53,6 +59,24 @@ class RunStateRepositoryTests extends TestCase
         "clear_zone_totals_deletes_file",
         "clear_zone_totals_no_op_when_missing",
         "roundtrip_save_load_zone_totals",
+
+        ; --- LoadLoadingEvents / SaveLoadingEvents / Clear ---
+        "constructor_derives_loading_events_path_with_suffix",
+        "load_loading_events_returns_empty_when_file_missing",
+        "load_loading_events_parses_tsv_rows",
+        "load_loading_events_skips_lines_with_wrong_column_count",
+        "load_loading_events_skips_non_number_duration",
+        "load_loading_events_skips_zero_or_negative_duration",
+        "save_loading_events_throws_when_not_array",
+        "save_loading_events_creates_file",
+        "save_loading_events_skips_non_map_entries",
+        "save_loading_events_skips_invalid_duration_entries",
+        "save_loading_events_sanitizes_tab_newline_chars",
+        "save_loading_events_writes_empty_file_for_empty_array",
+        "save_loading_events_returns_true_on_success",
+        "clear_loading_events_deletes_file",
+        "clear_loading_events_no_op_when_missing",
+        "roundtrip_save_load_loading_events",
     ]
 
     ; ============================================================
@@ -248,6 +272,47 @@ class RunStateRepositoryTests extends TestCase
     }
 
     ; ============================================================
+    ; LoadDeathCount / SaveDeathCount
+    ; ============================================================
+    ; Mirrors LoadingTotal exactly — same scalar shape, same INI
+    ; section, same coercion rules. Used by the recorder to
+    ; restore _deathCount across reboots of an in-progress run
+    ; (without it, multi-session runs would under-report total
+    ; deaths in the finalized history dialog).
+
+    load_death_count_returns_zero_default()
+    {
+        mainIni := IniFile(Fixtures.TempPath("ini"))
+        repo := RunStateRepository(mainIni)
+        Assert.Equal(0, repo.LoadDeathCount())
+    }
+
+    load_death_count_parses_existing()
+    {
+        path := Fixtures.TempPath("ini")
+        mainIni := IniFile(path)
+        mainIni.Write(7, "RunState", "DeathCount")
+        repo := RunStateRepository(mainIni)
+        Assert.Equal(7, repo.LoadDeathCount())
+    }
+
+    save_death_count_coerces_negative_to_zero()
+    {
+        mainIni := IniFile(Fixtures.TempPath("ini"))
+        repo := RunStateRepository(mainIni)
+        repo.SaveDeathCount(-3)
+        Assert.Equal(0, repo.LoadDeathCount())
+    }
+
+    save_death_count_coerces_non_number_to_zero()
+    {
+        mainIni := IniFile(Fixtures.TempPath("ini"))
+        repo := RunStateRepository(mainIni)
+        repo.SaveDeathCount("not a number")
+        Assert.Equal(0, repo.LoadDeathCount())
+    }
+
+    ; ============================================================
     ; LoadZoneTotals / SaveZoneTotals
     ; ============================================================
 
@@ -412,6 +477,286 @@ class RunStateRepositoryTests extends TestCase
         Assert.Equal(125000, loaded["Mud Burrow"])
         Assert.Equal(234000, loaded["Clearfell"])
         Assert.Equal(456000, loaded["The Grelwood"])
+    }
+
+    ; ============================================================
+    ; LoadLoadingEvents / SaveLoadingEvents / Clear
+    ; ============================================================
+
+    constructor_derives_loading_events_path_with_suffix()
+    {
+        tmpDir := Fixtures.TempDir()
+        iniPath := tmpDir "\state.ini"
+        mainIni := IniFile(iniPath)
+        repo := RunStateRepository(mainIni)
+        ; Save something to force creation of the _loading_events.txt
+        repo.SaveLoadingEvents([Map("durationMs", 1000, "ts", "",
+            "source", "", "fromZone", "", "toZone", "")])
+        Assert.True(FileExist(tmpDir "\state_loading_events.txt"))
+    }
+
+    load_loading_events_returns_empty_when_file_missing()
+    {
+        mainIni := IniFile(Fixtures.TempPath("ini"))
+        repo := RunStateRepository(mainIni)
+        Assert.Equal(0, repo.LoadLoadingEvents().Length)
+    }
+
+    load_loading_events_parses_tsv_rows()
+    {
+        tmpDir := Fixtures.TempDir()
+        iniPath := tmpDir "\state.ini"
+        evtsPath := tmpDir "\state_loading_events.txt"
+        ; 5 cols: durationMs, ts, source, fromZone, toZone
+        FileAppend("1500`t2026-05-27 12:00:00`tpixel`tThe Riverbank`tClearfell`n"
+                .  "2200`t2026-05-27 12:05:00`tpixel`tClearfell`tThe Grelwood`n",
+            evtsPath, "UTF-8")
+        Fixtures.RegisterTempPath(evtsPath)
+
+        mainIni := IniFile(iniPath)
+        repo := RunStateRepository(mainIni)
+        loaded := repo.LoadLoadingEvents()
+
+        Assert.Equal(2, loaded.Length)
+        Assert.Equal(1500,                  loaded[1]["durationMs"])
+        Assert.Equal("2026-05-27 12:00:00",  loaded[1]["ts"])
+        Assert.Equal("pixel",               loaded[1]["source"])
+        Assert.Equal("The Riverbank",       loaded[1]["fromZone"])
+        Assert.Equal("Clearfell",           loaded[1]["toZone"])
+        Assert.Equal(2200,                  loaded[2]["durationMs"])
+        Assert.Equal("The Grelwood",        loaded[2]["toZone"])
+    }
+
+    load_loading_events_skips_lines_with_wrong_column_count()
+    {
+        tmpDir := Fixtures.TempDir()
+        iniPath := tmpDir "\state.ini"
+        evtsPath := tmpDir "\state_loading_events.txt"
+        ; Mix: 4 cols (skip), 3 cols (skip), valid, empty, 5 cols valid
+        FileAppend("1500`tts`tsource`tfrom`n"
+                .  "oops`n"
+                .  "1000`tt1`tpixel`tA`tB`n"
+                .  "`n"
+                .  "2000`tt2`tpixel`tC`tD`n",
+            evtsPath, "UTF-8")
+        Fixtures.RegisterTempPath(evtsPath)
+
+        mainIni := IniFile(iniPath)
+        repo := RunStateRepository(mainIni)
+        loaded := repo.LoadLoadingEvents()
+
+        Assert.Equal(2, loaded.Length)
+        Assert.Equal(1000, loaded[1]["durationMs"])
+        Assert.Equal(2000, loaded[2]["durationMs"])
+    }
+
+    load_loading_events_skips_non_number_duration()
+    {
+        tmpDir := Fixtures.TempDir()
+        iniPath := tmpDir "\state.ini"
+        evtsPath := tmpDir "\state_loading_events.txt"
+        FileAppend("notanumber`tt`ts`tf`tT`n"
+                .  "1500`tt1`tpixel`tA`tB`n",
+            evtsPath, "UTF-8")
+        Fixtures.RegisterTempPath(evtsPath)
+
+        mainIni := IniFile(iniPath)
+        repo := RunStateRepository(mainIni)
+        loaded := repo.LoadLoadingEvents()
+
+        Assert.Equal(1, loaded.Length)
+        Assert.Equal(1500, loaded[1]["durationMs"])
+    }
+
+    load_loading_events_skips_zero_or_negative_duration()
+    {
+        tmpDir := Fixtures.TempDir()
+        iniPath := tmpDir "\state.ini"
+        evtsPath := tmpDir "\state_loading_events.txt"
+        FileAppend("0`tt0`ts`tA`tB`n"
+                .  "-50`tt0`ts`tA`tB`n"
+                .  "100`tt0`ts`tA`tB`n",
+            evtsPath, "UTF-8")
+        Fixtures.RegisterTempPath(evtsPath)
+
+        mainIni := IniFile(iniPath)
+        repo := RunStateRepository(mainIni)
+        loaded := repo.LoadLoadingEvents()
+
+        Assert.Equal(1, loaded.Length)
+        Assert.Equal(100, loaded[1]["durationMs"])
+    }
+
+    save_loading_events_throws_when_not_array()
+    {
+        mainIni := IniFile(Fixtures.TempPath("ini"))
+        repo := RunStateRepository(mainIni)
+        Assert.Throws(TypeError, () => repo.SaveLoadingEvents("not an array"))
+        Assert.Throws(TypeError, () => repo.SaveLoadingEvents(Map()))
+    }
+
+    save_loading_events_creates_file()
+    {
+        tmpDir := Fixtures.TempDir()
+        iniPath := tmpDir "\state.ini"
+        evtsPath := tmpDir "\state_loading_events.txt"
+        Fixtures.RegisterTempPath(evtsPath)
+
+        mainIni := IniFile(iniPath)
+        repo := RunStateRepository(mainIni)
+        repo.SaveLoadingEvents([Map("durationMs", 1500, "ts", "t1",
+            "source", "pixel", "fromZone", "A", "toZone", "B")])
+        Assert.True(FileExist(evtsPath))
+    }
+
+    save_loading_events_skips_non_map_entries()
+    {
+        tmpDir := Fixtures.TempDir()
+        iniPath := tmpDir "\state.ini"
+        evtsPath := tmpDir "\state_loading_events.txt"
+        Fixtures.RegisterTempPath(evtsPath)
+
+        mainIni := IniFile(iniPath)
+        repo := RunStateRepository(mainIni)
+        repo.SaveLoadingEvents([
+            "not a map",
+            42,
+            Map("durationMs", 1500, "ts", "t1", "source", "",
+                "fromZone", "", "toZone", "")
+        ])
+        loaded := repo.LoadLoadingEvents()
+        Assert.Equal(1, loaded.Length)
+        Assert.Equal(1500, loaded[1]["durationMs"])
+    }
+
+    save_loading_events_skips_invalid_duration_entries()
+    {
+        tmpDir := Fixtures.TempDir()
+        iniPath := tmpDir "\state.ini"
+        evtsPath := tmpDir "\state_loading_events.txt"
+        Fixtures.RegisterTempPath(evtsPath)
+
+        mainIni := IniFile(iniPath)
+        repo := RunStateRepository(mainIni)
+        repo.SaveLoadingEvents([
+            Map("durationMs", 0,    "ts", "", "source", "", "fromZone", "", "toZone", ""),
+            Map("durationMs", -10,  "ts", "", "source", "", "fromZone", "", "toZone", ""),
+            Map("durationMs", "x",  "ts", "", "source", "", "fromZone", "", "toZone", ""),
+            Map("durationMs", 1500, "ts", "", "source", "", "fromZone", "", "toZone", "")
+        ])
+        loaded := repo.LoadLoadingEvents()
+        Assert.Equal(1, loaded.Length)
+        Assert.Equal(1500, loaded[1]["durationMs"])
+    }
+
+    save_loading_events_sanitizes_tab_newline_chars()
+    {
+        tmpDir := Fixtures.TempDir()
+        iniPath := tmpDir "\state.ini"
+        evtsPath := tmpDir "\state_loading_events.txt"
+        Fixtures.RegisterTempPath(evtsPath)
+
+        mainIni := IniFile(iniPath)
+        repo := RunStateRepository(mainIni)
+        ; Field values with tab / `n / `r — stripped on write so the
+        ; row structure (5 tab-separated columns + newline) is preserved.
+        repo.SaveLoadingEvents([Map(
+            "durationMs", 1500,
+            "ts",         "2026-05-27 12:00:00",
+            "source",     "pix`tel",
+            "fromZone",   "Bad`nName",
+            "toZone",     "Other`rZone"
+        )])
+        loaded := repo.LoadLoadingEvents()
+        Assert.Equal(1, loaded.Length)
+        Assert.Equal("pixel",     loaded[1]["source"])
+        Assert.Equal("BadName",   loaded[1]["fromZone"])
+        Assert.Equal("OtherZone", loaded[1]["toZone"])
+    }
+
+    save_loading_events_writes_empty_file_for_empty_array()
+    {
+        tmpDir := Fixtures.TempDir()
+        iniPath := tmpDir "\state.ini"
+        evtsPath := tmpDir "\state_loading_events.txt"
+        Fixtures.RegisterTempPath(evtsPath)
+
+        mainIni := IniFile(iniPath)
+        repo := RunStateRepository(mainIni)
+        repo.SaveLoadingEvents([])
+        Assert.True(FileExist(evtsPath))
+        Assert.Equal(0, repo.LoadLoadingEvents().Length)
+    }
+
+    save_loading_events_returns_true_on_success()
+    {
+        tmpDir := Fixtures.TempDir()
+        iniPath := tmpDir "\state.ini"
+        evtsPath := tmpDir "\state_loading_events.txt"
+        Fixtures.RegisterTempPath(evtsPath)
+
+        mainIni := IniFile(iniPath)
+        repo := RunStateRepository(mainIni)
+        Assert.True(repo.SaveLoadingEvents([Map("durationMs", 1000, "ts", "",
+            "source", "", "fromZone", "", "toZone", "")]))
+    }
+
+    clear_loading_events_deletes_file()
+    {
+        tmpDir := Fixtures.TempDir()
+        iniPath := tmpDir "\state.ini"
+        evtsPath := tmpDir "\state_loading_events.txt"
+        Fixtures.RegisterTempPath(evtsPath)
+
+        mainIni := IniFile(iniPath)
+        repo := RunStateRepository(mainIni)
+        repo.SaveLoadingEvents([Map("durationMs", 1500, "ts", "",
+            "source", "", "fromZone", "", "toZone", "")])
+        Assert.True(FileExist(evtsPath))
+
+        repo.ClearLoadingEvents()
+        Assert.False(FileExist(evtsPath))
+    }
+
+    clear_loading_events_no_op_when_missing()
+    {
+        mainIni := IniFile(Fixtures.TempPath("ini"))
+        repo := RunStateRepository(mainIni)
+        repo.ClearLoadingEvents()   ; no file — must not throw
+        Assert.True(true)
+    }
+
+    roundtrip_save_load_loading_events()
+    {
+        tmpDir := Fixtures.TempDir()
+        iniPath := tmpDir "\state.ini"
+        evtsPath := tmpDir "\state_loading_events.txt"
+        Fixtures.RegisterTempPath(evtsPath)
+
+        mainIni := IniFile(iniPath)
+        repo := RunStateRepository(mainIni)
+        original := [
+            Map("durationMs", 1500, "ts", "2026-05-27 12:00:00",
+                "source", "pixel", "fromZone", "The Riverbank",
+                "toZone", "Clearfell"),
+            Map("durationMs", 2200, "ts", "2026-05-27 12:05:00",
+                "source", "pixel", "fromZone", "Clearfell",
+                "toZone", "The Grelwood"),
+            Map("durationMs", 3100, "ts", "2026-05-27 12:10:00",
+                "source", "", "fromZone", "", "toZone", "")
+        ]
+        repo.SaveLoadingEvents(original)
+        loaded := repo.LoadLoadingEvents()
+
+        Assert.Equal(3, loaded.Length)
+        Assert.Equal(1500,                  loaded[1]["durationMs"])
+        Assert.Equal("The Riverbank",       loaded[1]["fromZone"])
+        Assert.Equal("Clearfell",           loaded[1]["toZone"])
+        Assert.Equal("2026-05-27 12:05:00",  loaded[2]["ts"])
+        Assert.Equal("pixel",               loaded[2]["source"])
+        Assert.Equal(3100,                  loaded[3]["durationMs"])
+        Assert.Equal("",                    loaded[3]["fromZone"])
+        Assert.Equal("",                    loaded[3]["toZone"])
     }
 }
 

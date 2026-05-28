@@ -33,6 +33,7 @@ class RunStateRepositoryWarningSinkTests extends TestCase
 {
     iniPath := ""
     zonesPath := ""
+    eventsPath := ""
     ini := ""
     sink := ""
     repo := ""
@@ -44,6 +45,7 @@ class RunStateRepositoryWarningSinkTests extends TestCase
         ; same base name + "_zones.txt" suffix.
         SplitPath(this.iniPath, , &dir, , &nameNoExt)
         this.zonesPath := (dir != "" ? dir "\" : "") nameNoExt "_zones.txt"
+        this.eventsPath := (dir != "" ? dir "\" : "") nameNoExt "_loading_events.txt"
 
         this.ini := IniFile(this.iniPath)
         this.sink := InMemoryWarningSink()
@@ -76,6 +78,18 @@ class RunStateRepositoryWarningSinkTests extends TestCase
         ; advance on failed writes) ---
         "save_returns_true_on_successful_write",
         "save_returns_false_when_atomic_writer_throws",
+
+        ; --- LoadLoadingEvents taxonomy (mirror of LoadZoneTotals) ---
+        "load_loading_events_returns_empty_silently_when_file_missing",
+        "load_loading_events_warns_when_file_non_empty_but_no_valid_lines",
+        "load_loading_events_skips_malformed_lines_silently_when_some_are_valid",
+        "load_loading_events_does_not_warn_on_empty_file",
+
+        ; --- SaveLoadingEvents happy + failure paths ---
+        "save_loading_events_does_not_warn_on_happy_path",
+        "save_loading_events_warns_when_atomic_writer_fails",
+        "save_loading_events_returns_false_when_atomic_writer_throws",
+        "clear_loading_events_does_not_warn_when_file_missing",
 
         ; --- Constructor sink validation ---
         "constructor_throws_when_warning_sink_lacks_warn_method"
@@ -243,6 +257,106 @@ class RunStateRepositoryWarningSinkTests extends TestCase
         path := Fixtures.TempPath("ini")
         ini := IniFile(path)
         Assert.Throws(TypeError, () => RunStateRepository(ini, Map("not", "a sink")))
+    }
+
+    ; ============================================================
+    ; LoadLoadingEvents taxonomy (mirror of LoadZoneTotals)
+    ; ============================================================
+
+    load_loading_events_returns_empty_silently_when_file_missing()
+    {
+        result := this.repo.LoadLoadingEvents()
+        Assert.Equal(0, result.Length)
+        Assert.Equal(0, this.sink.Count())
+    }
+
+    load_loading_events_warns_when_file_non_empty_but_no_valid_lines()
+    {
+        ; All rows malformed (wrong column count, non-numeric duration).
+        ; File is present and non-empty but produced zero entries —
+        ; likely corruption, not manual editing.
+        content := "garbage line one`r`n"
+                .  "notanumber`tts`tsource`tfrom`tto`r`n"
+                .  "only`ttwo`tcols`r`n"
+        FileAppend(content, this.eventsPath, "UTF-8")
+
+        result := this.repo.LoadLoadingEvents()
+
+        Assert.Equal(0, result.Length)
+        Assert.Equal(1, this.sink.Count())
+        Assert.True(this.sink.HasMessage("corrupt"))
+    }
+
+    load_loading_events_skips_malformed_lines_silently_when_some_are_valid()
+    {
+        content := "1500`tt1`tpixel`tA`tB`r`n"
+                .  "this is malformed`r`n"
+                .  "notanumber`tt`ts`tA`tB`r`n"
+                .  "2000`tt2`tpixel`tC`tD`r`n"
+        FileAppend(content, this.eventsPath, "UTF-8")
+
+        result := this.repo.LoadLoadingEvents()
+
+        Assert.Equal(2, result.Length)
+        Assert.Equal(0, this.sink.Count())   ; silent skip when at least one valid
+    }
+
+    load_loading_events_does_not_warn_on_empty_file()
+    {
+        FileAppend("", this.eventsPath, "UTF-8")
+        result := this.repo.LoadLoadingEvents()
+        Assert.Equal(0, result.Length)
+        Assert.Equal(0, this.sink.Count())
+    }
+
+    ; ============================================================
+    ; SaveLoadingEvents / ClearLoadingEvents happy + failure paths
+    ; ============================================================
+
+    save_loading_events_does_not_warn_on_happy_path()
+    {
+        this.repo.SaveLoadingEvents([Map("durationMs", 1500, "ts", "t1",
+            "source", "", "fromZone", "", "toZone", "")])
+        Assert.Equal(0, this.sink.Count())
+    }
+
+    save_loading_events_warns_when_atomic_writer_fails()
+    {
+        ; Same forced-failure trick as save_warns_when_atomic_writer_fails
+        ; for zone totals: point the events path at a child of an
+        ; existing file (DirCreate cannot mkdir over a file).
+        parentAsFile := Fixtures.TempPath("txt")
+        FileAppend("not a directory", parentAsFile, "UTF-8")
+        bogus := parentAsFile . "\loading_events.txt"
+        this.repo._loadingEventsPath := bogus
+
+        this.repo.SaveLoadingEvents([Map("durationMs", 1500, "ts", "t1",
+            "source", "", "fromZone", "", "toZone", "")])
+
+        Assert.Equal(1, this.sink.Count())
+        Assert.True(this.sink.HasMessage("SaveLoadingEvents failed"))
+    }
+
+    save_loading_events_returns_false_when_atomic_writer_throws()
+    {
+        ; Mirrors save_returns_false_when_atomic_writer_throws — the
+        ; persister gates _lastSavedLoadingEventsCount on this bool.
+        parentAsFile := Fixtures.TempPath("txt")
+        FileAppend("not a directory", parentAsFile, "UTF-8")
+        bogus := parentAsFile . "\loading_events.txt"
+        this.repo._loadingEventsPath := bogus
+
+        result := this.repo.SaveLoadingEvents([Map("durationMs", 1500,
+            "ts", "t1", "source", "", "fromZone", "", "toZone", "")])
+
+        Assert.False(result,
+            "failed AtomicWriter.WriteAll must return false (caller uses this to gate cache update)")
+    }
+
+    clear_loading_events_does_not_warn_when_file_missing()
+    {
+        this.repo.ClearLoadingEvents()
+        Assert.Equal(0, this.sink.Count())
     }
 }
 

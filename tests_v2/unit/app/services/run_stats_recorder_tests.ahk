@@ -104,6 +104,29 @@ class RunStatsRecorderTests extends TestCase
         "reset_clears_loading_events",
         "reset_zeroes_death_count",
 
+        ; --- Hydration ordering (regression: recorder used to Reset
+        ; unconditionally on RunStarted, wiping loadingEvents and
+        ; firstTs every time the app reopened an in-progress run) ---
+        "run_started_with_hydrated_flag_preserves_loading_events",
+        "run_started_with_hydrated_flag_preserves_first_ts",
+        "run_started_with_hydrated_flag_preserves_death_count",
+        "run_started_with_hydrated_flag_still_captures_run_id",
+        "run_started_without_hydrated_flag_wipes_loading_events",
+        "run_started_without_hydrated_flag_zeroes_death_count",
+
+        ; --- Hydrate API ---
+        "hydrate_sets_loading_events",
+        "hydrate_with_non_array_is_ignored",
+        "hydrate_skips_non_map_entries",
+        "hydrate_skips_entries_with_invalid_duration",
+        "hydrate_coerces_float_duration_to_integer",
+        "hydrate_sets_first_ts_when_provided",
+        "hydrate_with_empty_first_ts_does_not_overwrite",
+        "hydrate_sets_death_count_when_non_negative",
+        "hydrate_with_negative_death_count_does_not_overwrite",
+        "hydrate_with_non_number_death_count_does_not_overwrite",
+        "hydrate_coerces_float_death_count_to_integer",
+
         ; --- Dispose ---
         "dispose_unsubscribes_loading_measured",
         "dispose_unsubscribes_death_detected",
@@ -494,6 +517,190 @@ class RunStatsRecorderTests extends TestCase
         this.svc.Dispose()
         this.svc.Dispose()   ; second Dispose: no-op
         Assert.Equal(0, this.bus.Subscribers(Events.LoadingMeasured))
+    }
+
+    ; ============================================================
+    ; Hydration ordering
+    ; ============================================================
+    ; The composition root hydrates loading events + firstTs from
+    ; disk BEFORE RunService.Hydrate() publishes
+    ; Evt.RunStarted{hydrated:true}. If the handler reset everything
+    ; on that event, the just-restored state would be wiped.
+    ; The hydrated flag suppresses the reset AND the firstTs
+    ; overwrite. Same pattern as LoadingTotalsService /
+    ; ZoneTrackingService._OnRunStarted.
+
+    run_started_with_hydrated_flag_preserves_loading_events()
+    {
+        this.svc.Hydrate([
+            Map("durationMs", 1500, "ts", "2026-05-27 12:00:00",
+                "source", "pixel", "fromZone", "A", "toZone", "B"),
+            Map("durationMs", 2200, "ts", "2026-05-27 12:05:00",
+                "source", "pixel", "fromZone", "B", "toZone", "C")
+        ])
+        this.bus.Publish(Events.RunStarted, Map("runId", "20260527_120000", "hydrated", true))
+        Assert.Equal(2, this.svc.GetLoadingEvents().Length)
+    }
+
+    run_started_with_hydrated_flag_preserves_first_ts()
+    {
+        this.svc.Hydrate([], "2026-05-27 02:12:17")
+        this.bus.Publish(Events.RunStarted, Map("runId", "20260527_021217", "hydrated", true))
+        Assert.Equal("2026-05-27 02:12:17", this.svc.GetFirstTs())
+    }
+
+    run_started_with_hydrated_flag_still_captures_run_id()
+    {
+        ; runId must still be set on hydrate — only the Reset/firstTs
+        ; sides of the handler are suppressed.
+        this.svc.Hydrate([])
+        this.bus.Publish(Events.RunStarted, Map("runId", "20260527_021217", "hydrated", true))
+        Assert.Equal("20260527_021217", this.svc.GetRunId())
+    }
+
+    run_started_without_hydrated_flag_wipes_loading_events()
+    {
+        this.svc.Hydrate([
+            Map("durationMs", 1500, "ts", "x", "source", "", "fromZone", "", "toZone", "")
+        ])
+        this.bus.Publish(Events.RunStarted, Map("runId", "new_run"))
+        Assert.Equal(0, this.svc.GetLoadingEvents().Length)
+    }
+
+    ; ============================================================
+    ; Hydrate API
+    ; ============================================================
+
+    hydrate_sets_loading_events()
+    {
+        this.svc.Hydrate([
+            Map("durationMs", 1500, "ts", "t1", "source", "pixel",
+                "fromZone", "A", "toZone", "B")
+        ])
+        arr := this.svc.GetLoadingEvents()
+        Assert.Equal(1, arr.Length)
+        Assert.Equal(1500,   arr[1]["durationMs"])
+        Assert.Equal("t1",    arr[1]["ts"])
+        Assert.Equal("pixel", arr[1]["source"])
+        Assert.Equal("A",     arr[1]["fromZone"])
+        Assert.Equal("B",     arr[1]["toZone"])
+    }
+
+    hydrate_with_non_array_is_ignored()
+    {
+        ; Push one event the normal way, then call Hydrate with junk.
+        ; The existing event must survive (non-Array input is a no-op).
+        this.bus.Publish(Events.LoadingMeasured, Map("durationMs", 999, "toZone", "X"))
+        this.svc.Hydrate("not an array")
+        Assert.Equal(1, this.svc.GetLoadingEvents().Length)
+        this.svc.Hydrate(Map("not", "an array"))
+        Assert.Equal(1, this.svc.GetLoadingEvents().Length)
+    }
+
+    hydrate_skips_non_map_entries()
+    {
+        this.svc.Hydrate([
+            "not a map",
+            42,
+            Map("durationMs", 1000, "ts", "t1", "source", "",
+                "fromZone", "", "toZone", "")
+        ])
+        Assert.Equal(1, this.svc.GetLoadingEvents().Length)
+    }
+
+    hydrate_skips_entries_with_invalid_duration()
+    {
+        this.svc.Hydrate([
+            Map("durationMs", 0,    "ts", "", "source", "", "fromZone", "", "toZone", ""),
+            Map("durationMs", -10,  "ts", "", "source", "", "fromZone", "", "toZone", ""),
+            Map("durationMs", "x",  "ts", "", "source", "", "fromZone", "", "toZone", ""),
+            Map(                    "ts", "", "source", "", "fromZone", "", "toZone", ""),
+            Map("durationMs", 1000, "ts", "", "source", "", "fromZone", "", "toZone", "")
+        ])
+        Assert.Equal(1, this.svc.GetLoadingEvents().Length)
+    }
+
+    hydrate_coerces_float_duration_to_integer()
+    {
+        this.svc.Hydrate([
+            Map("durationMs", 1500.7, "ts", "", "source", "",
+                "fromZone", "", "toZone", "")
+        ])
+        Assert.Equal(1500, this.svc.GetLoadingEvents()[1]["durationMs"])
+    }
+
+    hydrate_sets_first_ts_when_provided()
+    {
+        this.svc.Hydrate([], "2026-05-27 02:12:17")
+        Assert.Equal("2026-05-27 02:12:17", this.svc.GetFirstTs())
+    }
+
+    hydrate_with_empty_first_ts_does_not_overwrite()
+    {
+        ; Set firstTs via a normal RunStarted, then Hydrate with
+        ; empty firstTs. The existing value must survive (callers
+        ; pass empty when they have nothing to set).
+        this.bus.Publish(Events.RunStarted, Map("runId", "r1"))
+        before := this.svc.GetFirstTs()
+        Assert.True(before != "", "sanity: firstTs was set by RunStarted")
+        this.svc.Hydrate([], "")
+        Assert.Equal(before, this.svc.GetFirstTs())
+    }
+
+    ; ============================================================
+    ; Hydrate: deathCount
+    ; ============================================================
+    ; deathCount is the third positional arg. Negative or non-number
+    ; values are no-ops so callers without a value can omit it.
+    ; Without this, multi-session runs under-report total deaths in
+    ; the finalized history dialog (same shape as the loadingEvents
+    ; bug, but scalar instead of array).
+
+    run_started_with_hydrated_flag_preserves_death_count()
+    {
+        this.svc.Hydrate([], "", 3)
+        this.bus.Publish(Events.RunStarted, Map("runId", "r1", "hydrated", true))
+        Assert.Equal(3, this.svc.GetDeathCount())
+    }
+
+    run_started_without_hydrated_flag_zeroes_death_count()
+    {
+        ; Sanity: the normal (non-hydrate) path still resets to 0.
+        this.svc.Hydrate([], "", 5)
+        this.bus.Publish(Events.RunStarted, Map("runId", "r1"))
+        Assert.Equal(0, this.svc.GetDeathCount())
+    }
+
+    hydrate_sets_death_count_when_non_negative()
+    {
+        this.svc.Hydrate([], "", 7)
+        Assert.Equal(7, this.svc.GetDeathCount())
+        this.svc.Hydrate([], "", 0)
+        Assert.Equal(0, this.svc.GetDeathCount())
+    }
+
+    hydrate_with_negative_death_count_does_not_overwrite()
+    {
+        ; -1 is the default sentinel for "caller has no value to set".
+        this.bus.Publish(Events.DeathDetected, Map())
+        this.bus.Publish(Events.DeathDetected, Map())
+        Assert.Equal(2, this.svc.GetDeathCount())
+        this.svc.Hydrate([], "", -1)
+        Assert.Equal(2, this.svc.GetDeathCount())
+    }
+
+    hydrate_with_non_number_death_count_does_not_overwrite()
+    {
+        this.bus.Publish(Events.DeathDetected, Map())
+        Assert.Equal(1, this.svc.GetDeathCount())
+        this.svc.Hydrate([], "", "not a number")
+        Assert.Equal(1, this.svc.GetDeathCount())
+    }
+
+    hydrate_coerces_float_death_count_to_integer()
+    {
+        this.svc.Hydrate([], "", 3.7)
+        Assert.Equal(3, this.svc.GetDeathCount())
     }
 }
 

@@ -49,6 +49,13 @@ class _PersisterStubRunState
     ; that don't care continue to pass.
     saveZoneSucceeds  := true
 
+    savedLoadingEvents          := ""
+    saveLoadingEventsCount      := 0
+    saveLoadingEventsSucceeds   := true
+
+    savedDeathCount             := -1
+    saveDeathCountCalls         := 0
+
     SaveLoadingTotal(ms)
     {
         this.savedLoadingTotal := ms
@@ -60,6 +67,19 @@ class _PersisterStubRunState
         this.savedZoneTotals := totals
         this.saveZoneCount += 1
         return this.saveZoneSucceeds
+    }
+
+    SaveLoadingEvents(arr)
+    {
+        this.savedLoadingEvents := arr
+        this.saveLoadingEventsCount += 1
+        return this.saveLoadingEventsSucceeds
+    }
+
+    SaveDeathCount(n)
+    {
+        this.savedDeathCount := n
+        this.saveDeathCountCalls += 1
     }
 }
 
@@ -105,6 +125,25 @@ class _PersisterStubSettingsRepo
 }
 
 
+; Recorder stub. The persister calls GetLoadingEvents() on it each
+; Tick and Flush to drive the dirty-cache + skip logic. `events` is
+; deliberately defaulted to "" so the getter handles the not-set
+; case gracefully (the real RunStatsRecorder always returns an Array;
+; tests that don't care leave it untouched).
+class _PersisterStubRecorder
+{
+    events     := ""
+    deathCount := 0
+
+    GetLoadingEvents()
+    {
+        return IsObject(this.events) ? this.events : []
+    }
+
+    GetDeathCount() => this.deathCount
+}
+
+
 class RunStatePersisterTests extends TestCase
 {
     static Tests := [
@@ -113,6 +152,7 @@ class RunStatePersisterTests extends TestCase
         "constructor_throws_on_missing_run_state",
         "constructor_throws_on_missing_loading_totals",
         "constructor_throws_on_missing_zone_tracker",
+        "constructor_throws_on_missing_recorder",
         "constructor_throws_on_missing_settings_repo",
         "constructor_throws_on_missing_cfg",
         "constructor_throws_on_missing_log",
@@ -121,6 +161,9 @@ class RunStatePersisterTests extends TestCase
         "tick_persists_loading_total_when_changed",
         "tick_skips_loading_total_when_unchanged",
         "tick_skips_loading_total_when_run_inactive",
+        "tick_persists_death_count_when_changed",
+        "tick_skips_death_count_when_unchanged",
+        "tick_skips_death_count_when_run_inactive",
         "tick_persists_zone_totals_when_hash_changes",
         "tick_skips_zone_totals_when_hash_unchanged",
         "tick_skips_zone_totals_when_run_inactive",
@@ -142,12 +185,26 @@ class RunStatePersisterTests extends TestCase
         "tick_does_not_advance_cache_when_save_zone_totals_returns_false",
         "tick_retries_save_zone_totals_on_next_tick_after_failure",
 
+        ; --- Tick: loading events (same skip-cache pattern as
+        ; zone totals, keyed off the array length since events are
+        ; append-only during a run — reset-on-end clears via
+        ; ResetCache) ---
+        "tick_persists_loading_events_when_count_changed",
+        "tick_skips_loading_events_when_count_unchanged",
+        "tick_skips_loading_events_when_run_inactive",
+        "tick_does_not_advance_loading_events_cache_on_failed_save",
+        "tick_retries_save_loading_events_on_next_tick_after_failure",
+
         ; --- Flush ---
         "flush_writes_loading_total_even_when_unchanged",
         "flush_uses_totals_for_snapshot_for_zone_totals",
         "flush_skips_loading_total_when_run_inactive",
         "flush_skips_zone_totals_when_run_inactive",
         "flush_calls_persist_tick_on_run_service",
+        "flush_writes_loading_events_even_when_unchanged",
+        "flush_skips_loading_events_when_run_inactive",
+        "flush_writes_death_count_even_when_unchanged",
+        "flush_skips_death_count_when_run_inactive",
 
         ; --- PersistSettings ---
         "persist_settings_delegates_to_repo",
@@ -159,8 +216,16 @@ class RunStatePersisterTests extends TestCase
         "prime_loading_total_cache_ignores_non_number",
         "prime_zone_totals_cache_hashes_map",
         "prime_zone_totals_cache_ignores_non_object",
+        "prime_loading_events_count_sets_value",
+        "prime_loading_events_count_ignores_negative",
+        "prime_loading_events_count_ignores_non_number",
+        "prime_death_count_cache_sets_value",
+        "prime_death_count_cache_ignores_negative",
+        "prime_death_count_cache_ignores_non_number",
         "reset_cache_clears_loading_total",
         "reset_cache_clears_zone_totals_hash",
+        "reset_cache_clears_loading_events_count",
+        "reset_cache_clears_death_count",
 
         ; --- Static ComputeTotalsHash ---
         "compute_totals_hash_empty_map_returns_empty_string",
@@ -192,11 +257,12 @@ class RunStatePersisterTests extends TestCase
         runState    := deps.Has("runState")    ? deps["runState"]    : _PersisterStubRunState()
         loading     := deps.Has("loading")     ? deps["loading"]     : _PersisterStubLoadingTotals()
         zoneTracker := deps.Has("zoneTracker") ? deps["zoneTracker"] : _PersisterStubZoneTracker()
+        recorder    := deps.Has("recorder")    ? deps["recorder"]    : _PersisterStubRecorder()
         repo        := deps.Has("repo")        ? deps["repo"]        : _PersisterStubSettingsRepo()
         cfg         := deps.Has("cfg")         ? deps["cfg"]         : AppSettings()
         log         := deps.Has("log")         ? deps["log"]         : this.log
 
-        return RunStatePersister(runSvc, runState, loading, zoneTracker, repo, cfg, log)
+        return RunStatePersister(runSvc, runState, loading, zoneTracker, recorder, repo, cfg, log)
     }
 
     ; ------------------------------------------------------------
@@ -207,8 +273,8 @@ class RunStatePersisterTests extends TestCase
     {
         Assert.Throws(TypeError, () => RunStatePersister(
             "", _PersisterStubRunState(), _PersisterStubLoadingTotals(),
-            _PersisterStubZoneTracker(), _PersisterStubSettingsRepo(),
-            AppSettings(), this.log
+            _PersisterStubZoneTracker(), _PersisterStubRecorder(),
+            _PersisterStubSettingsRepo(), AppSettings(), this.log
         ))
     }
 
@@ -216,8 +282,8 @@ class RunStatePersisterTests extends TestCase
     {
         Assert.Throws(TypeError, () => RunStatePersister(
             _PersisterStubRunService(), "", _PersisterStubLoadingTotals(),
-            _PersisterStubZoneTracker(), _PersisterStubSettingsRepo(),
-            AppSettings(), this.log
+            _PersisterStubZoneTracker(), _PersisterStubRecorder(),
+            _PersisterStubSettingsRepo(), AppSettings(), this.log
         ))
     }
 
@@ -225,8 +291,8 @@ class RunStatePersisterTests extends TestCase
     {
         Assert.Throws(TypeError, () => RunStatePersister(
             _PersisterStubRunService(), _PersisterStubRunState(), "",
-            _PersisterStubZoneTracker(), _PersisterStubSettingsRepo(),
-            AppSettings(), this.log
+            _PersisterStubZoneTracker(), _PersisterStubRecorder(),
+            _PersisterStubSettingsRepo(), AppSettings(), this.log
         ))
     }
 
@@ -234,8 +300,17 @@ class RunStatePersisterTests extends TestCase
     {
         Assert.Throws(TypeError, () => RunStatePersister(
             _PersisterStubRunService(), _PersisterStubRunState(),
-            _PersisterStubLoadingTotals(), "", _PersisterStubSettingsRepo(),
-            AppSettings(), this.log
+            _PersisterStubLoadingTotals(), "", _PersisterStubRecorder(),
+            _PersisterStubSettingsRepo(), AppSettings(), this.log
+        ))
+    }
+
+    constructor_throws_on_missing_recorder()
+    {
+        Assert.Throws(TypeError, () => RunStatePersister(
+            _PersisterStubRunService(), _PersisterStubRunState(),
+            _PersisterStubLoadingTotals(), _PersisterStubZoneTracker(),
+            "", _PersisterStubSettingsRepo(), AppSettings(), this.log
         ))
     }
 
@@ -244,7 +319,7 @@ class RunStatePersisterTests extends TestCase
         Assert.Throws(TypeError, () => RunStatePersister(
             _PersisterStubRunService(), _PersisterStubRunState(),
             _PersisterStubLoadingTotals(), _PersisterStubZoneTracker(),
-            "", AppSettings(), this.log
+            _PersisterStubRecorder(), "", AppSettings(), this.log
         ))
     }
 
@@ -253,7 +328,7 @@ class RunStatePersisterTests extends TestCase
         Assert.Throws(TypeError, () => RunStatePersister(
             _PersisterStubRunService(), _PersisterStubRunState(),
             _PersisterStubLoadingTotals(), _PersisterStubZoneTracker(),
-            _PersisterStubSettingsRepo(), "", this.log
+            _PersisterStubRecorder(), _PersisterStubSettingsRepo(), "", this.log
         ))
     }
 
@@ -262,7 +337,8 @@ class RunStatePersisterTests extends TestCase
         Assert.Throws(TypeError, () => RunStatePersister(
             _PersisterStubRunService(), _PersisterStubRunState(),
             _PersisterStubLoadingTotals(), _PersisterStubZoneTracker(),
-            _PersisterStubSettingsRepo(), AppSettings(), ""
+            _PersisterStubRecorder(), _PersisterStubSettingsRepo(),
+            AppSettings(), ""
         ))
     }
 
@@ -736,6 +812,389 @@ class RunStatePersisterTests extends TestCase
             RunStatePersister.ComputeTotalsHash(m),
             RunStatePersister.ComputeTotalsHash(m)
         )
+    }
+
+    ; ------------------------------------------------------------
+    ; Tick: loading events behavior
+    ; ------------------------------------------------------------
+    ; The recorder's GetLoadingEvents() is sampled each Tick. The
+    ; persister keys its dirty-cache off Length (events are
+    ; append-only during a run — ResetCache handles the
+    ; end-of-run reset path). Same bool-return contract as
+    ; SaveZoneTotals: cache only advances when SaveLoadingEvents
+    ; returns true.
+
+    tick_persists_loading_events_when_count_changed()
+    {
+        recorder := _PersisterStubRecorder()
+        recorder.events := [
+            Map("durationMs", 1500, "ts", "t1", "source", "", "fromZone", "", "toZone", ""),
+            Map("durationMs", 2200, "ts", "t2", "source", "", "fromZone", "", "toZone", "")
+        ]
+        runState := _PersisterStubRunState()
+        persister := this._Make(Map(
+            "recorder", recorder,
+            "runState", runState
+        ))
+
+        persister.Tick()
+
+        Assert.Equal(1, runState.saveLoadingEventsCount)
+        Assert.Equal(2, runState.savedLoadingEvents.Length)
+    }
+
+    tick_skips_loading_events_when_count_unchanged()
+    {
+        recorder := _PersisterStubRecorder()
+        recorder.events := [
+            Map("durationMs", 1500, "ts", "t1", "source", "", "fromZone", "", "toZone", "")
+        ]
+        runState := _PersisterStubRunState()
+        persister := this._Make(Map(
+            "recorder", recorder,
+            "runState", runState
+        ))
+
+        persister.PrimeLoadingEventsCount(1)
+        persister.Tick()
+
+        Assert.Equal(0, runState.saveLoadingEventsCount)
+    }
+
+    tick_skips_loading_events_when_run_inactive()
+    {
+        runSvc := _PersisterStubRunService()
+        runSvc.active := false
+        recorder := _PersisterStubRecorder()
+        recorder.events := [Map("durationMs", 1500, "ts", "t1",
+            "source", "", "fromZone", "", "toZone", "")]
+        runState := _PersisterStubRunState()
+        persister := this._Make(Map(
+            "runSvc",   runSvc,
+            "recorder", recorder,
+            "runState", runState
+        ))
+
+        persister.Tick()
+
+        Assert.Equal(0, runState.saveLoadingEventsCount)
+    }
+
+    tick_does_not_advance_loading_events_cache_on_failed_save()
+    {
+        ; Regression mirror of zone-totals: when SaveLoadingEvents
+        ; returns false (AtomicWriter threw inside the repo), the
+        ; persister must NOT advance _lastSavedLoadingEventsCount,
+        ; so the next tick retries the write.
+        recorder := _PersisterStubRecorder()
+        recorder.events := [Map("durationMs", 1500, "ts", "t1",
+            "source", "", "fromZone", "", "toZone", "")]
+        runState := _PersisterStubRunState()
+        runState.saveLoadingEventsSucceeds := false
+        persister := this._Make(Map(
+            "recorder", recorder,
+            "runState", runState
+        ))
+
+        persister.Tick()
+        Assert.Equal(1, runState.saveLoadingEventsCount)
+        ; Same array length on next tick — if the cache had advanced,
+        ; this call would skip. The retry path must call Save again.
+        persister.Tick()
+        Assert.Equal(2, runState.saveLoadingEventsCount)
+    }
+
+    tick_retries_save_loading_events_on_next_tick_after_failure()
+    {
+        recorder := _PersisterStubRecorder()
+        recorder.events := [Map("durationMs", 1500, "ts", "t1",
+            "source", "", "fromZone", "", "toZone", "")]
+        runState := _PersisterStubRunState()
+        runState.saveLoadingEventsSucceeds := false
+        persister := this._Make(Map(
+            "recorder", recorder,
+            "runState", runState
+        ))
+
+        persister.Tick()   ; first attempt: returns false
+        runState.saveLoadingEventsSucceeds := true
+        persister.Tick()   ; second attempt: succeeds
+
+        Assert.Equal(2, runState.saveLoadingEventsCount)
+        ; Now the cache is primed; another tick with same count skips
+        persister.Tick()
+        Assert.Equal(2, runState.saveLoadingEventsCount)
+    }
+
+    ; ------------------------------------------------------------
+    ; Flush: loading events behavior
+    ; ------------------------------------------------------------
+
+    flush_writes_loading_events_even_when_unchanged()
+    {
+        recorder := _PersisterStubRecorder()
+        recorder.events := [Map("durationMs", 1500, "ts", "t1",
+            "source", "", "fromZone", "", "toZone", "")]
+        runState := _PersisterStubRunState()
+        persister := this._Make(Map(
+            "recorder", recorder,
+            "runState", runState
+        ))
+
+        persister.PrimeLoadingEventsCount(1)   ; would skip in Tick
+        persister.Flush()
+
+        Assert.Equal(1, runState.saveLoadingEventsCount)
+    }
+
+    flush_skips_loading_events_when_run_inactive()
+    {
+        runSvc := _PersisterStubRunService()
+        runSvc.active := false
+        recorder := _PersisterStubRecorder()
+        recorder.events := [Map("durationMs", 1500, "ts", "t1",
+            "source", "", "fromZone", "", "toZone", "")]
+        runState := _PersisterStubRunState()
+        persister := this._Make(Map(
+            "runSvc",   runSvc,
+            "recorder", recorder,
+            "runState", runState
+        ))
+
+        persister.Flush()
+
+        Assert.Equal(0, runState.saveLoadingEventsCount)
+    }
+
+    ; ------------------------------------------------------------
+    ; Cache priming + reset (loading events)
+    ; ------------------------------------------------------------
+
+    prime_loading_events_count_sets_value()
+    {
+        recorder := _PersisterStubRecorder()
+        recorder.events := [
+            Map("durationMs", 1500, "ts", "t1", "source", "", "fromZone", "", "toZone", ""),
+            Map("durationMs", 2200, "ts", "t2", "source", "", "fromZone", "", "toZone", ""),
+            Map("durationMs", 3100, "ts", "t3", "source", "", "fromZone", "", "toZone", "")
+        ]
+        runState := _PersisterStubRunState()
+        persister := this._Make(Map(
+            "recorder", recorder,
+            "runState", runState
+        ))
+
+        persister.PrimeLoadingEventsCount(3)
+        persister.Tick()    ; same count — must skip
+        Assert.Equal(0, runState.saveLoadingEventsCount)
+    }
+
+    prime_loading_events_count_ignores_negative()
+    {
+        recorder := _PersisterStubRecorder()
+        recorder.events := [Map("durationMs", 1500, "ts", "t1",
+            "source", "", "fromZone", "", "toZone", "")]
+        runState := _PersisterStubRunState()
+        persister := this._Make(Map(
+            "recorder", recorder,
+            "runState", runState
+        ))
+
+        persister.PrimeLoadingEventsCount(-5)
+        persister.Tick()   ; cache stayed at -1, current count is 1 — must write
+        Assert.Equal(1, runState.saveLoadingEventsCount)
+    }
+
+    prime_loading_events_count_ignores_non_number()
+    {
+        recorder := _PersisterStubRecorder()
+        recorder.events := [Map("durationMs", 1500, "ts", "t1",
+            "source", "", "fromZone", "", "toZone", "")]
+        runState := _PersisterStubRunState()
+        persister := this._Make(Map(
+            "recorder", recorder,
+            "runState", runState
+        ))
+
+        persister.PrimeLoadingEventsCount("not a number")
+        persister.Tick()
+        Assert.Equal(1, runState.saveLoadingEventsCount)
+    }
+
+    reset_cache_clears_loading_events_count()
+    {
+        recorder := _PersisterStubRecorder()
+        recorder.events := [Map("durationMs", 1500, "ts", "t1",
+            "source", "", "fromZone", "", "toZone", "")]
+        runState := _PersisterStubRunState()
+        persister := this._Make(Map(
+            "recorder", recorder,
+            "runState", runState
+        ))
+
+        persister.PrimeLoadingEventsCount(1)
+        persister.Tick()   ; would skip due to prime
+        Assert.Equal(0, runState.saveLoadingEventsCount)
+
+        persister.ResetCache()
+        persister.Tick()   ; cache cleared — must write again
+        Assert.Equal(1, runState.saveLoadingEventsCount)
+    }
+
+    ; ------------------------------------------------------------
+    ; Tick / Flush / cache: death count
+    ; ------------------------------------------------------------
+    ; Scalar in [RunState] DeathCount=N, mirror of LoadingTotal.
+    ; Without persistence the count resets every reboot and
+    ; multi-session finalized runs under-report total deaths.
+
+    tick_persists_death_count_when_changed()
+    {
+        recorder := _PersisterStubRecorder()
+        recorder.deathCount := 4
+        runState := _PersisterStubRunState()
+        persister := this._Make(Map(
+            "recorder", recorder,
+            "runState", runState
+        ))
+
+        persister.Tick()
+
+        Assert.Equal(1, runState.saveDeathCountCalls)
+        Assert.Equal(4, runState.savedDeathCount)
+    }
+
+    tick_skips_death_count_when_unchanged()
+    {
+        recorder := _PersisterStubRecorder()
+        recorder.deathCount := 2
+        runState := _PersisterStubRunState()
+        persister := this._Make(Map(
+            "recorder", recorder,
+            "runState", runState
+        ))
+
+        persister.PrimeDeathCountCache(2)
+        persister.Tick()
+
+        Assert.Equal(0, runState.saveDeathCountCalls)
+    }
+
+    tick_skips_death_count_when_run_inactive()
+    {
+        runSvc := _PersisterStubRunService()
+        runSvc.active := false
+        recorder := _PersisterStubRecorder()
+        recorder.deathCount := 3
+        runState := _PersisterStubRunState()
+        persister := this._Make(Map(
+            "runSvc",   runSvc,
+            "recorder", recorder,
+            "runState", runState
+        ))
+
+        persister.Tick()
+
+        Assert.Equal(0, runState.saveDeathCountCalls)
+    }
+
+    flush_writes_death_count_even_when_unchanged()
+    {
+        recorder := _PersisterStubRecorder()
+        recorder.deathCount := 5
+        runState := _PersisterStubRunState()
+        persister := this._Make(Map(
+            "recorder", recorder,
+            "runState", runState
+        ))
+
+        persister.PrimeDeathCountCache(5)
+        persister.Flush()
+
+        Assert.Equal(1, runState.saveDeathCountCalls)
+        Assert.Equal(5, runState.savedDeathCount)
+    }
+
+    flush_skips_death_count_when_run_inactive()
+    {
+        runSvc := _PersisterStubRunService()
+        runSvc.active := false
+        recorder := _PersisterStubRecorder()
+        recorder.deathCount := 3
+        runState := _PersisterStubRunState()
+        persister := this._Make(Map(
+            "runSvc",   runSvc,
+            "recorder", recorder,
+            "runState", runState
+        ))
+
+        persister.Flush()
+
+        Assert.Equal(0, runState.saveDeathCountCalls)
+    }
+
+    prime_death_count_cache_sets_value()
+    {
+        recorder := _PersisterStubRecorder()
+        recorder.deathCount := 3
+        runState := _PersisterStubRunState()
+        persister := this._Make(Map(
+            "recorder", recorder,
+            "runState", runState
+        ))
+
+        persister.PrimeDeathCountCache(3)
+        persister.Tick()    ; same count — must skip
+        Assert.Equal(0, runState.saveDeathCountCalls)
+    }
+
+    prime_death_count_cache_ignores_negative()
+    {
+        recorder := _PersisterStubRecorder()
+        recorder.deathCount := 2
+        runState := _PersisterStubRunState()
+        persister := this._Make(Map(
+            "recorder", recorder,
+            "runState", runState
+        ))
+
+        persister.PrimeDeathCountCache(-1)
+        persister.Tick()
+        Assert.Equal(1, runState.saveDeathCountCalls)
+    }
+
+    prime_death_count_cache_ignores_non_number()
+    {
+        recorder := _PersisterStubRecorder()
+        recorder.deathCount := 2
+        runState := _PersisterStubRunState()
+        persister := this._Make(Map(
+            "recorder", recorder,
+            "runState", runState
+        ))
+
+        persister.PrimeDeathCountCache("not a number")
+        persister.Tick()
+        Assert.Equal(1, runState.saveDeathCountCalls)
+    }
+
+    reset_cache_clears_death_count()
+    {
+        recorder := _PersisterStubRecorder()
+        recorder.deathCount := 4
+        runState := _PersisterStubRunState()
+        persister := this._Make(Map(
+            "recorder", recorder,
+            "runState", runState
+        ))
+
+        persister.PrimeDeathCountCache(4)
+        persister.Tick()   ; would skip due to prime
+        Assert.Equal(0, runState.saveDeathCountCalls)
+
+        persister.ResetCache()
+        persister.Tick()   ; cache cleared — must write again
+        Assert.Equal(1, runState.saveDeathCountCalls)
     }
 }
 

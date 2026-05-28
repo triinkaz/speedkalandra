@@ -7,10 +7,34 @@
 ;   LoadingMeasured  → push to _loadingEvents
 ;   DeathDetected    → _deathCount++
 ;   RunStarted       → Reset() + capture runId/startedAt
+;                     EXCEPT when data["hydrated"] is true (boot
+;                     replay of an in-progress run) — see below
 ;   RunReset         → Reset()
 ;   RunCancelled     → Reset()
 ;   RunCompleted     → no-op (next RunStarted resets; data stays
 ;                    available to the plot builder in between)
+;
+; PERSISTENCE / HYDRATION:
+;   _loadingEvents is persisted by the composition root to
+;   <iniBase>_loading_events.txt every 5 s (RunStatePersister.Tick)
+;   and on Stop()/OnExit (Flush). On boot Hydrate(events, firstTs,
+;   deathCount) restores the array BEFORE runService.Hydrate
+;   publishes Evt.RunStarted{hydrated:true}. The hydrated:true
+;   branch of _OnRunStarted skips Reset() so the just-restored
+;   array survives. Same pattern as LoadingTotalsService and
+;   ZoneTrackingService.
+;
+;   _deathCount follows the same pattern but is a scalar persisted
+;   in [RunState] DeathCount=N (like LoadingTotalMs). Without it,
+;   the count would reset to 0 every reboot — multi-session
+;   finalized runs would under-report total deaths in the dialog.
+;
+;   Without these, every close/reopen of an in-progress run wiped
+;   the array — the live overlay (which reads the scalar in
+;   LoadingTotalsService) stayed correct, but the run-history plot
+;   dialog (which sums loadingEvents from the snapshot) only saw
+;   events from the FINAL session before finalize, showing
+;   absurdly low Loading KPI on multi-session runs.
 
 class RunStatsRecorder
 {
@@ -124,18 +148,76 @@ class RunStatsRecorder
         this._deathCount    := 0
     }
 
+    ; Restores loading events + firstTs + deathCount from disk
+    ; (crash recovery). Called by the composition root on boot
+    ; AFTER constructing the recorder and BEFORE runService.Hydrate
+    ; publishes Evt.RunStarted{hydrated:true}. The hydrated:true
+    ; branch of _OnRunStarted skips Reset() so these values survive.
+    ;
+    ; Defensive: non-Array evtArr is ignored; non-Map entries and
+    ; entries with missing/invalid durationMs are silently skipped
+    ; (RunStateRepository.LoadLoadingEvents already filters; this is
+    ; a second line of defense for direct programmatic callers).
+    ;
+    ; firstTs is the original "yyyy-MM-dd HH:mm:ss" start timestamp
+    ; preserved across sessions. Empty string leaves _firstTs as is.
+    ;
+    ; deathCount is the integer death count for the run. Negative
+    ; values (default -1) leave _deathCount as is, so callers that
+    ; don't have a value to set can omit the arg.
+    Hydrate(evtArr, firstTs := "", deathCount := -1)
+    {
+        if (evtArr is Array)
+        {
+            hydrated := []
+            for _, evtMap in evtArr
+            {
+                if !IsObject(evtMap)
+                    continue
+                ms := evtMap.Has("durationMs") ? evtMap["durationMs"] : 0
+                if !IsNumber(ms)
+                    continue
+                msInt := Integer(ms + 0)
+                if (msInt <= 0)
+                    continue
+                hydrated.Push(Map(
+                    "durationMs", msInt,
+                    "ts",         evtMap.Has("ts")       ? evtMap["ts"]       : "",
+                    "source",     evtMap.Has("source")   ? evtMap["source"]   : "",
+                    "fromZone",   evtMap.Has("fromZone") ? evtMap["fromZone"] : "",
+                    "toZone",     evtMap.Has("toZone")   ? evtMap["toZone"]   : ""
+                ))
+            }
+            this._loadingEvents := hydrated
+        }
+        if (firstTs != "")
+            this._firstTs := firstTs
+        if (IsNumber(deathCount) && deathCount >= 0)
+            this._deathCount := Integer(deathCount + 0)
+    }
+
     ; ---- Handlers ----
 
+    ; RunStarted handler. The hydrated:true variant comes from
+    ; RunService.Hydrate at the end of the composition root's __New;
+    ; by that point Hydrate(events, firstTs) has already restored
+    ; _loadingEvents and _firstTs from disk. Wiping them via Reset()
+    ; here would lose every loading event tracked before the
+    ; previous shutdown. Same convention as LoadingTotalsService and
+    ; ZoneTrackingService._OnRunStarted.
     _OnRunStarted(data)
     {
-        this.Reset()
+        isHydrate := IsObject(data) && data.Has("hydrated") && data["hydrated"]
+        if !isHydrate
+            this.Reset()
         if !IsObject(data)
             return
         if data.Has("runId")
             this._runId := data["runId"]
         if data.Has("startedAt")
             this._startedAt := data["startedAt"]
-        this._firstTs := this._NowTimestamp()
+        if !isHydrate
+            this._firstTs := this._NowTimestamp()
     }
 
     _OnLoadingMeasured(data)

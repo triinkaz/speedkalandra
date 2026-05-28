@@ -351,8 +351,10 @@ class SpeedKalandraApp
         ; Hydrated values are captured here in locals; the
         ; RunStatePersister doesn't exist yet (depends on services
         ; constructed below) and is primed with these once it does.
-        hydratedLoadingMs  := -1
-        hydratedZoneTotals := ""
+        hydratedLoadingMs          := -1
+        hydratedZoneTotals         := ""
+        hydratedLoadingEventsCount := -1
+        hydratedDeathCount         := -1
 
         try
         {
@@ -404,6 +406,40 @@ class SpeedKalandraApp
         this.statsRecorder := RunStatsRecorder(this.bus, this.clock)
         this.plotBuilder   := RunStatsPlotBuilder(this.zonesCatalog, this._cfg)
 
+        ; Hydrates the recorder's loadingEvents array from disk so the
+        ; finalized-run plot dialog sees ALL loadings of a multi-session
+        ; run, not just the ones from the final session. Mirror of the
+        ; loadingTotals hydrate above — the scalar there feeds the live
+        ; overlay, this array feeds the history dialog. Both are part
+        ; of the same in-progress run state and must survive the same
+        ; close/reopen cycle. Run before runService.Hydrate at the end
+        ; of __New so the RunStarted{hydrated:true} replay (which the
+        ; recorder now ignores for Reset purposes) does not wipe the
+        ; just-restored array. startedAt is passed through so _firstTs
+        ; survives the boot too — otherwise the dialog's "Start" header
+        ; shows the latest boot time instead of the original run start.
+        try
+        {
+            if (hydratedState is RunState && hydratedState.IsActive())
+            {
+                loadingEvents := this.runState.LoadLoadingEvents()
+                hydratedDeathCount := this.runState.LoadDeathCount()
+                this.statsRecorder.Hydrate(loadingEvents, hydratedState.startedAt, hydratedDeathCount)
+                if (loadingEvents.Length > 0)
+                    this.log.Info("Loading events hydrated: " . loadingEvents.Length . " events from previous session(s)", "App")
+                if (hydratedDeathCount > 0)
+                    this.log.Info("Death count hydrated: " . hydratedDeathCount . " deaths from previous session(s)", "App")
+                hydratedLoadingEventsCount := loadingEvents.Length
+            }
+        }
+        catch as ex
+        {
+            this.log.Warn("Failed to hydrate loading events: " . ex.Message
+                . " | What: " . (ex.HasOwnProp("What") ? ex.What : "?")
+                . " | Line: " . (ex.HasOwnProp("Line") ? ex.Line : "?")
+                . " | File: " . (ex.HasOwnProp("File") ? ex.File : "?"), "App")
+        }
+
         ; Aggregation over deathLog for the DeathStatsDialog. Pure
         ; read service: no cache, re-reads the CSV on every Aggregate
         ; call. Catalog used to drop town zones from the stats.
@@ -433,10 +469,13 @@ class SpeedKalandraApp
         ; on-disk INI sees one consistent stream of writes.
         this._persister := RunStatePersister(
             this.runService, this.runState, this.loadingTotals,
-            this.zoneTracker, this._settingsRepo, this._cfg, this.log
+            this.zoneTracker, this.statsRecorder, this._settingsRepo,
+            this._cfg, this.log
         )
         this._persister.PrimeLoadingTotalCache(hydratedLoadingMs)
         this._persister.PrimeZoneTotalsCache(hydratedZoneTotals)
+        this._persister.PrimeLoadingEventsCount(hydratedLoadingEventsCount)
+        this._persister.PrimeDeathCountCache(hydratedDeathCount)
 
         this._persistFn := () => this._persister.PersistSettings()
 

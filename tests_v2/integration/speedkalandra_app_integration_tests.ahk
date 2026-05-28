@@ -124,6 +124,12 @@ class SpeedKalandraAppIntegrationTests extends TestCase
         "second_instance_resumes_timer_with_correct_base_ms",
         "hydrated_run_propagates_run_id_to_stats_recorder",
         "hydrated_run_finalize_saves_to_history",
+        ; Regression: pre-fix the recorder Reset()'d unconditionally
+        ; on RunStarted{hydrated:true} AND _loadingEvents was never
+        ; persisted to disk. Multi-session runs only saw the FINAL
+        ; session's loadings in the finalized snapshot. The user's
+        ; 6h23m run with only 1m07s of loading was the symptom.
+        "hydrated_run_finalize_includes_loading_events_from_all_sessions",
 
         ; --- Route service hydration ordering + re-sync (B4) ---
         "route_service_subscribed_before_hydrate_so_it_observes_hydrated_run_started",
@@ -635,6 +641,118 @@ class SpeedKalandraAppIntegrationTests extends TestCase
             "Hydrated run finalize saved to history (pre-fix silently failed)")
         Assert.Equal(firstRunId ".ini", files[1],
             "Saved file has the hydrated runId")
+
+        try app2.Stop()
+    }
+
+    hydrated_run_finalize_includes_loading_events_from_all_sessions()
+    {
+        ; Regression: pre-fix the recorder unconditionally Reset() on
+        ; RunStarted{hydrated:true} (no flag check) AND _loadingEvents
+        ; was never persisted to disk between sessions. The finalized
+        ; snapshot therefore contained only loadings from the FINAL
+        ; session before finalize — the user's 6h23m multi-session
+        ; run with only 1m07s of LOADING was the symptom.
+        ;
+        ; This test reproduces the close/reopen/finalize cycle with
+        ; loading events in both sessions and asserts the finalized
+        ; snapshot's totals.loading covers BOTH.
+
+        ; ---- Session 1: accumulate some loadings ----
+        this.app.bus.Publish(Commands.NewRunRequested, Map())
+        firstRunId := this.app.runService.GetRunId()
+
+        this._EnterZoneAndAdvance("The Riverbank", 60000)
+        this.app.bus.Publish(Events.LoadingMeasured, Map(
+            "durationMs", 4500,
+            "fromZone",   "The Riverbank",
+            "toZone",     "Clearfell Encampment",
+            "source",     "pixel"
+        ))
+        this._EnterZoneAndAdvance("Clearfell Encampment", 60000)
+        this.app.bus.Publish(Events.LoadingMeasured, Map(
+            "durationMs", 3200,
+            "fromZone",   "Clearfell Encampment",
+            "toZone",     "Mud Burrow",
+            "source",     "pixel"
+        ))
+        this._EnterZoneAndAdvance("Mud Burrow", 120000)
+        this.app.bus.Publish(Events.LoadingMeasured, Map(
+            "durationMs", 5100,
+            "fromZone",   "Mud Burrow",
+            "toZone",     "The Riverbank",
+            "source",     "pixel"
+        ))
+
+        Assert.Equal(3, this.app.statsRecorder.GetLoadingEvents().Length,
+            "sanity: session 1 captured 3 loading events in memory")
+
+        ; Persist mid-run state (production: 5 s SetTimer). Test
+        ; setup does not call app.Start, so we drive it directly.
+        ; SaveLoadingEvents is the new persistence path being tested;
+        ; without it, the file would not exist on disk and the
+        ; second instance would hydrate an empty array.
+        this.app.runService.PersistTick()
+        this.app.runState.SaveZoneTotals(
+            this.app.zoneTracker.GetTotalsForSnapshot())
+        this.app.runState.SaveLoadingEvents(
+            this.app.statsRecorder.GetLoadingEvents())
+
+        try this.app.Stop()
+        this.app := ""
+
+        ; ---- Reboot ----
+        secondClock := Fixtures.MakeFakeClock(2000000)
+        app2 := SpeedKalandraApp(Map(
+            "iniPath",          this.iniPath,
+            "zonesCsvPath",     this.zonesCsvPath,
+            "logPath",          this.logPath,
+            "runHistoryDir",    this.runHistoryDir,
+            "personalBestPath", this.pbPath,
+            "deathLogPath",     this.deathLogPath,
+            "routesDir",        this.routesDir,
+            "headless",         true,
+            "clock",            secondClock
+        ))
+
+        Assert.True(app2.runService.IsActive(),
+            "sanity: hydrated as active")
+        Assert.Equal(3, app2.statsRecorder.GetLoadingEvents().Length,
+            "Hydrated recorder preserves session 1 loading events "
+            . "(PRE-FIX: this was 0 because _OnRunStarted called Reset "
+            . "unconditionally and the array was never persisted to disk)")
+
+        ; ---- Session 2: add more loadings ----
+        app2.bus.Publish(Events.LoadingMeasured, Map(
+            "durationMs", 2700,
+            "fromZone",   "The Riverbank",
+            "toZone",     "Mud Burrow",
+            "source",     "pixel"
+        ))
+        app2.bus.Publish(Events.LoadingMeasured, Map(
+            "durationMs", 6300,
+            "fromZone",   "Mud Burrow",
+            "toZone",     "Clearfell Encampment",
+            "source",     "pixel"
+        ))
+
+        Assert.Equal(5, app2.statsRecorder.GetLoadingEvents().Length,
+            "Session 2 events appended to the hydrated array (3 + 2)")
+
+        ; ---- Finalize ----
+        app2.bus.Publish(Commands.FinalizeRunRequested, Map())
+
+        ; ---- Verify the saved history INI ----
+        historyRepo := RunHistoryRepository(this.runHistoryDir)
+        saved := historyRepo.Load(firstRunId)
+        Assert.True(IsObject(saved), "Run was saved to history")
+
+        ; 4500 + 3200 + 5100 + 2700 + 6300 = 21800 ms
+        expectedLoadingMs := 4500 + 3200 + 5100 + 2700 + 6300
+        Assert.Equal(expectedLoadingMs,
+            saved["totals"].Has("loading") ? saved["totals"]["loading"] : 0,
+            "Finalized snapshot's LOADING total includes all events from "
+            . "both sessions (pre-fix this would have been 9000 = session 2 only)")
 
         try app2.Stop()
     }

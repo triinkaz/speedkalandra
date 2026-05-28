@@ -3,14 +3,18 @@
 ; ============================================================
 ;
 ; Owns the 5-second tick that writes runBaseMs / loading total /
-; per-zone totals to disk while a run is in progress, plus the
-; full flush invoked on graceful shutdown. Extracted out of
-; SpeedKalandraApp so the composition root stays focused on wiring.
+; death count / per-zone totals / loading events to disk while a run is in
+; progress, plus the full flush invoked on graceful shutdown.
+; Extracted out of SpeedKalandraApp so the composition root stays
+; focused on wiring.
 ;
-; A hash cache (_lastSavedLoadingTotal, _lastSavedZoneTotalsHash)
-; skips IniWrite / AtomicWriter calls when nothing has changed — a
-; naive write every tick was blocking the main thread for 1–2 s on
-; runs with many zones.
+; A hash/count cache (_lastSavedLoadingTotal, _lastSavedDeathCount,
+; _lastSavedZoneTotalsHash, _lastSavedLoadingEventsCount) skips IniWrite / AtomicWriter calls
+; when nothing has changed — a naive write every tick was blocking
+; the main thread for 1–2 s on runs with many zones. Events use
+; just the count because the array is append-only during a run
+; (Reset only happens on RunReset/Cancelled, which triggers
+; ResetCache via the app's _OnRunEndedClearZones handler).
 ;
 ; Public API:
 ;   Tick()              5-second SetTimer callback. Skip-cache active.
@@ -21,6 +25,7 @@
 ;                       INI.
 ;   PrimeLoadingTotalCache(ms)
 ;   PrimeZoneTotalsCache(totalsMap)
+;   PrimeLoadingEventsCount(n)
 ;                       Called once after construction with the
 ;                       hydrated values so the first Tick doesn't
 ;                       redundantly rewrite the just-loaded state.
@@ -33,7 +38,7 @@
 ;
 ; Construction:
 ;   persister := RunStatePersister(
-;       runService, runState, loadingTotals, zoneTracker,
+;       runService, runState, loadingTotals, zoneTracker, recorder,
 ;       settingsRepo, cfg, log
 ;   )
 
@@ -43,14 +48,17 @@ class RunStatePersister
     _runState       := ""
     _loadingTotals  := ""
     _zoneTracker    := ""
+    _recorder       := ""
     _settingsRepo   := ""
     _cfg            := ""
     _log            := ""
 
-    _lastSavedLoadingTotal   := -1
-    _lastSavedZoneTotalsHash := ""
+    _lastSavedLoadingTotal        := -1
+    _lastSavedDeathCount          := -1
+    _lastSavedZoneTotalsHash      := ""
+    _lastSavedLoadingEventsCount  := -1
 
-    __New(runService, runState, loadingTotals, zoneTracker, settingsRepo, cfg, log)
+    __New(runService, runState, loadingTotals, zoneTracker, recorder, settingsRepo, cfg, log)
     {
         if !IsObject(runService)
             throw TypeError("RunStatePersister: 'runService' required")
@@ -60,6 +68,8 @@ class RunStatePersister
             throw TypeError("RunStatePersister: 'loadingTotals' required")
         if !IsObject(zoneTracker)
             throw TypeError("RunStatePersister: 'zoneTracker' required")
+        if !IsObject(recorder)
+            throw TypeError("RunStatePersister: 'recorder' required")
         if !IsObject(settingsRepo)
             throw TypeError("RunStatePersister: 'settingsRepo' required")
         if !IsObject(cfg)
@@ -71,6 +81,7 @@ class RunStatePersister
         this._runState       := runState
         this._loadingTotals  := loadingTotals
         this._zoneTracker    := zoneTracker
+        this._recorder       := recorder
         this._settingsRepo   := settingsRepo
         this._cfg            := cfg
         this._log            := log
@@ -107,6 +118,27 @@ class RunStatePersister
         catch as ex
         {
             try this._log.Warn("Failed to persist loading total: " . ex.Message, "Persister")
+        }
+
+        ; Death count: scalar in [RunState] DeathCount, mirror of
+        ; LoadingTotal. Same skip-cache contract — only write when
+        ; the count changed (monotonic during a run except for
+        ; RunReset/Cancelled which trigger ResetCache).
+        try
+        {
+            if IsObject(this._recorder) && this._runService.IsActive()
+            {
+                dc := this._recorder.GetDeathCount()
+                if (dc != this._lastSavedDeathCount)
+                {
+                    this._runState.SaveDeathCount(dc)
+                    this._lastSavedDeathCount := dc
+                }
+            }
+        }
+        catch as ex
+        {
+            try this._log.Warn("Failed to persist death count: " . ex.Message, "Persister")
         }
 
         try
@@ -151,6 +183,28 @@ class RunStatePersister
         {
             try this._log.Warn("Failed to persist zone totals: " . ex.Message, "Persister")
         }
+
+        ; Loading events: append-only during a run, so the count is
+        ; a sufficient dirty-cache key. Same bool-return + cache-only-
+        ; on-success contract as zone totals — a transient disk
+        ; failure must not block subsequent retries.
+        try
+        {
+            if IsObject(this._recorder) && this._runService.IsActive()
+            {
+                evts := this._recorder.GetLoadingEvents()
+                count := evts.Length
+                if (count != this._lastSavedLoadingEventsCount)
+                {
+                    if this._runState.SaveLoadingEvents(evts)
+                        this._lastSavedLoadingEventsCount := count
+                }
+            }
+        }
+        catch as ex
+        {
+            try this._log.Warn("Failed to persist loading events: " . ex.Message, "Persister")
+        }
     }
 
     ; Called from Stop() / OnExit — last chance to flush before
@@ -183,6 +237,20 @@ class RunStatePersister
 
         try
         {
+            if IsObject(this._recorder) && this._runService.IsActive()
+            {
+                dc := this._recorder.GetDeathCount()
+                this._runState.SaveDeathCount(dc)
+                this._lastSavedDeathCount := dc
+            }
+        }
+        catch as ex
+        {
+            try this._log.Warn("Failed to persist death count (Full): " . ex.Message, "Persister")
+        }
+
+        try
+        {
             if IsObject(this._zoneTracker) && this._zoneTracker.IsRunActive()
             {
                 snapshot := this._zoneTracker.GetTotalsForSnapshot()
@@ -193,6 +261,20 @@ class RunStatePersister
         catch as ex
         {
             try this._log.Warn("Failed to persist zone totals (Full): " . ex.Message, "Persister")
+        }
+
+        try
+        {
+            if IsObject(this._recorder) && this._runService.IsActive()
+            {
+                evts := this._recorder.GetLoadingEvents()
+                this._runState.SaveLoadingEvents(evts)
+                this._lastSavedLoadingEventsCount := evts.Length
+            }
+        }
+        catch as ex
+        {
+            try this._log.Warn("Failed to persist loading events (Full): " . ex.Message, "Persister")
         }
     }
 
@@ -221,11 +303,27 @@ class RunStatePersister
             this._lastSavedLoadingTotal := loadingMs
     }
 
+    ; Same idea for death count, called after statsRecorder.Hydrate.
+    PrimeDeathCountCache(n)
+    {
+        if (IsNumber(n) && n >= 0)
+            this._lastSavedDeathCount := Integer(n + 0)
+    }
+
     ; Same idea for zone totals, called after zoneTracker.Hydrate.
     PrimeZoneTotalsCache(zoneTotals)
     {
         if IsObject(zoneTotals)
             this._lastSavedZoneTotalsHash := RunStatePersister.ComputeTotalsHash(zoneTotals)
+    }
+
+    ; Same idea for loading events, called after statsRecorder.Hydrate.
+    ; n is the length of the hydrated array — negative or non-number
+    ; is ignored so the next Tick still writes.
+    PrimeLoadingEventsCount(n)
+    {
+        if (IsNumber(n) && n >= 0)
+            this._lastSavedLoadingEventsCount := Integer(n + 0)
     }
 
     ; Clears the dirty-cache when a run ends (RunReset / RunCancelled).
@@ -234,7 +332,9 @@ class RunStatePersister
     ResetCache()
     {
         this._lastSavedLoadingTotal := -1
+        this._lastSavedDeathCount := -1
         this._lastSavedZoneTotalsHash := ""
+        this._lastSavedLoadingEventsCount := -1
     }
 
     ; Stable hash of a Map<key, val>. Used to skip Save calls when
