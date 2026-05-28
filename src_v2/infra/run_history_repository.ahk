@@ -22,8 +22,9 @@
 ;   morte=450000
 ;
 ;   [checkpoints]
-;   Act1Ms=1725000
-;   Act2Ms=3719000
+;   Act1NormalMs=1725000
+;   Act1InterludeMs=8200000
+;   Act2NormalMs=3719000
 ;
 ;   [details]
 ;   count=15
@@ -37,9 +38,12 @@
 ; project already has a battle-tested IniFile reader.
 ;
 ; Old runs saved before the [checkpoints] section was added simply
-; come back with an empty actCheckpoints Map on Load. Old runs may
-; also carry category=boss in totals/details; the builder no longer
-; declares that category but the loader passes it through.
+; come back with an empty actCheckpoints Map on Load. Pre-B1 runs
+; saved Act<N>Ms keys (no stage); Load accepts those and treats
+; them as Normal so legacy data isn't dropped. New runs save with
+; the stage-aware schema. Old runs may also carry category=boss in
+; totals/details; the builder no longer declares that category but
+; the loader passes it through.
 ;
 ; API:
 ;   ListRunIds(maxN := -1)    → Array<string>, mtime desc
@@ -197,20 +201,40 @@ class RunHistoryRepository
         sb .= "`r`n"
 
         ; ---- [checkpoints] ----
-        ; Map<actNum, ms>. Same validation as the old IniWrite path:
-        ; skip non-numeric / non-positive entries. Old runs saved
-        ; before this section existed Load with an empty Map.
+        ; Composite-keyed: Map<"act|stage", ms>. Output format:
+        ;   Act<N>NormalMs   for stage "normal"
+        ;   Act<N>InterludeMs for stage "interlude"
+        ; Backward-compat: integer-keyed entries (legacy callers)
+        ; are written under the Normal key. Pre-B1 runs saved with
+        ; Act<N>Ms; Load translates both shapes back into composite
+        ; form. Old runs saved before this section existed come back
+        ; with an empty Map.
         sb .= "[checkpoints]`r`n"
         ckpts := buildResult.Has("actCheckpoints") ? buildResult["actCheckpoints"] : Map()
         if IsObject(ckpts)
         {
-            for actNum, ms in ckpts
+            for k, ms in ckpts
             {
-                if !IsNumber(actNum) || actNum <= 0
-                    continue
                 if !IsNumber(ms) || ms <= 0
                     continue
-                sb .= "Act" . Integer(actNum) . "Ms=" . Integer(ms) . "`r`n"
+                actNum := 0
+                stage  := ""
+                if IsNumber(k) && k > 0
+                {
+                    actNum := Integer(k)
+                    stage  := "normal"
+                }
+                else if RegExMatch(String(k), "i)^(\d+)\|(normal|interlude)$", &mk)
+                {
+                    actNum := Integer(mk[1] + 0)
+                    stage  := StrLower(mk[2])
+                }
+                else
+                    continue
+                if (actNum <= 0)
+                    continue
+                stageCap := (stage = "interlude") ? "Interlude" : "Normal"
+                sb .= "Act" . actNum . stageCap . "Ms=" . Integer(ms) . "`r`n"
             }
         }
         sb .= "`r`n"
@@ -379,16 +403,27 @@ class RunHistoryRepository
                 for k, v in ckptMap
                 {
                     keyStr := String(k)
-                    if !RegExMatch(keyStr, "i)^Act(\d+)Ms$", &m)
+                    actNum := 0
+                    stage  := ""
+                    if RegExMatch(keyStr, "i)^Act(\d+)(Normal|Interlude)Ms$", &mNew)
+                    {
+                        actNum := Integer(mNew[1] + 0)
+                        stage  := (StrLower(mNew[2]) = "interlude") ? "interlude" : "normal"
+                    }
+                    else if RegExMatch(keyStr, "i)^Act(\d+)Ms$", &mOld)
+                    {
+                        actNum := Integer(mOld[1] + 0)
+                        stage  := "normal"
+                    }
+                    else
                         continue
-                    actNum := Integer(m[1] + 0)
                     if (actNum <= 0)
                         continue
                     try
                     {
                         ms := Integer(v + 0)
                         if (ms > 0)
-                            checkpoints[actNum] := ms
+                            checkpoints[actNum . "|" . stage] := ms
                     }
                     catch
                         continue
@@ -458,14 +493,16 @@ class RunHistoryRepository
             }
             summary["totals"] := totals
 
-            ; actCheckpoints — Map<actNum, ms> from the [checkpoints]
-            ; section. Same regex + filtering as Load() so the
-            ; summary path stays consistent with the full read.
-            ; Cheap to parse (handful of integer entries per run) and
-            ; required by RunAverageService.GetAverageRunMsForAct,
-            ; which is the natural consumer of the summary surface.
-            ; Old runs persisted before [checkpoints] existed Load
-            ; with an empty Map.
+            ; actCheckpoints — Map<"act|stage", ms> from the
+            ; [checkpoints] section. Same regex + filtering as
+            ; Load() so the summary path stays consistent with the
+            ; full read. Cheap to parse (handful of integer entries
+            ; per run) and required by RunAverageService.
+            ; GetAverageRunMsForAct, which is the natural consumer
+            ; of the summary surface. Old runs persisted before
+            ; [checkpoints] existed Load with an empty Map; pre-B1
+            ; runs use the legacy Act<N>Ms shape that gets folded
+            ; into the normal stage.
             checkpoints := Map()
             try
             {
@@ -475,16 +512,27 @@ class RunHistoryRepository
                     for k, v in ckptMap
                     {
                         keyStr := String(k)
-                        if !RegExMatch(keyStr, "i)^Act(\d+)Ms$", &m)
+                        actNum := 0
+                        stage  := ""
+                        if RegExMatch(keyStr, "i)^Act(\d+)(Normal|Interlude)Ms$", &mNew)
+                        {
+                            actNum := Integer(mNew[1] + 0)
+                            stage  := (StrLower(mNew[2]) = "interlude") ? "interlude" : "normal"
+                        }
+                        else if RegExMatch(keyStr, "i)^Act(\d+)Ms$", &mOld)
+                        {
+                            actNum := Integer(mOld[1] + 0)
+                            stage  := "normal"
+                        }
+                        else
                             continue
-                        actNum := Integer(m[1] + 0)
                         if (actNum <= 0)
                             continue
                         try
                         {
                             ms := Integer(v + 0)
                             if (ms > 0)
-                                checkpoints[actNum] := ms
+                                checkpoints[actNum . "|" . stage] := ms
                         }
                         catch
                             continue

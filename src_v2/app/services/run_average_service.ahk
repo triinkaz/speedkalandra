@@ -224,6 +224,14 @@ class RunAverageService
         ; Per-act denominator counts only runs that REACHED that
         ; act. A run that ended in Act 2 doesn't have a checkpoint
         ; for Act 3, so it doesn't contribute to the Act 3 average.
+        ;
+        ; Post-B1 history keys checkpoints by "<act>|<stage>" composite.
+        ; This service still exposes integer-keyed averages (act-only)
+        ; via GetAverageRunMsForAct(N), matching the legacy semantic:
+        ; only normal-stage entries contribute. Interlude entries are
+        ; tracked separately (cruel is a parallel ladder, averaging
+        ; them together would be meaningless). Pre-B1 history runs
+        ; carry integer keys; those are treated as normal stage.
         actAccum := Map()    ; Map<actNum, Map{sum, count}>
         for _, summary in summaries
         {
@@ -232,17 +240,26 @@ class RunAverageService
             ckpts := summary.Has("actCheckpoints") ? summary["actCheckpoints"] : ""
             if !IsObject(ckpts)
                 continue
-            for actNum, actMs in ckpts
+            for rawKey, actMs in ckpts
             {
-                if !IsNumber(actNum) || actNum <= 0
-                    continue
                 if !IsNumber(actMs) || actMs <= 0
                     continue
-                key := Integer(actNum)
-                if !actAccum.Has(key)
-                    actAccum[key] := Map("sum", 0, "count", 0)
-                actAccum[key]["sum"]   += Integer(actMs)
-                actAccum[key]["count"] += 1
+                ; Normalize key: integer (legacy) → act + normal;
+                ; "N|normal" → act + normal; "N|interlude" → skip
+                ; (averaged in a future per-stage API).
+                actNum := 0
+                if IsNumber(rawKey) && rawKey > 0
+                    actNum := Integer(rawKey)
+                else if RegExMatch(String(rawKey), "i)^(\d+)\|normal$", &mk)
+                    actNum := Integer(mk[1] + 0)
+                else
+                    continue
+                if (actNum <= 0)
+                    continue
+                if !actAccum.Has(actNum)
+                    actAccum[actNum] := Map("sum", 0, "count", 0)
+                actAccum[actNum]["sum"]   += Integer(actMs)
+                actAccum[actNum]["count"] += 1
             }
         }
         for actNum, agg in actAccum

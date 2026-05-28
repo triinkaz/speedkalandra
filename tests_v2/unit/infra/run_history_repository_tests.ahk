@@ -33,6 +33,7 @@ class RunHistoryRepositoryTests extends TestCase
         "save_writes_meta_section",
         "save_writes_totals_section",
         "save_writes_checkpoints_section",
+        "save_writes_checkpoints_section_with_interlude",
         "save_writes_details_section_with_count",
 
         ; --- Save: re-save consistency ---
@@ -73,6 +74,8 @@ class RunHistoryRepositoryTests extends TestCase
         "load_parses_meta_fields",
         "load_parses_totals",
         "load_parses_checkpoints_with_regex",
+        "load_parses_legacy_act_n_ms_as_normal_stage",
+        "load_parses_act_n_interlude_ms_as_interlude_stage",
         "load_parses_details_array",
         "load_details_include_safe_category_label",
 
@@ -224,13 +227,37 @@ class RunHistoryRepositoryTests extends TestCase
 
     save_writes_checkpoints_section()
     {
+        ; Pre-B1 input shape (integer-keyed actCheckpoints) is still
+        ; accepted by Save; output is the stage-aware schema
+        ; (Act<N>NormalMs / Act<N>InterludeMs). Legacy integer keys
+        ; fold into the Normal bucket.
         tmpDir := Fixtures.TempDir()
         repo := RunHistoryRepository(tmpDir)
         repo.Save(this._MakeBuildResult())
 
         ini := IniFile(tmpDir "\20260512_142345.ini")
-        Assert.Equal("1725000", ini.Read("checkpoints", "Act1Ms"))
-        Assert.Equal("3719000", ini.Read("checkpoints", "Act2Ms"))
+        Assert.Equal("1725000", ini.Read("checkpoints", "Act1NormalMs"))
+        Assert.Equal("3719000", ini.Read("checkpoints", "Act2NormalMs"))
+    }
+
+    save_writes_checkpoints_section_with_interlude()
+    {
+        ; B1 Layer B canonical input: composite-keyed checkpoints.
+        ; Each (act, stage) bucket round-trips to its own INI key.
+        tmpDir := Fixtures.TempDir()
+        repo := RunHistoryRepository(tmpDir)
+        bldRes := this._MakeBuildResult()
+        bldRes["actCheckpoints"] := Map(
+            "1|normal",    60000,
+            "1|interlude", 8200000,
+            "4|interlude", 9800000
+        )
+        repo.Save(bldRes)
+
+        ini := IniFile(tmpDir "\20260512_142345.ini")
+        Assert.Equal("60000",   ini.Read("checkpoints", "Act1NormalMs"))
+        Assert.Equal("8200000", ini.Read("checkpoints", "Act1InterludeMs"))
+        Assert.Equal("9800000", ini.Read("checkpoints", "Act4InterludeMs"))
     }
 
     save_writes_details_section_with_count()
@@ -726,12 +753,62 @@ class RunHistoryRepositoryTests extends TestCase
 
     load_parses_checkpoints_with_regex()
     {
+        ; Post-B1 actCheckpoints keys are composite "<act>|<stage>".
+        ; The Save path above fed integer keys; Load returns them
+        ; folded into the normal stage.
         repo := RunHistoryRepository(Fixtures.TempDir())
         repo.Save(this._MakeBuildResult())
 
         loaded := repo.Load("20260512_142345")
-        Assert.Equal(1725000, loaded["actCheckpoints"][1])
-        Assert.Equal(3719000, loaded["actCheckpoints"][2])
+        Assert.Equal(1725000, loaded["actCheckpoints"]["1|normal"])
+        Assert.Equal(3719000, loaded["actCheckpoints"]["2|normal"])
+    }
+
+    load_parses_legacy_act_n_ms_as_normal_stage()
+    {
+        ; Pre-B1 INIs persisted Act<N>Ms (no stage). The loader
+        ; rehydrates them under the normal stage bucket so PB
+        ; rebuilds against legacy data don't silently drop entries.
+        tmpDir := Fixtures.TempDir()
+        bldRes := this._MakeBuildResult()
+        ; Force a save so a real history file exists.
+        repo := RunHistoryRepository(tmpDir)
+        repo.Save(bldRes)
+        ; Overwrite the [checkpoints] section with the legacy schema.
+        path := tmpDir "\20260512_142345.ini"
+        content := Fixtures.FileReadAll(path)
+        legacyContent := RegExReplace(content,
+            "is)\[checkpoints\].*?(?=\[)",
+            "[checkpoints]`r`nAct1Ms=999000`r`nAct3Ms=4200000`r`n`r`n")
+        FileDelete(path)
+        FileAppend(legacyContent, path, "UTF-16")
+
+        loaded := repo.Load("20260512_142345")
+        Assert.Equal(999000,  loaded["actCheckpoints"]["1|normal"])
+        Assert.Equal(4200000, loaded["actCheckpoints"]["3|normal"])
+        Assert.False(loaded["actCheckpoints"].Has(1),
+            "Integer keys belong to the pre-B1 surface; loader now keys by composite")
+    }
+
+    load_parses_act_n_interlude_ms_as_interlude_stage()
+    {
+        ; Mixed-schema INI (e.g. saved by a B1-aware build) round-trips
+        ; to composite keys with the right stage flag on each entry.
+        tmpDir := Fixtures.TempDir()
+        bldRes := this._MakeBuildResult()
+        repo := RunHistoryRepository(tmpDir)
+        repo.Save(bldRes)
+        path := tmpDir "\20260512_142345.ini"
+        content := Fixtures.FileReadAll(path)
+        mixedContent := RegExReplace(content,
+            "is)\[checkpoints\].*?(?=\[)",
+            "[checkpoints]`r`nAct1NormalMs=60000`r`nAct1InterludeMs=8200000`r`n`r`n")
+        FileDelete(path)
+        FileAppend(mixedContent, path, "UTF-16")
+
+        loaded := repo.Load("20260512_142345")
+        Assert.Equal(60000,   loaded["actCheckpoints"]["1|normal"])
+        Assert.Equal(8200000, loaded["actCheckpoints"]["1|interlude"])
     }
 
     load_parses_details_array()

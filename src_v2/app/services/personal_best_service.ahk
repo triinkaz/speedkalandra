@@ -24,18 +24,18 @@ class PersonalBestService
     _repo := ""
     _warn := ""   ; WarningSink (Null by default; LogServiceWarningSink in production)
 
-    _runPbMs    := 0
-    _runPbRunId := ""
-    _runPbByAct := ""    ; Map<actNum, ms>
-    _zonePbs    := ""    ; Map<zoneName, ms>
+    _runPbMs            := 0
+    _runPbRunId         := ""
+    _runPbByActStage    := ""    ; Map<"act|stage", ms> — B1 Layer B
+    _zonePbs            := ""    ; Map<zoneName, ms>
 
     __New(repo, sinkOrEmpty := "")
     {
         if !(repo is PersonalBestRepository)
             throw TypeError("PersonalBestService: 'repo' must be PersonalBestRepository")
-        this._repo       := repo
-        this._runPbByAct := Map()
-        this._zonePbs    := Map()
+        this._repo             := repo
+        this._runPbByActStage  := Map()
+        this._zonePbs          := Map()
         ; No-op sink by default so existing tests that construct the
         ; service with just `(repo)` keep passing. Production wires
         ; LogServiceWarningSink so persist failures show up in the
@@ -72,29 +72,66 @@ class PersonalBestService
     }
 
     ; ---- Per-act PB ----
+    ;
+    ; Two views:
+    ;   - Stage-aware (B1 Layer B): keyed by "act|stage" composite
+    ;     where stage is "normal" or "interlude". Each (act, stage)
+    ;     bucket is an independent PB.
+    ;   - Legacy: integer-keyed projection of the normal-stage
+    ;     entries only. Pre-B1 "Act N PB" referred to the normal
+    ;     campaign Act N — interlude data didn't exist as a
+    ;     separate concept — so the projection drops interlude
+    ;     entries by default.
 
-    GetRunPbForAct(actNum)
-    {
-        if !IsNumber(actNum) || actNum <= 0
-            return 0
-        return this._runPbByAct.Has(Integer(actNum)) ? this._runPbByAct[Integer(actNum)] : 0
-    }
+    GetRunPbForAct(actNum) => this.GetRunPbForActStage(actNum, "normal")
 
     HasRunPbForAct(actNum) => this.GetRunPbForAct(actNum) > 0
 
+    ; B1 Layer B stage-aware queries.
+    GetRunPbForActStage(actNum, stage)
+    {
+        if !IsNumber(actNum) || actNum <= 0
+            return 0
+        if (stage != "normal" && stage != "interlude")
+            return 0
+        compositeKey := Integer(actNum) . "|" . stage
+        return this._runPbByActStage.Has(compositeKey) ? this._runPbByActStage[compositeKey] : 0
+    }
+
+    HasRunPbForActStage(actNum, stage) => this.GetRunPbForActStage(actNum, stage) > 0
+
+    ; Legacy view: integer-keyed, normal-stage only. Use
+    ; GetAllRunPbsByActStage for the full stage-aware picture.
     GetAllRunPbsByAct()
     {
         out := Map()
-        for k, v in this._runPbByAct
+        for compositeKey, ms in this._runPbByActStage
+        {
+            if !RegExMatch(String(compositeKey), "i)^(\d+)\|normal$", &mk)
+                continue
+            out[Integer(mk[1] + 0)] := ms
+        }
+        return out
+    }
+
+    ; B1 Layer B: composite-keyed defensive copy. Keys look like
+    ; "1|normal", "4|interlude".
+    GetAllRunPbsByActStage()
+    {
+        out := Map()
+        for k, v in this._runPbByActStage
             out[k] := v
         return out
     }
 
-    ; Counts how many acts have a saved PB. Useful for the reset UI.
+    ; Counts how many (act, stage) buckets have a saved PB. Useful
+    ; for the reset UI. Pre-B1 this counted distinct acts (max 4);
+    ; post-B1 each act has up to two buckets (normal + interlude)
+    ; so the count can reach 8.
     CountActPbs()
     {
         n := 0
-        for k, v in this._runPbByAct
+        for k, v in this._runPbByActStage
         {
             if (v > 0)
                 n += 1
@@ -106,7 +143,11 @@ class PersonalBestService
     ;   runMs              — final runDurationMs (TimerService.GetRunMs)
     ;   runId              — id of the completed run
     ;   zoneTotalsMap      — ZoneTrackingService.GetTotalsForSnapshot()
-    ;   actCheckpointsMap  — ActCheckpointTracker.GetCheckpoints()
+    ;   actCheckpointsMap  — ActCheckpointTracker.GetCheckpointsByStage()
+    ;                        (composite keys "act|stage"). For
+    ;                        backward compatibility, the legacy
+    ;                        integer-keyed map is also accepted; each
+    ;                        integer key is treated as the normal stage.
     ; Returns true if any PB was updated. Persists immediately on
     ; change; I/O failure is swallowed so the finalize flow isn't
     ; broken.
@@ -125,21 +166,21 @@ class PersonalBestService
             }
         }
 
-        ; Per-act run PB.
+        ; Per-(act, stage) PB.
         if IsObject(actCheckpointsMap)
         {
-            for actNum, actMs in actCheckpointsMap
+            for k, actMs in actCheckpointsMap
             {
-                if !IsNumber(actNum) || actNum <= 0
-                    continue
                 if !IsNumber(actMs) || actMs <= 0
                     continue
-                actKey := Integer(actNum)
+                compositeKey := PersonalBestService._NormalizeCheckpointKey(k)
+                if (compositeKey = "")
+                    continue
                 actMsInt := Integer(actMs)
-                cur := this._runPbByAct.Has(actKey) ? this._runPbByAct[actKey] : 0
+                cur := this._runPbByActStage.Has(compositeKey) ? this._runPbByActStage[compositeKey] : 0
                 if (cur = 0 || actMsInt < cur)
                 {
-                    this._runPbByAct[actKey] := actMsInt
+                    this._runPbByActStage[compositeKey] := actMsInt
                     changed := true
                 }
             }
@@ -174,10 +215,10 @@ class PersonalBestService
     ; menu "Reset PBs".
     Reset()
     {
-        this._runPbMs    := 0
-        this._runPbRunId := ""
-        this._runPbByAct := Map()
-        this._zonePbs    := Map()
+        this._runPbMs           := 0
+        this._runPbRunId        := ""
+        this._runPbByActStage   := Map()
+        this._zonePbs           := Map()
         this._TryPersistOrWarn("after Reset")
     }
 
@@ -194,10 +235,10 @@ class PersonalBestService
             throw TypeError("PersonalBestService.LoadFromExternal: pbData must be Map")
 
         ; Reset state first
-        this._runPbMs    := 0
-        this._runPbRunId := ""
-        this._runPbByAct := Map()
-        this._zonePbs    := Map()
+        this._runPbMs           := 0
+        this._runPbRunId        := ""
+        this._runPbByActStage   := Map()
+        this._zonePbs           := Map()
 
         if pbData.Has("runPbMs") && IsNumber(pbData["runPbMs"])
         {
@@ -207,6 +248,20 @@ class PersonalBestService
         }
         if pbData.Has("runPbRunId")
             this._runPbRunId := String(pbData["runPbRunId"])
+        ; Per-(act, stage) PB. Stage-aware shape is canonical; legacy
+        ; integer-keyed shape is also accepted (treated as normal).
+        if pbData.Has("runPbByActStage") && IsObject(pbData["runPbByActStage"])
+        {
+            for k, v in pbData["runPbByActStage"]
+            {
+                if !IsNumber(v) || Integer(v) <= 0
+                    continue
+                compositeKey := PersonalBestService._NormalizeCheckpointKey(k)
+                if (compositeKey = "")
+                    continue
+                this._runPbByActStage[compositeKey] := Integer(v)
+            }
+        }
         if pbData.Has("runPbByAct") && IsObject(pbData["runPbByAct"])
         {
             for k, v in pbData["runPbByAct"]
@@ -215,7 +270,9 @@ class PersonalBestService
                     continue
                 if !IsNumber(v) || Integer(v) <= 0
                     continue
-                this._runPbByAct[Integer(k)] := Integer(v)
+                legacyKey := Integer(k) . "|normal"
+                if !this._runPbByActStage.Has(legacyKey)
+                    this._runPbByActStage[legacyKey] := Integer(v)
             }
         }
         if pbData.Has("zonePbs") && IsObject(pbData["zonePbs"])
@@ -264,25 +321,26 @@ class PersonalBestService
             changed := true
         }
 
-        ; --- runPbByAct (if checkpoints available) ---
+        ; --- runPbByActStage (if checkpoints available) ---
         if IsObject(actCheckpoints)
         {
-            newByAct := Map()
-            for actNum, ms in actCheckpoints
+            newByActStage := Map()
+            for k, ms in actCheckpoints
             {
-                if !IsNumber(actNum) || actNum <= 0
-                    continue
                 if !IsNumber(ms) || ms <= 0
                     continue
-                newByAct[Integer(actNum)] := Integer(ms)
+                compositeKey := PersonalBestService._NormalizeCheckpointKey(k)
+                if (compositeKey = "")
+                    continue
+                newByActStage[compositeKey] := Integer(ms)
             }
-            if (newByAct.Count > 0)
+            if (newByActStage.Count > 0)
             {
                 ; Compare serialized to detect a real change
-                if (PersonalBestService._MapToDebugStr(this._runPbByAct)
-                    != PersonalBestService._MapToDebugStr(newByAct))
+                if (PersonalBestService._MapToDebugStr(this._runPbByActStage)
+                    != PersonalBestService._MapToDebugStr(newByActStage))
                 {
-                    this._runPbByAct := newByAct
+                    this._runPbByActStage := newByActStage
                     changed := true
                 }
             }
@@ -314,14 +372,14 @@ class PersonalBestService
         ; Snapshot of the previous state to detect change
         prevRunMs    := this._runPbMs
         prevRunId    := this._runPbRunId
-        prevByActStr := PersonalBestService._MapToDebugStr(this._runPbByAct)
+        prevByActStr := PersonalBestService._MapToDebugStr(this._runPbByActStage)
         prevZoneStr  := PersonalBestService._MapToDebugStr(this._zonePbs)
 
         ; Reset in memory (does NOT persist yet)
-        this._runPbMs    := 0
-        this._runPbRunId := ""
-        this._runPbByAct := Map()
-        this._zonePbs    := Map()
+        this._runPbMs           := 0
+        this._runPbRunId        := ""
+        this._runPbByActStage   := Map()
+        this._zonePbs           := Map()
 
         if !IsObject(runs)
         {
@@ -347,20 +405,20 @@ class PersonalBestService
                 }
             }
 
-            ; Per-act run PB.
+            ; Per-(act, stage) PB.
             if runItem.Has("actCheckpoints") && IsObject(runItem["actCheckpoints"])
             {
-                for actNum, actMs in runItem["actCheckpoints"]
+                for k, actMs in runItem["actCheckpoints"]
                 {
-                    if !IsNumber(actNum) || actNum <= 0
-                        continue
                     if !IsNumber(actMs) || actMs <= 0
                         continue
-                    key := Integer(actNum)
+                    compositeKey := PersonalBestService._NormalizeCheckpointKey(k)
+                    if (compositeKey = "")
+                        continue
                     val := Integer(actMs)
-                    cur := this._runPbByAct.Has(key) ? this._runPbByAct[key] : 0
+                    cur := this._runPbByActStage.Has(compositeKey) ? this._runPbByActStage[compositeKey] : 0
                     if (cur = 0 || val < cur)
-                        this._runPbByAct[key] := val
+                        this._runPbByActStage[compositeKey] := val
                 }
             }
 
@@ -422,7 +480,7 @@ class PersonalBestService
         this._TryPersistOrWarn("after RebuildFromHistory")
 
         ; Detect change to return to the caller (debug/UI feedback)
-        newByActStr := PersonalBestService._MapToDebugStr(this._runPbByAct)
+        newByActStr := PersonalBestService._MapToDebugStr(this._runPbByActStage)
         newZoneStr  := PersonalBestService._MapToDebugStr(this._zonePbs)
         return (this._runPbMs != prevRunMs)
             || (this._runPbRunId != prevRunId)
@@ -479,13 +537,17 @@ class PersonalBestService
                 this._runPbMs := Integer(data["runPbMs"])
             if data.Has("runPbRunId")
                 this._runPbRunId := String(data["runPbRunId"])
-            if data.Has("runPbByAct") && IsObject(data["runPbByAct"])
+            if data.Has("runPbByActStage") && IsObject(data["runPbByActStage"])
             {
-                this._runPbByAct := Map()
-                for k, v in data["runPbByAct"]
+                this._runPbByActStage := Map()
+                for k, v in data["runPbByActStage"]
                 {
-                    if IsNumber(k) && IsNumber(v) && v > 0
-                        this._runPbByAct[Integer(k)] := Integer(v)
+                    if !IsNumber(v) || Integer(v) <= 0
+                        continue
+                    compositeKey := PersonalBestService._NormalizeCheckpointKey(k)
+                    if (compositeKey = "")
+                        continue
+                    this._runPbByActStage[compositeKey] := Integer(v)
                 }
             }
             if data.Has("zonePbs") && IsObject(data["zonePbs"])
@@ -514,10 +576,10 @@ class PersonalBestService
     _PersistToRepo()
     {
         return this._repo.Save(Map(
-            "runPbMs",    this._runPbMs,
-            "runPbRunId", this._runPbRunId,
-            "runPbByAct", this._runPbByAct,
-            "zonePbs",    this._zonePbs
+            "runPbMs",          this._runPbMs,
+            "runPbRunId",       this._runPbRunId,
+            "runPbByActStage",  this._runPbByActStage,
+            "zonePbs",          this._zonePbs
         ))
     }
 
@@ -541,5 +603,44 @@ class PersonalBestService
         {
             this._warn.Warn("PB persist threw (" . context . ")", ex)
         }
+    }
+
+    ; ---- Static helpers ----
+
+    ; Accepts checkpoint-map keys in two shapes and returns the
+    ; canonical composite "<act>|<stage>" string, or "" when the
+    ; input doesn't fit either shape (caller skips).
+    ;
+    ; Shapes accepted:
+    ;   1. Integer or numeric-string key  (legacy ActCheckpointTracker.
+    ;      GetCheckpoints integer keys)     → "<act>|normal"
+    ;   2. "<act>|<stage>" composite       (B1 Layer B,
+    ;      ActCheckpointTracker.GetCheckpointsByStage)
+    ;                                       → returned as-is
+    ;
+    ; Why dual-shape: existing callers (RunSnapshotSaver, tests,
+    ; LoadFromExternal, RebuildFromHistory reading legacy history
+    ; INIs) still pass integer-keyed maps. This helper centralizes
+    ; the conversion so the rest of the service speaks the composite
+    ; shape exclusively.
+    static _NormalizeCheckpointKey(rawKey)
+    {
+        if IsNumber(rawKey) && rawKey > 0
+            return Integer(rawKey) . "|normal"
+        keyStr := String(rawKey)
+        if RegExMatch(keyStr, "i)^(\d+)\|(normal|interlude)$", &m)
+        {
+            actNum := Integer(m[1] + 0)
+            if (actNum > 0)
+                return actNum . "|" . StrLower(m[2])
+        }
+        ; Numeric string ("1") that wasn't a composite: treat as legacy.
+        if RegExMatch(keyStr, "^\d+$")
+        {
+            actNum := Integer(keyStr + 0)
+            if (actNum > 0)
+                return actNum . "|normal"
+        }
+        return ""
     }
 }

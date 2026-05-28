@@ -2,15 +2,16 @@
 ; Updated by PersonalBestService after each RunCompleted (cancelled
 ; runs do not become PBs).
 ;
-; INI format:
+; INI format (post-B1):
 ;
 ;   [Run]
 ;   BestMs=410000
 ;   BestRunId=20260512_142345
 ;
 ;   [RunByAct]
-;   Act1Ms=1725000
-;   Act2Ms=3900000
+;   Act1NormalMs=1725000
+;   Act1InterludeMs=8200000
+;   Act2NormalMs=3900000
 ;   ...
 ;
 ;   [Zones]
@@ -18,14 +19,24 @@
 ;   Clearfell=180000
 ;   ...
 ;
-; [RunByAct] keys are "Act<N>Ms". Zone names are used as raw INI
-; keys; PoE2 names contain no `=`, `]`, or newlines, so they don't
-; need escaping. Any zone with problematic characters is sanitized
-; or dropped at serialize time.
+; [RunByAct] keys are `Act<N><Stage>Ms` where Stage is `Normal` or
+; `Interlude`. Pre-B1 INIs used `Act<N>Ms` (no stage); those are
+; treated as Normal on Load so PBs from old runs aren't silently
+; orphaned. Migration is read-only — the next Save rewrites the
+; whole section in the new shape.
+;
+; Zone names are used as raw INI keys; PoE2 names contain no `=`,
+; `]`, or newlines, so they don't need escaping. Any zone with
+; problematic characters is sanitized or dropped at serialize time.
 ;
 ; API:
-;   Load() → Map{ runPbMs, runPbRunId, runPbByAct, zonePbs }
+;   Load() → Map{ runPbMs, runPbRunId, runPbByActStage, zonePbs }
+;     - runPbByActStage: Map<"act|stage", ms> (composite key,
+;       same format as ActCheckpointTracker.GetCheckpointsByStage)
 ;   Save(data) → bool
+;     - data["runPbByActStage"] is the canonical input. For
+;       backward-compat, data["runPbByAct"] (integer-keyed legacy)
+;       is still accepted and treated as all-normal.
 ;   GetPath() → string
 
 
@@ -55,13 +66,20 @@ class PersonalBestRepository
     GetPath() => this._path
 
     ; Returns a Map with PBs, empty when the file doesn't exist yet.
+    ;
+    ; Both `runPbByActStage` (canonical, composite-keyed) and
+    ; `runPbByAct` (legacy projection, integer-keyed, normal-stage
+    ; only) are populated. Callers should prefer the composite
+    ; shape; the integer-keyed view exists so pre-B1 consumers and
+    ; tests that assert against the legacy field don't break.
     Load()
     {
         result := Map(
-            "runPbMs",    0,
-            "runPbRunId", "",
-            "runPbByAct", Map(),
-            "zonePbs",    Map()
+            "runPbMs",          0,
+            "runPbRunId",       "",
+            "runPbByActStage",  Map(),
+            "runPbByAct",       Map(),
+            "zonePbs",          Map()
         )
 
         if !FileExist(this._path)
@@ -79,7 +97,10 @@ class PersonalBestRepository
         catch
             result["runPbRunId"] := ""
 
-        ; [RunByAct] — per-act PB
+        ; [RunByAct] — per-(act, stage) PB. Two key shapes accepted:
+        ;   New (post-B1):  Act<N>NormalMs, Act<N>InterludeMs
+        ;   Legacy (pre-B1): Act<N>Ms  — treated as Normal so old
+        ;                    files don't lose data on first Load.
         try
         {
             byActMap := ini.ReadSectionAsMap("RunByAct")
@@ -90,17 +111,36 @@ class PersonalBestRepository
                     keyStr := String(k)
                     if (keyStr = "")
                         continue
-                    ; Match "Act<N>Ms" -> extract N
-                    if !RegExMatch(keyStr, "i)^Act(\d+)Ms$", &m)
+                    actNum  := 0
+                    stage   := ""
+                    if RegExMatch(keyStr, "i)^Act(\d+)(Normal|Interlude)Ms$", &mNew)
+                    {
+                        actNum := Integer(mNew[1] + 0)
+                        stage  := (StrLower(mNew[2]) = "interlude") ? "interlude" : "normal"
+                    }
+                    else if RegExMatch(keyStr, "i)^Act(\d+)Ms$", &mOld)
+                    {
+                        actNum := Integer(mOld[1] + 0)
+                        stage  := "normal"
+                    }
+                    else
                         continue
-                    actNum := Integer(m[1] + 0)
                     if (actNum <= 0)
                         continue
                     try
                     {
                         ms := Integer(v + 0)
                         if (ms > 0)
-                            result["runPbByAct"][actNum] := ms
+                        {
+                            compositeKey := actNum . "|" . stage
+                            result["runPbByActStage"][compositeKey] := ms
+                            ; Legacy projection: normal-stage only,
+                            ; integer-keyed. Pre-B1 callers and tests
+                            ; that read runPbByAct still see the
+                            ; right data.
+                            if (stage = "normal")
+                                result["runPbByAct"][actNum] := ms
+                        }
                     }
                     catch
                         continue
@@ -195,21 +235,45 @@ class PersonalBestRepository
         content .= "BestRunId=" currentRunId "`r`n`r`n"
 
         ; --- [RunByAct] ---
+        ; Composite-keyed: Map<"act|stage", ms>. Output format:
+        ;   Act<N>NormalMs   for stage "normal"
+        ;   Act<N>InterludeMs for stage "interlude"
+        ; Backward-compat: if the caller passed `runPbByAct` (legacy
+        ; integer-keyed), treat all entries as normal stage.
         content .= "[RunByAct]`r`n"
-        byAct := data.Has("runPbByAct") ? data["runPbByAct"] : ""
-        if IsObject(byAct)
+        byActStage := data.Has("runPbByActStage") ? data["runPbByActStage"] : ""
+        if !IsObject(byActStage)
+            byActStage := Map()
+        ; Merge in legacy integer-keyed map (treated as normal stage).
+        ; The composite map wins on conflict — if both representations
+        ; are passed, the explicit stage is authoritative.
+        if data.Has("runPbByAct") && IsObject(data["runPbByAct"])
         {
-            for actNum, ms in byAct
+            for actNum, ms in data["runPbByAct"]
             {
                 if !IsNumber(actNum) || actNum <= 0
                     continue
                 if !IsNumber(ms) || ms <= 0
                     continue
-                content .= "Act" Integer(actNum) "Ms=" Integer(ms) "`r`n"
+                legacyKey := Integer(actNum) . "|normal"
+                if !byActStage.Has(legacyKey)
+                    byActStage[legacyKey] := Integer(ms)
             }
         }
+        for compositeKey, ms in byActStage
+        {
+            if !IsNumber(ms) || ms <= 0
+                continue
+            ; Parse "<act>|<stage>" — emit only well-formed entries.
+            if !RegExMatch(String(compositeKey), "i)^(\d+)\|(normal|interlude)$", &mk)
+                continue
+            actNum := Integer(mk[1] + 0)
+            if (actNum <= 0)
+                continue
+            stageCap := (StrLower(mk[2]) = "interlude") ? "Interlude" : "Normal"
+            content .= "Act" . actNum . stageCap . "Ms=" . Integer(ms) . "`r`n"
+        }
         content .= "`r`n"
-
         ; --- [Zones] ---
         content .= "[Zones]`r`n"
         zones := data.Has("zonePbs") ? data["zonePbs"] : ""

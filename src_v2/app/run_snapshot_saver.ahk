@@ -179,7 +179,16 @@ class RunSnapshotSaver
                 }
                 try
                 {
-                    actCheckpoints := this._actCheckpoints.GetCheckpoints()
+                    ; B1 Layer B: use the stage-aware checkpoints so
+                    ; cruel Act N doesn't overwrite normal Act N in
+                    ; the persisted history. The composite-key Map
+                    ; flows through buildResult["actCheckpoints"] →
+                    ; RunHistoryRepository serialization → PB Service
+                    ; UpdateFromRun / RebuildFromHistory. All three
+                    ; speak the new shape; legacy integer-keyed
+                    ; values are still accepted by every consumer
+                    ; for older runs already on disk.
+                    actCheckpoints := this._actCheckpoints.GetCheckpointsByStage()
                 }
                 catch as ex
                 {

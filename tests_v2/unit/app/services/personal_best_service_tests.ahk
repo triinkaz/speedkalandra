@@ -134,7 +134,25 @@ class PersonalBestServiceTests extends TestCase
         "rebuild_ignores_interrupted_keys_when_zone_name_empty",
         "rebuild_ignores_interrupted_keys_when_visit_ms_zero",
         "rebuild_only_discounts_matching_zone",
-        "rebuild_legacy_run_without_interrupted_keys_behaves_like_before"
+        "rebuild_legacy_run_without_interrupted_keys_behaves_like_before",
+
+        ; --- B1 Layer B: stage-aware per-(act, stage) PB ---
+        "get_run_pb_for_act_stage_zero_for_unknown_act",
+        "get_run_pb_for_act_stage_zero_for_unknown_stage",
+        "get_run_pb_for_act_stage_returns_value_when_present",
+        "has_run_pb_for_act_stage_true_when_exists",
+        "has_run_pb_for_act_stage_false_when_zero",
+        "get_all_run_pbs_by_act_stage_returns_defensive_copy",
+        "get_all_run_pbs_by_act_legacy_view_only_normal",
+        "update_from_run_accepts_composite_keyed_checkpoints",
+        "update_from_run_legacy_integer_keys_fold_to_normal_stage",
+        "update_from_run_keeps_normal_and_interlude_independent",
+        "set_as_run_pb_accepts_composite_keyed_checkpoints",
+        "rebuild_from_history_accepts_composite_keyed_checkpoints",
+        "normalize_checkpoint_key_integer",
+        "normalize_checkpoint_key_composite",
+        "normalize_checkpoint_key_numeric_string",
+        "normalize_checkpoint_key_rejects_garbage"
     ]
 
     ; ============================================================
@@ -907,6 +925,187 @@ class PersonalBestServiceTests extends TestCase
         this.svc.RebuildFromHistory(runs)
         Assert.Equal(60000, this.svc.GetZonePbMs("Mud Burrow"))
         Assert.Equal(30000, this.svc.GetZonePbMs("Vastiri Outskirts"))
+    }
+
+    ; ============================================================
+    ; B1 Layer B: stage-aware per-(act, stage) PB
+    ; ============================================================
+    ;
+    ; Post-B1 the service exposes a stage-aware API alongside the
+    ; legacy integer-keyed surface. ActCheckpointTracker emits
+    ; composite "<act>|<stage>" keys via GetCheckpointsByStage();
+    ; RunSnapshotSaver passes them to UpdateFromRun. The legacy
+    ; GetRunPbForAct(N) projects the normal-stage bucket (matching
+    ; the pre-B1 "Act N PB" semantic). Interlude PBs need the new
+    ; GetRunPbForActStage(N, stage) API to surface.
+
+    get_run_pb_for_act_stage_zero_for_unknown_act()
+    {
+        Assert.Equal(0, this.svc.GetRunPbForActStage(5, "normal"))
+        Assert.Equal(0, this.svc.GetRunPbForActStage(-1, "interlude"))
+        Assert.Equal(0, this.svc.GetRunPbForActStage("abc", "normal"))
+    }
+
+    get_run_pb_for_act_stage_zero_for_unknown_stage()
+    {
+        ; Stage must be exactly "normal" or "interlude".
+        this.svc.UpdateFromRun(0, "", "", Map("1|normal", 100000))
+        Assert.Equal(0, this.svc.GetRunPbForActStage(1, ""))
+        Assert.Equal(0, this.svc.GetRunPbForActStage(1, "cruel"))
+        Assert.Equal(0, this.svc.GetRunPbForActStage(1, "NORMAL"))
+    }
+
+    get_run_pb_for_act_stage_returns_value_when_present()
+    {
+        this.svc.UpdateFromRun(0, "", "", Map(
+            "1|normal",    100000,
+            "1|interlude", 800000
+        ))
+        Assert.Equal(100000, this.svc.GetRunPbForActStage(1, "normal"))
+        Assert.Equal(800000, this.svc.GetRunPbForActStage(1, "interlude"))
+    }
+
+    has_run_pb_for_act_stage_true_when_exists()
+    {
+        this.svc.UpdateFromRun(0, "", "", Map("4|interlude", 9999000))
+        Assert.True(this.svc.HasRunPbForActStage(4, "interlude"))
+        Assert.False(this.svc.HasRunPbForActStage(4, "normal"))
+    }
+
+    has_run_pb_for_act_stage_false_when_zero()
+    {
+        Assert.False(this.svc.HasRunPbForActStage(1, "normal"))
+        Assert.False(this.svc.HasRunPbForActStage(1, "interlude"))
+    }
+
+    get_all_run_pbs_by_act_stage_returns_defensive_copy()
+    {
+        this.svc.UpdateFromRun(0, "", "", Map(
+            "1|normal",    100000,
+            "1|interlude", 800000,
+            "2|normal",    200000
+        ))
+        copy := this.svc.GetAllRunPbsByActStage()
+        Assert.Equal(3, copy.Count)
+        copy["1|normal"] := 0
+        copy["9|interlude"] := 1
+        ; Internal map unaffected
+        Assert.Equal(100000, this.svc.GetRunPbForActStage(1, "normal"))
+        Assert.False(this.svc.HasRunPbForActStage(9, "interlude"))
+    }
+
+    get_all_run_pbs_by_act_legacy_view_only_normal()
+    {
+        ; The integer-keyed legacy view exposes only the normal-stage
+        ; entries. Interlude entries are tracked but invisible here
+        ; — callers needing them use GetAllRunPbsByActStage.
+        this.svc.UpdateFromRun(0, "", "", Map(
+            "1|normal",    100000,
+            "1|interlude", 800000,
+            "2|interlude", 1200000
+        ))
+        legacy := this.svc.GetAllRunPbsByAct()
+        Assert.Equal(1, legacy.Count, "Only the normal entry surfaces")
+        Assert.Equal(100000, legacy[1])
+        Assert.False(legacy.Has(2), "Act 2 interlude doesn't surface as Act 2 legacy")
+    }
+
+    update_from_run_accepts_composite_keyed_checkpoints()
+    {
+        this.svc.UpdateFromRun(0, "", "", Map(
+            "1|normal",    60000,
+            "1|interlude", 8200000,
+            "4|interlude", 9800000
+        ))
+        Assert.Equal(60000,   this.svc.GetRunPbForActStage(1, "normal"))
+        Assert.Equal(8200000, this.svc.GetRunPbForActStage(1, "interlude"))
+        Assert.Equal(9800000, this.svc.GetRunPbForActStage(4, "interlude"))
+    }
+
+    update_from_run_legacy_integer_keys_fold_to_normal_stage()
+    {
+        ; Pre-B1 callers (tests, callers passing tracker.GetCheckpoints())
+        ; still work. Integer keys map to the normal stage so the
+        ; legacy GetRunPbForAct(N) surface keeps returning the same
+        ; value for the same input.
+        this.svc.UpdateFromRun(0, "", "", Map(1, 100000, 2, 200000))
+        Assert.Equal(100000, this.svc.GetRunPbForAct(1))
+        Assert.Equal(100000, this.svc.GetRunPbForActStage(1, "normal"))
+        Assert.Equal(0,      this.svc.GetRunPbForActStage(1, "interlude"))
+    }
+
+    update_from_run_keeps_normal_and_interlude_independent()
+    {
+        ; Pre-B1 bug: cruel Act 1 overwrote normal Act 1 PB. The new
+        ; storage keeps each (act, stage) bucket independent.
+        this.svc.UpdateFromRun(0, "", "", Map("1|normal", 100000))
+        this.svc.UpdateFromRun(0, "", "", Map("1|interlude", 80000))
+        Assert.Equal(100000, this.svc.GetRunPbForActStage(1, "normal"),
+            "Normal Act 1 PB NOT overwritten by cruel Act 1")
+        Assert.Equal(80000,  this.svc.GetRunPbForActStage(1, "interlude"))
+    }
+
+    set_as_run_pb_accepts_composite_keyed_checkpoints()
+    {
+        this.svc.SetAsRunPb(500000, "run_x", Map(
+            "1|normal",    100000,
+            "2|interlude", 250000
+        ))
+        Assert.Equal(100000, this.svc.GetRunPbForActStage(1, "normal"))
+        Assert.Equal(250000, this.svc.GetRunPbForActStage(2, "interlude"))
+    }
+
+    rebuild_from_history_accepts_composite_keyed_checkpoints()
+    {
+        ; History runs persisted post-B1 carry composite-keyed
+        ; actCheckpoints. RebuildFromHistory must accept them and
+        ; populate the stage-aware bucket.
+        runs := [
+            Map(
+                "runId",   "r1",
+                "totalMs", 500000,
+                "actCheckpoints", Map(
+                    "1|normal",    60000,
+                    "1|interlude", 8200000
+                ),
+                "details", []
+            )
+        ]
+        this.svc.RebuildFromHistory(runs)
+        Assert.Equal(60000,   this.svc.GetRunPbForActStage(1, "normal"))
+        Assert.Equal(8200000, this.svc.GetRunPbForActStage(1, "interlude"))
+    }
+
+    normalize_checkpoint_key_integer()
+    {
+        Assert.Equal("1|normal", PersonalBestService._NormalizeCheckpointKey(1))
+        Assert.Equal("4|normal", PersonalBestService._NormalizeCheckpointKey(4))
+    }
+
+    normalize_checkpoint_key_composite()
+    {
+        Assert.Equal("1|normal",    PersonalBestService._NormalizeCheckpointKey("1|normal"))
+        Assert.Equal("4|interlude", PersonalBestService._NormalizeCheckpointKey("4|interlude"))
+        ; Mixed case stage is lowercased.
+        Assert.Equal("1|interlude", PersonalBestService._NormalizeCheckpointKey("1|INTERLUDE"))
+    }
+
+    normalize_checkpoint_key_numeric_string()
+    {
+        ; AHK Map iterators sometimes yield string-form integer keys
+        ; depending on construction. Treat "1" same as 1.
+        Assert.Equal("1|normal", PersonalBestService._NormalizeCheckpointKey("1"))
+        Assert.Equal("7|normal", PersonalBestService._NormalizeCheckpointKey("7"))
+    }
+
+    normalize_checkpoint_key_rejects_garbage()
+    {
+        Assert.Equal("", PersonalBestService._NormalizeCheckpointKey(0))
+        Assert.Equal("", PersonalBestService._NormalizeCheckpointKey(-1))
+        Assert.Equal("", PersonalBestService._NormalizeCheckpointKey("abc"))
+        Assert.Equal("", PersonalBestService._NormalizeCheckpointKey("1|cruel"))
+        Assert.Equal("", PersonalBestService._NormalizeCheckpointKey("1|"))
+        Assert.Equal("", PersonalBestService._NormalizeCheckpointKey("|normal"))
     }
 }
 

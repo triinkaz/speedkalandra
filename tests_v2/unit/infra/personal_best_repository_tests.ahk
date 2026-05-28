@@ -48,6 +48,7 @@ class PersonalBestRepositoryTests extends TestCase
         ; --- Save: serialization ---
         "save_serializes_run_section",
         "save_serializes_run_by_act",
+        "save_serializes_run_by_act_stage_with_interlude",
         "save_serializes_zones",
         "save_sanitizes_zone_names_with_invalid_chars",
         "save_ignores_zones_with_invalid_ms",
@@ -281,15 +282,44 @@ class PersonalBestRepositoryTests extends TestCase
 
     save_serializes_run_by_act()
     {
+        ; Pre-B1 input shape (`runPbByAct`, integer keys) is still
+        ; accepted by Save — see PersonalBestRepository._Serialize.
+        ; Output is the new stage-aware schema (Act<N>NormalMs);
+        ; legacy entries fold into the normal bucket.
         path := Fixtures.TempPath("ini")
         repo := PersonalBestRepository(path)
         repo.Save(this._MakePbData())
 
         content := Fixtures.FileReadAll(path)
-        Assert.Contains("[RunByAct]",     content)
-        Assert.Contains("Act1Ms=1725000", content)
-        Assert.Contains("Act2Ms=3900000", content)
-        Assert.Contains("Act3Ms=6900000", content)
+        Assert.Contains("[RunByAct]",           content)
+        Assert.Contains("Act1NormalMs=1725000", content)
+        Assert.Contains("Act2NormalMs=3900000", content)
+        Assert.Contains("Act3NormalMs=6900000", content)
+    }
+
+    save_serializes_run_by_act_stage_with_interlude()
+    {
+        ; B1 Layer B canonical shape: composite-keyed input,
+        ; stage-aware output. Interlude entries get the Interlude
+        ; suffix; normal entries get the Normal suffix. Same act
+        ; can appear in both stages independently.
+        path := Fixtures.TempPath("ini")
+        repo := PersonalBestRepository(path)
+        repo.Save(Map(
+            "runPbMs",          0,
+            "runPbRunId",       "",
+            "runPbByActStage",  Map(
+                "1|normal",    60000,
+                "1|interlude", 8200000,
+                "4|interlude", 9800000
+            ),
+            "zonePbs",          Map()
+        ))
+
+        content := Fixtures.FileReadAll(path)
+        Assert.Contains("Act1NormalMs=60000",      content)
+        Assert.Contains("Act1InterludeMs=8200000", content)
+        Assert.Contains("Act4InterludeMs=9800000", content)
     }
 
     save_serializes_zones()
