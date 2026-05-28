@@ -125,31 +125,40 @@ cached across toggles, so the time cost repeats per click. The
 live view (CSV-backed) has no such freeze; it reads the small
 append-only `deaths.csv` instead.
 
-## Live tracking has a cruel-difficulty blind spot
+## Per-zone totals and per-zone PBs merge Normal and Interlude visits
 
-PoE2 does NOT emit `[SCENE] Set Source [<name>]` for cruel
-difficulty zones (the Acts 1–3 replay before endgame). Only
-`Generating level X area "C_<id>"` is emitted, with the `C_`
-prefix marking cruel. Verified empirically against a real 115 MB
-Client.txt: 25 cruel area-gen events appeared with zero
-corresponding SCENE lines.
+A PoE2 EA run is "campaign (Acts 1–4) + Interlude (Acts 1–4 in cruel
+difficulty)". The B1 tracking pipeline (see `CHANGELOG.md`) added
+stage-aware handling at the event layer (`ZoneChanged.stage`), the
+act-checkpoint layer (per-`(act, stage)` checkpoints), the personal-best
+layer (per-`(act, stage)` PB), and the plot dialog (the **Interlude**
+entry in the Act Filter dropdown keeps only Interlude details). What B1
+did NOT extend is per-zone time accumulation: `ZoneTrackingService._totals`
+is still keyed by zone name alone, so Normal-Act-1 Mud Burrow and
+Interlude-Act-1 Mud Burrow fold into a single bucket. The same holds for
+per-zone PBs (`PersonalBestService.GetZonePbMs("Mud Burrow")` returns one
+value across both stages).
 
-This affects the **live tracking path** (`LogMonitorService` and
-`ZoneTrackingService`), which currently only watches the SCENE
-signal. During a cruel run, zone transitions are not detected,
-zone time accumulates against the last normal zone seen before
-crossing the cruel threshold, and deaths recorded into
-`data/deaths.csv` are attributed to that stale zone.
+User-facing consequence: the **By map** granularity in the Run Statistics
+plot dialog shows one row per zone name, summing both stages. To see
+Interlude-only times, pick **Interlude** in the Act Filter — the chart
+rebuilds against Interlude-stage details only, but the rows are still
+aggregated per zone name (`Mud Burrow` is one row, not `Mud Burrow` and
+`Mud Burrow (Interlude)` as separate rows).
 
-The **all-time view** (`DeathLogScanner` + `DeathStatsDialog`)
-was extended to use the `Generating level` signal as well, so
-cruel deaths in the all-time view DO surface correctly with a
-`" (Cruel)"` suffix (e.g. `"Mud Burrow (Cruel)"`). The all-time
-view is the recommended way to inspect cruel deaths.
+The all-time death view (`DeathLogScanner` + `DeathStatsDialog`) is the
+one surface that DOES distinguish: it surfaces cruel deaths under a
+separate row with a ` (Cruel)` suffix (e.g. `Mud Burrow` and
+`Mud Burrow (Cruel)` as independent rows). The technical signal there is
+the `C_` prefix on the area code in the `Generating level X area
+"<code>"` line; the suffix renders the literal engine term ("Cruel")
+rather than the user-facing label ("Interlude") because the scanner is a
+one-shot raw-log read with no stage propagation — the suffix is the only
+place the distinction lives in that path.
 
-Decision: the live tail's parser duplication-by-design (see
-`LogMonitorService` header) makes extending it a separate piece
-of work. For now, runs that cross into cruel will show partially
-degraded live data and recover full fidelity in the all-time
-view. Out of scope for the all-time feature; tracked here so a
-player who notices the discrepancy doesn't think it's a bug.
+Out of scope for B1. A future iteration would extend
+`ZoneTrackingService` to maintain `_totalsByStage` and propagate the
+stage dimension to downstream consumers (per-`(zone, stage)` PBs, plot
+dialog showing distinct rows for Normal vs Interlude visits to the same
+zone, deaths.csv carrying stage at append time so the live view matches
+the all-time view). Tracked in the internal backlog.
