@@ -161,7 +161,7 @@ All services are constructed by the composition root and receive their dependenc
 |---|---|---|
 | **TimerService** | Mechanical timer: `Start`/`Pause`/`Resume`/`Stop`/`Reset`/`Toggle`/`Hydrate`/`AddPenaltyMs`. Tracks `_baseMs` and `_startTick`, computes `GetRunMs()` lazily. `AddPenaltyMs(ms)` commits the current delta and adds a flat amount to `_baseMs` — used by the composition root when a death is detected and `cfg.deathPenaltyEnabled`, so the penalty becomes visible in the overlay immediately instead of only post-finalize in the run plot. Silent (no event published — widgets pick it up on the next `Tick`). | Publishes `Evt.TimerStarted`/`Paused`/`Resumed`/`Stopped`/`Reset`. |
 | **RunService** | Run lifecycle on top of TimerService: `NewRun`, `FinalizeRun`, `CancelRun`, `ResetRun`. Holds `RunState` (runId, startedAt, status, runBaseMs). | Subscribes to `Cmd.NewRunRequested`/`FinalizeRun`/`Cancel`/`Reset`. Publishes `Evt.RunStarted`/`Completed`/`Cancelled`/`Reset`. |
-| **ActCheckpointTracker** | Captures the total `runMs` at each act transition (first `ZoneEntered` of act N+1 closes act N). Output consumed by `PersonalBestService` and persisted in run history. | Subscribes to `Evt.ZoneEntered`, run lifecycle events. |
+| **ActCheckpointTracker** | Captures the total `runMs` at each `(act, stage)` transition (first `ZoneEntered` of a new act-or-stage closes the previous one). Maintains two parallel views: `_checkpointsByActStage` keyed by composite `"act|stage"` (the canonical post-B1 view consumed by per-stage PBs) and the legacy `_checkpointsByAct` keyed by integer act (last-write-wins, preserved for callers not yet migrated). Output consumed by `PersonalBestService` and persisted in run history. | Subscribes to `Evt.ZoneEntered`, run lifecycle events. |
 | **AppTickEmitter** | Periodic `Evt.Tick` (default 300 ms). Widgets refresh on tick instead of running their own timers. | Publishes `Evt.Tick`. |
 
 ### Game State Detection
@@ -198,7 +198,7 @@ All services are constructed by the composition root and receive their dependenc
 |---|---|
 | **RunStatsRecorder** | Reactive buffer for the current run. Accumulates `Evt.LoadingMeasured` events into `_loadingEvents` and counts `Evt.DeathDetected`. Exposes `GetSnapshot(zoneTotals, runDurationMs)` for the plot builder. |
 | **RunStatsPlotBuilder** | Pure aggregator. Takes a snapshot and produces a `Map` with totals per category (Map / Town / Loading / Deaths) and a sorted `details` array (one entry per zone visit + per loading event + a synthetic Deaths entry). Run history is saved in exactly this shape. |
-| **PersonalBestService** | Loads PBs at construction. Pull-based: the composition root calls `UpdateFromRun(runMs, runId, zoneTotals, actCheckpoints)` after a successful save of a completed run. PBs are kept in three buckets: legacy global run PB, per-act run PB (Map<actNum, ms>), and per-zone PB. `RebuildFromHistory` exists for rebuilding PBs after a run deletion. |
+| **PersonalBestService** | Loads PBs at construction. Pull-based: the composition root calls `UpdateFromRun(runMs, runId, zoneTotals, actCheckpoints)` after a successful save of a completed run. PBs are kept in four buckets: legacy global run PB, **per-(act, stage)** run PB (`Map<"act|stage", ms>` — the post-B1 canonical view: normal Act 1 and cruel Act 1 maintain independent PBs), legacy per-act run PB (`Map<actNum, ms>`, projected from the stage-aware bucket as `Act<N>|normal` only, kept for callers not yet migrated), and per-zone PB. `RebuildFromHistory` exists for rebuilding PBs after a run deletion. |
 | **RunExportService** | Loads runs from `RunHistoryRepository`, optionally bundles PBs and anonymizes character data, and writes JSON via `RunExportFormat.Serialize` + atomic write. Publishes `Evt.RunsExported`. |
 | **RunImportService** | Two phases: `Preview(path)` parses + validates the JSON file and returns a summary (new / identical / rename-on-conflict) without writing. `Execute(preview, pbStrategy)` then persists. Conflict resolution is by content signature (`runId + totalMs + deathCount + maxActReached + details.Length`). PB strategy is one of `keep` / `rebuild` / `replace`. Publishes `Evt.RunsImported`. Refuses imports above `RunImportService.MAX_FILE_BYTES` (10 MB) before `FileRead`. `RunExportFormat.ValidateSchema` enforces per-payload caps from the same source of truth (`MAX_RUNS_PER_FILE=5000`, `MAX_STRING_LEN=500`, `MAX_DETAILS_PER_RUN=1000`, `MAX_TOTALS_PER_RUN=200`, `MAX_ZONE_PBS=200`, `MAX_ACT_CHECKPOINTS=20`) and runs `RunId.IsValid` on `runId` and `runPbRunId`. |
 | **DeathStatsService** | Aggregates `data/deaths.csv` (written by `DeathLogRepository`) for the `DeathStatsDialog`. Pure read service: `Aggregate(filter := "")` returns `{totalDeaths, perZone, availablePatches, availableProfiles}` in one pass over the in-memory CSV. No cache — every call re-reads the file, which is fine because the dataset is small (one row per death across all play sessions) and the dialog is opened on demand. Town zones are dropped via `ZonesCatalog.IsTownName` when a catalog is wired (defensive against unknown zones — a zone the catalog doesn't recognize passes through to the chart). `availablePatches` / `availableProfiles` are extracted from the **whole** dataset, not the filtered subset, so the dialog's two dropdowns stay populated as the user cycles through filters. The `perZone` array is sorted by count desc via a stable insertion sort; the available lists are sorted case-insensitively via `StrCompare(..., 1)` so the dropdown order is predictable across locales. |
@@ -291,8 +291,8 @@ loading=44000
 morte=450000
 
 [checkpoints]
-Act1Ms=1725000
-Act2Ms=3719000
+Act1NormalMs=1725000
+Act2NormalMs=3719000
 
 [details]
 count=15
@@ -322,9 +322,10 @@ BestMs=410000
 BestRunId=20260512_142345
 
 [RunByAct]
-Act1Ms=1725000
-Act2Ms=3900000
-Act3Ms=6900000
+Act1NormalMs=1725000
+Act2NormalMs=3900000
+Act3NormalMs=6900000
+Act1InterludeMs=8200000
 
 [Zones]
 Mud Burrow=215000
