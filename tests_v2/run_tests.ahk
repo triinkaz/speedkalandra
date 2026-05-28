@@ -371,6 +371,7 @@ SpeedKalandraMsgBox(text, title := "", options := "") {
 ; Suites - integration (end-to-end)
 ; ------------------------------------------------------------
 #Include integration\speedkalandra_app_integration_tests.ahk
+#Include integration\b1_cruel_pipeline_integration_tests.ahk
 
 ; ------------------------------------------------------------
 ; Bootstrap
