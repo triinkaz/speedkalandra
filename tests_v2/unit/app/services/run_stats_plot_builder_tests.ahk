@@ -145,7 +145,21 @@ class RunStatsPlotBuilderTests extends TestCase
         "filter_by_act_preserves_max_act_reached",
         "filter_by_act_preserves_metadata_fields",
         "filter_by_act_does_not_mutate_input",
-        "filter_by_act_interlude_sentinel_is_no_op_today"
+        "filter_by_act_interlude_drops_normal_stage_details",
+        "filter_by_act_interlude_keeps_only_interlude_stage",
+        "filter_by_act_per_act_drops_interlude_stage",
+        "filter_by_act_interlude_keeps_deaths_through_bypass",
+        "filter_by_act_interlude_empty_when_no_cruel_data",
+
+        ; --- B1 Layer B: stage propagation through Build() ---
+        "build_emits_stage_normal_by_default_on_zone_details",
+        "build_consumes_zone_totals_by_stage_when_present",
+        "build_prefers_zone_totals_by_stage_over_legacy_zone_totals",
+        "build_drops_unparseable_composite_zone_keys",
+        "loading_event_emits_stage_normal_by_default",
+        "loading_event_emits_stage_from_field",
+        "loading_event_invalid_stage_falls_back_to_normal",
+        "death_detail_carries_empty_stage"
     ]
 
     ; ============================================================
@@ -978,25 +992,244 @@ class RunStatsPlotBuilderTests extends TestCase
             "input totalMs scalar was not mutated")
     }
 
-    filter_by_act_interlude_sentinel_is_no_op_today()
+    filter_by_act_interlude_drops_normal_stage_details()
     {
-        ; The dialog maps the "Interlude" dropdown entry to 999.
-        ; Under exact-match an actFilter of 999 would always return
-        ; empty (no real detail has act 999), so the FilterByAct
-        ; method short-circuits actFilter>=999 at the top — same
-        ; behavior as "All" — until BACKLOG B1 lands
-        ; cruel/interlude tracking. This test pins the placeholder
-        ; semantic explicitly so a future refactor can't silently
-        ; break the contract.
+        ; Pre-B1 the dialog mapped "Interlude" to sentinel 999 and
+        ; FilterByAct short-circuited it as a no-op. Post-B1 the
+        ; sentinel actually filters: only stage="interlude" details
+        ; survive (deaths also bypass; see
+        ; filter_by_act_interlude_keeps_deaths_through_bypass). A
+        ; run with no cruel data — every detail defaults to
+        ; stage="normal" via _AddDetail — returns an empty plot.
+        ; This is the honest result, not data loss: legacy runs
+        ; never tracked cruel separately.
         data := this.builder.Build(Map("zoneTotals", Map(
             "Mud Burrow",        60000,
             "Vastiri Outskirts", 40000,
             "Sandswept Marsh",   30000
         )))
         filtered := RunStatsPlotBuilder.FilterByAct(data, 999)
-        Assert.Equal(data["details"].Length, filtered["details"].Length,
-            "Interlude sentinel (999) acts as no-op today")
-        Assert.Equal(data["totalMs"], filtered["totalMs"])
+        Assert.Equal(0, filtered["details"].Length,
+            "all-normal run yields empty Interlude view")
+        Assert.Equal(0, filtered["totalMs"])
+    }
+
+    filter_by_act_interlude_keeps_only_interlude_stage()
+    {
+        ; Mixed-stage run: zoneTotalsByStage carries both normal
+        ; and interlude entries for the same act. Interlude filter
+        ; keeps the interlude entry only.
+        data := this.builder.Build(Map("zoneTotalsByStage", Map(
+            "Mud Burrow|normal",        60000,
+            "Mud Burrow|interlude",     90000,
+            "Vastiri Outskirts|normal", 40000
+        )))
+        filtered := RunStatsPlotBuilder.FilterByAct(data, 999)
+        Assert.Equal(1, filtered["details"].Length,
+            "only the interlude entry survives the Interlude filter")
+        Assert.Equal("Mud Burrow", filtered["details"][1]["label"])
+        Assert.Equal("interlude",  filtered["details"][1]["stage"])
+        Assert.Equal(90000, filtered["totalMs"])
+    }
+
+    filter_by_act_per_act_drops_interlude_stage()
+    {
+        ; The per-act filter (1..4) keeps stage="normal" entries
+        ; only. Even if a cruel Act 1 entry exists with the same
+        ; "Act 1" note string, the per-act filter rejects it — the
+        ; user picked the campaign act, not the cruel ladder.
+        data := this.builder.Build(Map("zoneTotalsByStage", Map(
+            "Mud Burrow|normal",    60000,
+            "Mud Burrow|interlude", 90000
+        )))
+        filtered := RunStatsPlotBuilder.FilterByAct(data, 1)
+        Assert.Equal(1, filtered["details"].Length,
+            "only the normal-stage Act 1 entry survives an Act 1 filter")
+        Assert.Equal("normal", filtered["details"][1]["stage"])
+        Assert.Equal(60000,    filtered["totalMs"])
+    }
+
+    filter_by_act_interlude_keeps_deaths_through_bypass()
+    {
+        ; Deaths carry no stage (single aggregated row). They
+        ; bypass every filter, matching the per-act exemption.
+        ; A user picking "Interlude" still sees the run's death
+        ; KPI — dropping it silently would under-report the run.
+        cfg := AppSettings.Defaults()
+        cfg.deathPenaltyEnabled := true
+        cfg.deathPenaltyMs := 60000
+        b := RunStatsPlotBuilder(this.catalog, cfg)
+        data := b.Build(Map(
+            "zoneTotals", Map("Mud Burrow", 60000),    ; normal-only
+            "deathCount", 2
+        ))
+        filtered := RunStatsPlotBuilder.FilterByAct(data, 999)
+        deathDetailFound := false
+        for _, d in filtered["details"]
+        {
+            if (d["category"] = "morte")
+            {
+                deathDetailFound := true
+                break
+            }
+        }
+        Assert.True(deathDetailFound,
+            "morte detail survives the Interlude filter via the category bypass")
+        Assert.Equal(120000, filtered["totals"]["morte"])
+    }
+
+    filter_by_act_interlude_empty_when_no_cruel_data()
+    {
+        ; Same scenario as the dialog's first open on a pre-B1 run
+        ; library: nothing in zoneTotalsByStage, every detail
+        ; defaults to stage="normal". Interlude filter returns
+        ; zero zone details (deaths still bypass when enabled,
+        ; but this scenario has none).
+        data := this.builder.Build(Map("zoneTotals", Map(
+            "Mud Burrow",      60000,
+            "Sandswept Marsh", 30000
+        )))
+        filtered := RunStatsPlotBuilder.FilterByAct(data, 999)
+        Assert.Equal(0, filtered["details"].Length)
+        Assert.Equal(0, filtered["totals"]["mapa"])
+        Assert.Equal(0, filtered["totalMs"])
+    }
+
+    ; ============================================================
+    ; B1 Layer B: stage propagation through Build()
+    ; ============================================================
+    ;
+    ; The builder is forward-compatible with stage info flowing
+    ; through the snapshot. These tests pin the canonical shapes:
+    ;   - zoneTotalsByStage (composite "name|stage") takes
+    ;     precedence over zoneTotals when both are present.
+    ;   - Loading events carry an optional `stage` field that
+    ;     defaults to "normal" when absent.
+    ;   - Deaths carry stage="" because the aggregated row spans
+    ;     both stages by definition.
+
+    build_emits_stage_normal_by_default_on_zone_details()
+    {
+        ; Legacy snapshot path: only zoneTotals present. Every
+        ; emitted detail gets stage="normal" — the per-act filter
+        ; still works on legacy runs without needing them to
+        ; migrate to the composite shape.
+        data := this.builder.Build(Map("zoneTotals", Map(
+            "Mud Burrow", 60000
+        )))
+        Assert.Equal("normal", data["details"][1]["stage"])
+    }
+
+    build_consumes_zone_totals_by_stage_when_present()
+    {
+        ; Canonical B1 input shape: composite keys "name|stage".
+        ; Each entry round-trips into a detail with the matching
+        ; stage flag, label = base zone name, ms = entry value.
+        data := this.builder.Build(Map("zoneTotalsByStage", Map(
+            "Mud Burrow|normal",    60000,
+            "Mud Burrow|interlude", 90000
+        )))
+        Assert.Equal(2, data["details"].Length)
+        stages := Map()
+        for _, d in data["details"]
+        {
+            if (d["label"] = "Mud Burrow")
+                stages[d["stage"]] := d["ms"]
+        }
+        Assert.Equal(60000, stages["normal"])
+        Assert.Equal(90000, stages["interlude"])
+    }
+
+    build_prefers_zone_totals_by_stage_over_legacy_zone_totals()
+    {
+        ; When both shapes are present, the composite map wins.
+        ; This protects against the transitional state where the
+        ; recorder emits both shapes during migration — the
+        ; downstream builder should consume the canonical one
+        ; rather than double-counting.
+        data := this.builder.Build(Map(
+            "zoneTotalsByStage", Map("Mud Burrow|normal", 60000),
+            "zoneTotals",        Map("Mud Burrow", 999999)   ; ignored
+        ))
+        Assert.Equal(1, data["details"].Length,
+            "only the composite entry is emitted; legacy ignored")
+        Assert.Equal(60000, data["details"][1]["ms"])
+        Assert.Equal("normal", data["details"][1]["stage"])
+    }
+
+    build_drops_unparseable_composite_zone_keys()
+    {
+        ; Defensive: a malformed composite key (no pipe, bad
+        ; stage, empty zone) is dropped silently. The builder
+        ; can't infer stage from arbitrary keys without risking
+        ; misattribution.
+        data := this.builder.Build(Map("zoneTotalsByStage", Map(
+            "NoPipeHere",        10000,    ; dropped
+            "Zone|cruel",        20000,    ; dropped (unknown stage)
+            "|normal",           30000,    ; dropped (empty zone)
+            "Mud Burrow|normal", 60000     ; kept
+        )))
+        Assert.Equal(1, data["details"].Length,
+            "only the well-formed entry survives")
+        Assert.Equal("Mud Burrow", data["details"][1]["label"])
+    }
+
+    loading_event_emits_stage_normal_by_default()
+    {
+        ; No `stage` field on the event — defaults to "normal".
+        ; This is the legacy-snapshot path and the path for any
+        ; upstream that hasn't been wired through yet.
+        data := this.builder.Build(Map("loadingEvents", [
+            Map("durationMs", 3000, "fromZone", "A", "toZone", "B")
+        ]))
+        Assert.Equal("normal", data["details"][1]["stage"])
+    }
+
+    loading_event_emits_stage_from_field()
+    {
+        ; Cruel loading: event carries stage="interlude". The
+        ; detail surfaces it so FilterByAct(999) can keep it.
+        data := this.builder.Build(Map("loadingEvents", [
+            Map("durationMs", 3000, "fromZone", "A", "toZone", "B", "stage", "interlude")
+        ]))
+        Assert.Equal("interlude", data["details"][1]["stage"])
+    }
+
+    loading_event_invalid_stage_falls_back_to_normal()
+    {
+        ; Defensive: garbage stage value (e.g. an unknown future
+        ; stage like "cruel-plus") falls back to "normal" rather
+        ; than crashing the filter on an unexpected value. The
+        ; Interlude filter compares to "interlude" exactly, so
+        ; an unknown stage staying "normal" keeps the per-act
+        ; filter accepting it.
+        data := this.builder.Build(Map("loadingEvents", [
+            Map("durationMs", 3000, "fromZone", "A", "toZone", "B", "stage", "cruel-plus")
+        ]))
+        Assert.Equal("normal", data["details"][1]["stage"])
+    }
+
+    death_detail_carries_empty_stage()
+    {
+        ; Deaths span both stages by definition (single aggregated
+        ; row). Stage="" signals "no stage attribution"; the
+        ; filters use category="morte" to bypass them, not the
+        ; stage flag.
+        cfg := AppSettings.Defaults()
+        cfg.deathPenaltyEnabled := true
+        cfg.deathPenaltyMs := 10000
+        b := RunStatsPlotBuilder(this.catalog, cfg)
+        data := b.Build(Map("deathCount", 2))
+        for _, d in data["details"]
+        {
+            if (d["category"] = "morte")
+            {
+                Assert.Equal("", d["stage"],
+                    "deaths carry empty stage; category bypass handles the filter")
+                return
+            }
+        }
+        Assert.Fail("Expected detail with category=morte")
     }
 }
 

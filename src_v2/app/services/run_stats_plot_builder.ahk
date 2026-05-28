@@ -10,11 +10,24 @@
 ;     "patch":         "0.4",
 ;     "firstTs":       "2026-05-12 14:23:45",
 ;     "runDurationMs": 5040000,
-;     "zoneTotals":    Map<zoneName, totalMs>,
-;     "zoneFirstEnteredAt": Map<zoneName, ts>,    (optional)
-;     "loadingEvents": Array<Map{fromZone, toZone, durationMs, ts}>,
+;     "zoneTotals":    Map<zoneName, totalMs>,                  (legacy)
+;     "zoneTotalsByStage": Map<"zoneName|stage", totalMs>,      (B1, optional)
+;     "zoneFirstEnteredAt": Map<zoneName, ts>,                  (optional)
+;     "loadingEvents": Array<Map{fromZone, toZone, durationMs, ts, stage?}>,
 ;     "deathCount":    int
 ;   )
+;
+; Stage handling (B1 Layer B):
+;   The builder is forward-compatible with cruel/interlude stage
+;   data flowing through the snapshot. When `zoneTotalsByStage` is
+;   present, each composite "<zoneName>|<stage>" entry emits its
+;   own detail row with the matching stage flag. Otherwise the
+;   legacy `zoneTotals` Map is consumed and every entry defaults
+;   to stage="normal". Loading events carry their own optional
+;   `stage` field, defaulting to "normal" when absent. Deaths
+;   currently carry no stage (single aggregated row); the
+;   Interlude filter ignores them, matching the act filter's
+;   exemption for the same reason.
 ;
 ; Categories:
 ;   mapa     — zones with isTown=false
@@ -27,7 +40,7 @@
 ;   runId / profile / patch / firstTs       (strings)
 ;   totals        (Map<key, ms>)
 ;   details       (Array<Map>) with {category, categoryLabel, label,
-;                                    ms, note, timestamp}
+;                                    ms, note, stage, timestamp}
 ;   deathCount / totalMs / maxActReached    (ints)
 ;
 ; AHK v2 gotcha: variable lookup is case-insensitive, so a parameter
@@ -214,32 +227,65 @@ class RunStatsPlotBuilder
     ; is attached to the detail so chronological sorting works.
     _AddZoneDetails(data, snapshot)
     {
-        if !snapshot.Has("zoneTotals") || !IsObject(snapshot["zoneTotals"])
-            return
         zoneFirstEnteredAt := snapshot.Has("zoneFirstEnteredAt")
                               && IsObject(snapshot["zoneFirstEnteredAt"])
                               ? snapshot["zoneFirstEnteredAt"]
                               : Map()
+
+        ; Prefer the stage-aware totals when the snapshot carries
+        ; them — that's the post-B1 canonical shape. Fall back to
+        ; the legacy `zoneTotals` Map (treated as all-normal) for
+        ; pre-B1 snapshots and for any upstream that hasn't been
+        ; wired through yet.
+        if snapshot.Has("zoneTotalsByStage") && IsObject(snapshot["zoneTotalsByStage"])
+        {
+            for compositeKey, ms in snapshot["zoneTotalsByStage"]
+            {
+                if (ms <= 0)
+                    continue
+                ; Composite shape: "<zoneName>|<stage>". Unparseable
+                ; entries are dropped (defensive — caller might
+                ; have leaked a legacy integer-keyed map by mistake).
+                if !RegExMatch(String(compositeKey), "^(.+)\|(normal|interlude)$", &m)
+                    continue
+                zoneName := m[1]
+                stage    := m[2]
+                if (zoneName = "")
+                    continue
+                this._EmitZoneDetail(data, zoneName, ms, stage, zoneFirstEnteredAt)
+            }
+            return
+        }
+
+        if !snapshot.Has("zoneTotals") || !IsObject(snapshot["zoneTotals"])
+            return
         for zoneName, ms in snapshot["zoneTotals"]
         {
             if (ms <= 0)
                 continue
-            ; Categorize via ZonesCatalog (fallback: treat as mapa)
-            category := "mapa"
-            act := 0
-            if IsObject(this._zonesCatalog)
-            {
-                entry := this._zonesCatalog.FindByName(zoneName)
-                if IsObject(entry)
-                {
-                    category := entry.isTown ? "cidade" : "mapa"
-                    act := entry.act
-                }
-            }
-            note := act > 0 ? "Act " act : ""
-            ts := zoneFirstEnteredAt.Has(zoneName) ? zoneFirstEnteredAt[zoneName] : ""
-            this._AddDetail(data, category, zoneName, ms, note, ts)
+            this._EmitZoneDetail(data, zoneName, ms, "normal", zoneFirstEnteredAt)
         }
+    }
+
+    ; Shared zone-detail emitter. Resolves category/act via the
+    ; catalog (same fallbacks as before B1) and stamps the stage
+    ; flag on the detail row.
+    _EmitZoneDetail(data, zoneName, ms, stage, zoneFirstEnteredAt)
+    {
+        category := "mapa"
+        act := 0
+        if IsObject(this._zonesCatalog)
+        {
+            entry := this._zonesCatalog.FindByName(zoneName)
+            if IsObject(entry)
+            {
+                category := entry.isTown ? "cidade" : "mapa"
+                act := entry.act
+            }
+        }
+        note := act > 0 ? "Act " act : ""
+        ts := zoneFirstEnteredAt.Has(zoneName) ? zoneFirstEnteredAt[zoneName] : ""
+        this._AddDetail(data, category, zoneName, ms, note, ts, stage)
     }
 
     ; Walks loadingEvents and emits one "loading" detail per event.
@@ -283,7 +329,14 @@ class RunStatsPlotBuilder
                     note := "Act " entry.act
             }
             ts := ev.Has("ts") ? ev["ts"] : (ev.Has("timestamp") ? ev["timestamp"] : "")
-            this._AddDetail(data, "loading", label, ms, note, ts)
+            ; Stage is optional on loading events; defaults to
+            ; "normal" so legacy snapshots and upstreams that
+            ; haven't been wired through yet behave correctly under
+            ; the act filter (which keeps stage="normal" by default).
+            stage := ev.Has("stage") ? String(ev["stage"]) : "normal"
+            if (stage != "normal" && stage != "interlude")
+                stage := "normal"
+            this._AddDetail(data, "loading", label, ms, note, ts, stage)
             this._RememberMetaTs(data, ts)
         }
     }
@@ -302,13 +355,24 @@ class RunStatsPlotBuilder
         ; Single aggregated entry — per-death entries would clutter
         ; the plot. If we ever want per-death detail, the composition
         ; root can pass deathEvents in the snapshot.
+        ; Deaths carry no stage (single aggregated row across both
+        ; stages). The Interlude filter ignores them so the death
+        ; count surfaces in the KPIs regardless of stage filter,
+        ; matching the act-filter exemption for the same reason.
         this._AddDetail(data, "morte", count " deaths",
-            count * penalty, "Penalty " RunStatsPlotBuilder._FormatMs(penalty) " each", "")
+            count * penalty, "Penalty " RunStatsPlotBuilder._FormatMs(penalty) " each", "", "")
     }
 
     ; ---- Detail builder ----
 
-    _AddDetail(data, category, label, ms, note := "", timestamp := "")
+    ; `stage` is one of "normal" or "interlude". Pre-B1 callers can
+    ; omit it (defaults to "normal") so the snapshot pipeline can
+    ; opt into stage tagging incrementally without breaking the
+    ; rest of the build. Deaths pass "" because the aggregated row
+    ; spans both stages by definition (single sum); see
+    ; _AddDeathDetails. The Interlude filter ignores stage="" the
+    ; same way it ignores deaths.
+    _AddDetail(data, category, label, ms, note := "", timestamp := "", stage := "normal")
     {
         n := RunStatsPlotBuilder._ToInt(ms)
         if (n < 0)
@@ -322,6 +386,7 @@ class RunStatsPlotBuilder
             "label",         label,
             "ms",            n,
             "note",          note,
+            "stage",         stage,
             "timestamp",     timestamp
         ))
     }
@@ -374,34 +439,37 @@ class RunStatsPlotBuilder
     ; Filter semantics:
     ;   actFilter = 0    -> no-op, returns a shallow copy of `data`.
     ;                       Used for "All" (idx 1).
-    ;   actFilter >= 999 -> no-op (Interlude placeholder). BACKLOG
-    ;                       B1 wires cruel/interlude tracking through
-    ;                       the pipeline; until then, no real detail
-    ;                       ever has act >= 999, so an exact-match
-    ;                       under that sentinel would always return
-    ;                       empty — pin the placeholder semantic
-    ;                       explicitly so the dialog's "Interlude"
-    ;                       option stays a usable no-op.
+    ;   actFilter >= 999 -> Interlude (cruel) filter. Keeps any
+    ;                       detail whose stage == "interlude",
+    ;                       regardless of act. Deaths bypass (no
+    ;                       stage info; same rationale as the
+    ;                       per-act exemption). Pre-B1 details that
+    ;                       carry no stage default to "normal" via
+    ;                       _AddDetail, so the Interlude filter
+    ;                       returns an empty plot on legacy runs
+    ;                       that never tracked cruel data — honest
+    ;                       result, not data loss.
     ;   actFilter >= 1   -> keep details with parsed act EXACTLY
-    ;                       equal to actFilter (an Act 2 filter
-    ;                       shows only Act 2 details, not Act 1+2 —
-    ;                       the old "cut-above" semantics gave the
-    ;                       cumulative view that misled users into
-    ;                       thinking the chart was hiding their
-    ;                       maps). Deaths (category=morte) bypass
-    ;                       the filter because they carry no
-    ;                       timing/act in the current snapshot
-    ;                       schema (BACKLOG B2 traces the path that
-    ;                       would add per-zone deaths); the full
-    ;                       death count surfaces in the KPIs even
-    ;                       when a specific act is selected.
-    ;                       Details whose `note` doesn't parse to
-    ;                       any act (legacy data, uncatalogued
-    ;                       zones, loadings into uncatalogued
-    ;                       destinations) are DROPPED under an
-    ;                       active filter — under exact-match
-    ;                       semantics, an unattributable entry adds
-    ;                       noise rather than missing data.
+    ;                       equal to actFilter AND stage == "normal"
+    ;                       (Act N in the campaign, not in cruel).
+    ;                       Exact-match avoids the old "cut-above"
+    ;                       semantics that gave the cumulative view
+    ;                       and misled users into thinking the
+    ;                       chart was hiding their maps. Deaths
+    ;                       (category=morte) bypass the filter
+    ;                       because they carry no timing/act/stage
+    ;                       in the current snapshot schema (BACKLOG
+    ;                       B2 traces the path that would add
+    ;                       per-zone deaths); the full death count
+    ;                       surfaces in the KPIs even when a
+    ;                       specific act is selected. Details whose
+    ;                       `note` doesn't parse to any act (legacy
+    ;                       data, uncatalogued zones, loadings into
+    ;                       uncatalogued destinations) are DROPPED
+    ;                       under an active filter — under
+    ;                       exact-match semantics, an
+    ;                       unattributable entry adds noise rather
+    ;                       than missing data.
     ;
     ; The act is extracted from `note` via the same regex used by
     ; `_DeriveMaxAct` and `_SegsByAct`, accepting both "Act N"
@@ -414,10 +482,6 @@ class RunStatsPlotBuilder
         if !IsObject(data)
             return data
         if !IsNumber(actFilter) || actFilter <= 0
-            return RunStatsPlotBuilder._ShallowCloneData(data)
-        ; Interlude placeholder — see header. Treated as no-op
-        ; until BACKLOG B1 lands cruel/interlude tracking.
-        if (actFilter >= 999)
             return RunStatsPlotBuilder._ShallowCloneData(data)
 
         srcDetails := data.Has("details") && IsObject(data["details"])
@@ -459,10 +523,22 @@ class RunStatsPlotBuilder
     ; act filter. See FilterByAct header for the policy.
     static _DetailPassesAct(detail, actFilter)
     {
-        ; Deaths bypass the filter (no timing info).
+        ; Deaths bypass every filter (no timing/stage info).
         cat := detail.Has("category") ? detail["category"] : ""
         if (cat = "morte")
             return true
+
+        ; Interlude filter (999) — keep only stage="interlude".
+        stage := detail.Has("stage") ? String(detail["stage"]) : "normal"
+        if (actFilter >= 999)
+            return stage = "interlude"
+
+        ; Per-act filter (1..4) — require stage="normal" AND the
+        ; exact act number in the note. Interlude entries with the
+        ; same "Act N" note string are excluded because the user
+        ; picked the campaign act, not the cruel ladder.
+        if (stage != "normal")
+            return false
 
         note := detail.Has("note") ? detail["note"] : ""
         ; No parsed act -> drop under an active filter (exact-match

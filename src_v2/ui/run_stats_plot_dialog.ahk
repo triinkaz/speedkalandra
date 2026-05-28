@@ -59,10 +59,11 @@
 ; so the chart should show every series in that scope.
 ;
 ; Act filter: dropdown next to granularity restricts the chart and KPIs
-; to a single act (exact match). "All" disables the filter. The
-; "Interlude" entry is a placeholder until BACKLOG B1 lands
-; cruel/interlude tracking through the pipeline; today it behaves
-; like "All".
+; to a single act (exact match). "All" disables the filter.
+; "Interlude" keeps only details flagged as cruel/interlude stage
+; (any act). Pre-B1 runs that never tracked cruel data show an
+; empty plot under the Interlude filter — honest result, not data
+; loss — because every legacy detail defaults to stage="normal".
 ;
 ; Profile filter: third dropdown isolates the line chart to runs of
 ; a single profile. On first open it picks up the current run's
@@ -102,11 +103,12 @@ class RunStatsPlotDialog
     ; Act filter: restricts every surface in the dialog (KPIs,
     ; current-run bar, line chart) to a SINGLE act. Index 1 = "All"
     ; (no filter); 2..5 = Act 1..4 (exact match, one per campaign
-    ; act currently in the zones catalog); 6 = "Interlude"
-    ; placeholder — sentinel 999 means "include everything" today,
-    ; same as All, until BACKLOG B1 wires cruel/interlude tracking
-    ; through the pipeline and the sentinel starts gating against
-    ; the stage flag.
+    ; act currently in the zones catalog); 6 = "Interlude" — keeps
+    ; only details flagged as cruel/interlude stage via
+    ; RunStatsPlotBuilder.FilterByAct(sentinel 999). The sentinel
+    ; itself stays in case future stages or campaign expansions
+    ; need additional non-act values without overlapping the 1..4
+    ; range.
     static ACT_FILTER_LABELS := ["All", "Act 1", "Act 2", "Act 3", "Act 4", "Interlude"]
 
     static ROTATING_PALETTE := [
@@ -134,8 +136,8 @@ class RunStatsPlotDialog
     _granularity   := "run"
     ; Act filter value:
     ;   0   = All (no filter)
-    ;   1..4 = exact-match on parsed act == N
-    ;   999 = Interlude placeholder (no-op today; see BACKLOG B1)
+    ;   1..4 = exact-match on parsed act == N AND stage=="normal"
+    ;   999 = Interlude — keeps stage=="interlude" details only
     _actFilter  := 0
     _profileFilter        := ""    ; "" = All profiles; otherwise = profile name
     _profileFilterInited  := false ; false = first-open default still pending
@@ -939,9 +941,8 @@ class RunStatsPlotDialog
 
     ; Handler of the act filter dropdown.
     ;   idx 1 ("All")       -> filter = 0   (no-op)
-    ;   idx 2..5 (Act 1..4) -> filter = idx - 1
-    ;   idx 6 ("Interlude") -> filter = 999  (placeholder, see
-    ;                          ACT_FILTER_LABELS header)
+    ;   idx 2..5 (Act 1..4) -> filter = idx - 1  (normal stage)
+    ;   idx 6 ("Interlude") -> filter = 999 (cruel stage)
     _OnActFilterChanged(ctrl)
     {
         try
@@ -959,15 +960,16 @@ class RunStatsPlotDialog
     ; Mapping helpers for the act filter. Index <-> value is a small
     ; lookup, but isolating it in two helpers keeps
     ; _OnActFilterChanged and _BuildGui (which sets the initial
-    ; Choose<N>) symmetric, and gives a single place to extend when
-    ; BACKLOG B1 lands a real Interlude value.
+    ; Choose<N>) symmetric, and gives a single place to extend if
+    ; a third stage or additional non-act filter value is ever
+    ; introduced.
     _ActFilterValueFromIndex(idx)
     {
         if (idx = 1)
             return 0       ; All
         if (idx = 6)
-            return 999     ; Interlude placeholder
-        return idx - 1     ; Act 1..4
+            return 999     ; Interlude (cruel stage)
+        return idx - 1     ; Act 1..4 (normal stage)
     }
 
     _ActFilterIndexFromValue(value)
@@ -975,7 +977,7 @@ class RunStatsPlotDialog
         if (value = 0)
             return 1       ; All
         if (value >= 999)
-            return 6       ; Interlude placeholder
+            return 6       ; Interlude
         if (value >= 1 && value <= 4)
             return value + 1
         return 1           ; Defensive fallback to All for unknown values
