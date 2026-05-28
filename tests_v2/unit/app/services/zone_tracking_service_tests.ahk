@@ -95,6 +95,12 @@ class ZoneTrackingServiceTests extends TestCase
         "zone_entered_act_zero_when_zone_not_in_catalog",
         "zone_entered_act_zero_when_no_catalog",
 
+        ; --- stage propagation (B1 Layer B) ---
+        "zone_entered_default_stage_is_normal_when_zone_changed_omits_it",
+        "zone_entered_carries_interlude_stage_from_zone_changed",
+        "zone_entered_carries_explicit_normal_stage",
+        "zone_entered_empty_stage_falls_back_to_normal",
+
         ; --- ZoneChanged during pause (Bug Lechtansi) ---
         "zone_changed_during_pause_sets_active_zone",
         "zone_changed_during_pause_does_not_start_timer",
@@ -409,6 +415,55 @@ class ZoneTrackingServiceTests extends TestCase
         Assert.Equal(0, capturedEvents[1]["actIndex"])
         Assert.False(capturedEvents[1]["isTown"])
         svc2.Dispose()
+    }
+
+    ; ============================================================
+    ; stage propagation (B1 Layer B)
+    ; ============================================================
+    ;
+    ; LogMonitorService sets stage on ZoneChanged ("normal" for the
+    ; [SCENE] branch, "interlude" for the cruel area-gen branch).
+    ; ZoneTrackingService forwards it on the outgoing ZoneEntered
+    ; so subscribers like ActCheckpointTracker can bucket their
+    ; state per-(act, stage). Default "normal" defends against
+    ; legacy/programmatic emitters that omit the field.
+
+    zone_entered_default_stage_is_normal_when_zone_changed_omits_it()
+    {
+        capturedEvents := this._CaptureEvents(Events.ZoneEntered)
+        this.bus.Publish(Events.ZoneChanged, Map("zoneName", "Mud Burrow"))
+        Assert.Equal("normal", capturedEvents[1]["stage"])
+    }
+
+    zone_entered_carries_interlude_stage_from_zone_changed()
+    {
+        capturedEvents := this._CaptureEvents(Events.ZoneEntered)
+        this.bus.Publish(Events.ZoneChanged, Map(
+            "zoneName", "Mud Burrow",
+            "stage",    "interlude"
+        ))
+        Assert.Equal("interlude", capturedEvents[1]["stage"])
+    }
+
+    zone_entered_carries_explicit_normal_stage()
+    {
+        capturedEvents := this._CaptureEvents(Events.ZoneEntered)
+        this.bus.Publish(Events.ZoneChanged, Map(
+            "zoneName", "Mud Burrow",
+            "stage",    "normal"
+        ))
+        Assert.Equal("normal", capturedEvents[1]["stage"])
+    }
+
+    zone_entered_empty_stage_falls_back_to_normal()
+    {
+        ; Defensive: an explicit empty string is treated as missing.
+        capturedEvents := this._CaptureEvents(Events.ZoneEntered)
+        this.bus.Publish(Events.ZoneChanged, Map(
+            "zoneName", "Mud Burrow",
+            "stage",    ""
+        ))
+        Assert.Equal("normal", capturedEvents[1]["stage"])
     }
 
     ; ============================================================

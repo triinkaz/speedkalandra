@@ -362,6 +362,14 @@ class ZoneTrackingService
         if (newZone = "")
             return
 
+        ; stage (B1 Layer B): "normal" or "interlude". Default to
+        ; "normal" when the producer didn't set it (legacy code
+        ; paths, defensive fallback). The field is forwarded on the
+        ; outgoing ZoneEntered so subscribers like ActCheckpointTracker
+        ; can bucket their state per-(act, stage) without re-querying
+        ; the source line.
+        newStage := (data.Has("stage") && data["stage"] != "") ? data["stage"] : "normal"
+
         ; Close the previous zone (no-op when _startMs=0, i.e. when
         ; the zone was only registered for display, not timed).
         this._FlushActive()
@@ -396,10 +404,11 @@ class ZoneTrackingService
         }
 
         this._bus.Publish(Events.ZoneEntered, Map(
-            "zoneName", newZone,
-            "actIndex", actIdx,
-            "isTown",   isTown,
-            "enteredAt", this._startMs
+            "zoneName",  newZone,
+            "actIndex",  actIdx,
+            "isTown",    isTown,
+            "enteredAt", this._startMs,
+            "stage",     newStage
         ))
     }
 
