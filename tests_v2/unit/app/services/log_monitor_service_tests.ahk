@@ -81,6 +81,21 @@ class LogMonitorServiceTests extends TestCase
         "area_level_changed_includes_level_and_code",
         "area_level_changed_trims_quotes_from_code",
 
+        ; --- Cruel / Interlude (B1 Layer A) ---
+        ; Cruel zone-gen lines (`C_<base>`) are the ONLY signal
+        ; for cruel transitions — [SCENE] is suppressed by the
+        ; engine. The area-level branch publishes BOTH events.
+        "cruel_area_gen_still_publishes_area_level_changed",
+        "cruel_area_gen_publishes_zone_changed_with_interlude_stage",
+        "cruel_area_gen_scene_id_carries_raw_cruel_code",
+        "cruel_area_gen_resolves_human_name_via_catalog",
+        "cruel_area_gen_without_catalog_uses_base_code",
+        "cruel_area_gen_unknown_base_code_falls_back_to_raw",
+        "cruel_town_publishes_zone_changed",
+        "normal_area_gen_does_not_publish_zone_changed",
+        "scene_zone_changed_has_normal_stage",
+        "zone_entered_zone_changed_has_normal_stage",
+
         ; --- SceneEntered + ZoneChanged double (Bug #21) ---
         "extracts_scene_simple_case",
         "scene_publishes_scene_entered_event",
@@ -320,6 +335,144 @@ class LogMonitorServiceTests extends TestCase
         capturedEvents := this._CaptureEvents(Events.AreaLevelChanged)
         this.svc.ProcessText('Generating level 10 area "G1_2" with seed 42`n')
         Assert.Equal("G1_2", capturedEvents[1]["areaCode"], "Quotes trimmed")
+    }
+
+    ; ============================================================
+    ; Cruel / Interlude (B1 Layer A)
+    ; ============================================================
+    ;
+    ; Empirical finding: PoE2 emits cruel zone transitions ONLY
+    ; through the `Generating level N area "C_<base>"` line.
+    ; [SCENE] Set Source is NOT emitted for cruel — verified
+    ; against a real Client.txt with thousands of cruel area-gens
+    ; and zero matching SCENE lines. See class header.
+    ;
+    ; Pre-fix, the live pipeline (ZoneTrackingService, route widget,
+    ; active-zone display, ActCheckpointTracker, etc.) was COMPLETELY
+    ; blind during the interlude — not just imprecise. The area-
+    ; level branch now publishes ZoneChanged for cruel codes in
+    ; addition to AreaLevelChanged.
+
+    cruel_area_gen_still_publishes_area_level_changed()
+    {
+        ; Regression: cruel must still publish AreaLevelChanged with
+        ; the raw C_-prefixed code (subscribers like XpService and
+        ; the debug widget rely on the engine id).
+        capturedEvents := this._CaptureEvents(Events.AreaLevelChanged)
+        this.svc.ProcessText('Generating level 51 area "C_G1_2" with seed 12345`n')
+        Assert.Equal(1, capturedEvents.Length)
+        Assert.Equal(51,       capturedEvents[1]["areaLevel"])
+        Assert.Equal("C_G1_2", capturedEvents[1]["areaCode"])
+    }
+
+    cruel_area_gen_publishes_zone_changed_with_interlude_stage()
+    {
+        capturedEvents := this._CaptureEvents(Events.ZoneChanged)
+        this.svc.ProcessText('Generating level 51 area "C_G1_2" with seed 12345`n')
+        Assert.Equal(1, capturedEvents.Length)
+        Assert.Equal("interlude", capturedEvents[1]["stage"])
+    }
+
+    cruel_area_gen_scene_id_carries_raw_cruel_code()
+    {
+        ; sceneId always carries the raw engine id (with C_ prefix
+        ; for cruel). Diagnostics and event-tracing subscribers
+        ; rely on it being the unmodified source string.
+        capturedEvents := this._CaptureEvents(Events.ZoneChanged)
+        this.svc.ProcessText('Generating level 51 area "C_G1_2" with seed 12345`n')
+        Assert.Equal("C_G1_2", capturedEvents[1]["sceneId"])
+    }
+
+    cruel_area_gen_resolves_human_name_via_catalog()
+    {
+        ; Catalog only knows base codes ("G1_2" → "Clearfell"). The
+        ; cruel branch strips C_ before lookup, same pattern as
+        ; DeathLogScanner._ResolveAreaCode. Result: cruel Clearfell
+        ; and normal Clearfell share the same human name; the
+        ; `stage` field is what distinguishes them downstream.
+        svcWithCatalog := this._MakeServiceWithCatalog()
+        capturedEvents := this._CaptureEvents(Events.ZoneChanged)
+        svcWithCatalog.ProcessText('Generating level 51 area "C_G1_2" with seed 12345`n')
+        Assert.Equal(1, capturedEvents.Length)
+        Assert.Equal("Clearfell", capturedEvents[1]["zoneName"])
+        Assert.Equal("C_G1_2",    capturedEvents[1]["sceneId"])
+        Assert.Equal("interlude", capturedEvents[1]["stage"])
+    }
+
+    cruel_area_gen_without_catalog_uses_base_code()
+    {
+        ; No catalog: zoneName falls through as the raw base code
+        ; (sans C_). Matches the legacy no-resolution behaviour of
+        ; the SCENE branch when no catalog is wired.
+        capturedEvents := this._CaptureEvents(Events.ZoneChanged)
+        this.svc.ProcessText('Generating level 51 area "C_G1_2" with seed 12345`n')
+        Assert.Equal("G1_2",      capturedEvents[1]["zoneName"])
+        Assert.Equal("C_G1_2",    capturedEvents[1]["sceneId"])
+        Assert.Equal("interlude", capturedEvents[1]["stage"])
+    }
+
+    cruel_area_gen_unknown_base_code_falls_back_to_raw()
+    {
+        ; Catalog present but base code unknown (future zone, or
+        ; mistyped). zoneName is the raw base code; the event
+        ; still publishes so the live pipeline isn't silently
+        ; dropping the transition.
+        svcWithCatalog := this._MakeServiceWithCatalog()
+        capturedEvents := this._CaptureEvents(Events.ZoneChanged)
+        svcWithCatalog.ProcessText('Generating level 99 area "C_G99_unknown" with seed 1`n')
+        Assert.Equal(1, capturedEvents.Length)
+        Assert.Equal("G99_unknown",    capturedEvents[1]["zoneName"])
+        Assert.Equal("C_G99_unknown",  capturedEvents[1]["sceneId"])
+        Assert.Equal("interlude",      capturedEvents[1]["stage"])
+    }
+
+    cruel_town_publishes_zone_changed()
+    {
+        ; Cruel towns (e.g. C_G1_town → Clearfell Encampment) are
+        ; also surfaced as ZoneChanged. The live pipeline can then
+        ; show the user in a cruel town in the active-zone display,
+        ; matching how normal towns work today.
+        svcWithCatalog := this._MakeServiceWithCatalog()
+        capturedEvents := this._CaptureEvents(Events.ZoneChanged)
+        svcWithCatalog.ProcessText('Generating level 51 area "C_G1_town" with seed 1`n')
+        Assert.Equal(1, capturedEvents.Length)
+        Assert.Equal("Clearfell Encampment", capturedEvents[1]["zoneName"])
+        Assert.Equal("interlude",            capturedEvents[1]["stage"])
+    }
+
+    normal_area_gen_does_not_publish_zone_changed()
+    {
+        ; Regression: normal area-gens (no C_ prefix) must NOT
+        ; publish ZoneChanged from the area-level branch. The
+        ; subsequent [SCENE] line is the only ZoneChanged source
+        ; for normal zones — same as today's behaviour. Without
+        ; this guard, every normal transition would double-publish
+        ; ZoneChanged and zone-totals would double-count.
+        capturedEvents := this._CaptureEvents(Events.ZoneChanged)
+        this.svc.ProcessText('Generating level 10 area "G1_2" with seed 42`n')
+        Assert.Equal(0, capturedEvents.Length)
+    }
+
+    scene_zone_changed_has_normal_stage()
+    {
+        ; New default field on ZoneChanged. Legacy subscribers that
+        ; ignore unknown keys keep working; new subscribers read
+        ; `stage` to route data into per-(act, stage) buckets.
+        capturedEvents := this._CaptureEvents(Events.ZoneChanged)
+        this.svc.ProcessText("[SCENE] Set Source [Clearfell]`n")
+        Assert.Equal(1, capturedEvents.Length)
+        Assert.Equal("normal", capturedEvents[1]["stage"])
+    }
+
+    zone_entered_zone_changed_has_normal_stage()
+    {
+        ; Same default applies to the legacy "You have entered"
+        ; branch (defensive code, not observed in current PoE2 but
+        ; retained against future engine changes).
+        capturedEvents := this._CaptureEvents(Events.ZoneChanged)
+        this.svc.ProcessText("You have entered Clearfell.`n")
+        Assert.Equal(1, capturedEvents.Length)
+        Assert.Equal("normal", capturedEvents[1]["stage"])
     }
 
     ; ============================================================

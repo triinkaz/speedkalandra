@@ -6,10 +6,34 @@
 ; Recognized lines:
 ;   "X (Class) is now level N"             → Evt.CharacterLevelUp
 ;   "Generating level N area X with seed"  → Evt.AreaLevelChanged
+;                                            (+ Evt.ZoneChanged when cruel)
 ;   "[SCENE] Set Source [name]"            → Evt.SceneEntered + Evt.ZoneChanged
 ;   "You have entered ..."                 → Evt.ZoneChanged (see note below)
 ;   "X has been slain."                    → Evt.DeathDetected (player only)
 ;   "[WINDOW] Lost / Gained focus"         → Evt.WindowFocusChanged
+;
+; Cruel / Interlude transitions:
+;   PoE2 emits cruel (interlude) zone gens through the SAME area-
+;   level line but with a "C_" prefix on the code: e.g. `Generating
+;   level 51 area "C_G1_2" with seed N`. Critically, the engine
+;   does NOT emit a corresponding `[SCENE] Set Source [...]` for
+;   cruel zones — empirically verified against a real Client.txt
+;   with thousands of cruel transitions and zero matching SCENE
+;   lines (see DeathLogScanner header for the cross-reference).
+;
+;   Consequence: if this service only published ZoneChanged from
+;   the [SCENE] branch, the entire downstream pipeline (zone
+;   tracker, route widget, active-zone display, checkpoints) would
+;   be blind for the duration of the interlude. So the area-level
+;   branch double-publishes for cruel: AreaLevelChanged AND
+;   ZoneChanged. Normal area-gens still defer ZoneChanged to the
+;   subsequent [SCENE] line as before.
+;
+;   stage field: every ZoneChanged carries `stage` = "normal" or
+;   "interlude". Default "normal" keeps legacy subscribers (which
+;   ignore unknown keys) working unchanged; new subscribers (per-
+;   (act, stage) checkpoints, plot builder's Interlude filter) read
+;   it to route the data into the correct bucket.
 ;
 ; "You have entered" status: not observed in current PoE2 Client.txt.
 ; The string almost certainly survived from an earlier game (or an
@@ -69,6 +93,12 @@ class LogMonitorService
 
     ; Tail size swept in Start(seedFromTail=true)
     static SEED_BYTES := 65536
+
+    ; Cruel zones carry this prefix on the area code (e.g. "C_G1_2")
+    ; in the `Generating level N area "<code>"` line. The same value
+    ; lives in DeathLogScanner.CRUEL_PREFIX; if a future refactor
+    ; centralizes catalog cruel-handling, both should converge.
+    static CRUEL_PREFIX := "C_"
 
     __New(clock, bus, logService, catalog := "")
     {
@@ -278,6 +308,24 @@ class LogMonitorService
                 "areaLevel", areaLevel,
                 "areaCode",  areaCode
             ))
+
+            ; Cruel-aware ZoneChanged publish. See class header.
+            ; The [SCENE] branch below never fires for cruel, so the
+            ; area-gen line is the only signal we have. Normal zones
+            ; (no C_ prefix) skip this and let [SCENE] handle it as
+            ; before — normal still emits both lines.
+            if (SubStr(areaCode, 1, StrLen(LogMonitorService.CRUEL_PREFIX)) = LogMonitorService.CRUEL_PREFIX)
+            {
+                baseCode := SubStr(areaCode, StrLen(LogMonitorService.CRUEL_PREFIX) + 1)
+                humanName := this._ResolveZoneToHumanName(baseCode)
+                this._bus.Publish(Events.ZoneChanged, Map(
+                    "zoneName", humanName,
+                    "sceneId",  areaCode,
+                    "stage",    "interlude"
+                ))
+                this._log.Debug("Cruel zone published: " areaCode
+                    . (humanName != baseCode ? " → " humanName : ""), "LogMonitor")
+            }
             return
         }
 
@@ -303,7 +351,8 @@ class LogMonitorService
             humanName := this._ResolveZoneToHumanName(scene)
             this._bus.Publish(Events.ZoneChanged, Map(
                 "zoneName", humanName,
-                "sceneId",  scene
+                "sceneId",  scene,
+                "stage",    "normal"
             ))
             ; DEBUG, not INFO: a full campaign hits 100+ zones and
             ; an INFO line per scene drowned the log file.
@@ -323,7 +372,8 @@ class LogMonitorService
             ; zones pass through unchanged.
             this._bus.Publish(Events.ZoneChanged, Map(
                 "zoneName", this._ResolveZoneToHumanName(zone),
-                "sceneId",  ""
+                "sceneId",  "",
+                "stage",    "normal"
             ))
             return
         }
