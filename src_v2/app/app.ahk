@@ -302,11 +302,28 @@ class SpeedKalandraApp
 
         this.runState   := RunStateRepository(ini, runStateSink)
         this.timer      := TimerService(this.clock, this.bus)
-        this.runService := RunService(this.clock, this.bus, this.timer, this.runState, this.log)
 
-        ; Tracks total run time at each act transition; feeds the
-        ; per-act PB on finalize. Depends on this.timer for GetRunMs.
+        ; ActCheckpointTracker is constructed BEFORE RunService
+        ; because RunService's B2 Ctrl+5 routing depends on it
+        ; (queries GetLastCompleteCheckpointMs to decide between
+        ; CancelRun and the confirm-then-Reset path). The tracker
+        ; itself has no dependency on RunService — only on bus +
+        ; timer, both of which are already wired here.
         this.actCheckpoints := ActCheckpointTracker(this.bus, this.timer)
+
+        ; Confirmation prompt for the destructive Ctrl+5 path
+        ; (active run with no complete act, where ResetRun would
+        ; throw away the user's work). Wired only in non-headless
+        ; mode — in headless tests, falling back to the permissive
+        ; default (always "Yes") preserves the pre-B2 "Ctrl+5
+        ; always discards" behaviour that ~hundreds of tests
+        ; depend on. Production wires SpeedKalandraMsgBox so the
+        ; user sees a real "are you sure" before losing the run.
+        confirmDiscardFn := headless
+            ? ""
+            : (msg, title) => SpeedKalandraMsgBox(msg, title, "YesNo IconQ")
+        this.runService := RunService(this.clock, this.bus, this.timer,
+            this.runState, this.log, this.actCheckpoints, confirmDiscardFn)
 
         hydratedState := this.runState.Load()
         ; runService.Hydrate intentionally NOT called here. When the

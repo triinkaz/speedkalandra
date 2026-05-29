@@ -181,7 +181,7 @@ class B1CruelPipelineIntegrationTests extends TestCase
         Assert.Equal("interlude", enriched["stage"],
             "ZoneTracker preserves stage on the outgoing ZoneEntered "
             . "(pre-B1 the field didn't exist; Commit 2 added the propagation)")
-        Assert.Equal(1, enriched["actNum"],
+        Assert.Equal(1, enriched["actIndex"],
             "act is derived from the catalog entry, not from the C_ prefix")
         Assert.False(enriched["isTown"],
             "Mud Burrow is a map, not a town — catalog metadata "

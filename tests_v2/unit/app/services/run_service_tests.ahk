@@ -45,6 +45,39 @@ class _ThrowingRunStateRepository extends RunStateRepository
     }
 }
 
+; Minimal stub for ActCheckpointTracker used by the B2 Ctrl+5
+; routing tests. The routing handler only reads
+; GetLastCompleteCheckpointMs() — everything else (Reset,
+; CaptureCurrentAsCheckpoint, the lifecycle subscriptions) is
+; irrelevant to the routing decision, so this stub keeps the
+; surface area minimal. Seed via SetCheckpointsByStage with the
+; same Map<"act|stage", ms> shape ActCheckpointTracker exposes.
+class _RunServiceStubActCheckpoints
+{
+    _checkpointsByStage := ""
+
+    __New()
+    {
+        this._checkpointsByStage := Map()
+    }
+
+    SetCheckpointsByStage(map)
+    {
+        this._checkpointsByStage := map
+    }
+
+    GetLastCompleteCheckpointMs()
+    {
+        maxMs := 0
+        for _, ms in this._checkpointsByStage
+        {
+            if (IsNumber(ms) && ms > maxMs)
+                maxMs := Integer(ms)
+        }
+        return maxMs
+    }
+}
+
 class RunServiceTests extends TestCase
 {
     bus       := ""
@@ -158,6 +191,15 @@ class RunServiceTests extends TestCase
         "finalize_run_requested_triggers_finalize",
         "cancel_run_requested_triggers_cancel",
         "reset_run_requested_triggers_reset",
+
+        ; --- B2 Ctrl+5 routing ---
+        "routing_idle_calls_reset_without_confirm",
+        "routing_with_complete_act_calls_cancel",
+        "routing_with_complete_act_does_not_invoke_confirm",
+        "routing_no_complete_act_yes_confirm_calls_reset",
+        "routing_no_complete_act_no_confirm_preserves_run",
+        "routing_no_actCheckpoints_dep_falls_through_to_confirm",
+        "constructor_default_confirm_fn_returns_yes_for_back_compat",
 
         ; --- Pre-publish hooks (SetOnBeforeFinalize / SetOnBeforeCancel) ---
         "set_on_before_finalize_throws_when_callback_not_callable",
@@ -889,6 +931,200 @@ class RunServiceTests extends TestCase
         this.bus.Publish(Commands.ResetRunRequested, Map())
         Assert.Equal("", this.svc.GetRunId())
         Assert.Equal("idle", this.svc.GetStatus())
+    }
+
+    ; ============================================================
+    ; B2 Ctrl+5 routing
+    ; ============================================================
+    ;
+    ; The handler subscribed to Cmd.ResetRunRequested routes
+    ; between three behaviours based on (a) whether a run is
+    ; active and (b) whether any (act, stage) checkpoint has
+    ; been captured. Behaviour matrix:
+    ;
+    ;   IsActive=false                  → ResetRun() (idempotent;
+    ;                                                  no prompt)
+    ;   IsActive=true, lastComplete>0   → CancelRun() (DNF save
+    ;                                                  via the
+    ;                                                  snapshot saver;
+    ;                                                  no prompt)
+    ;   IsActive=true, lastComplete=0   → confirm → ResetRun() on
+    ;                                              "Yes", no-op
+    ;                                              otherwise
+    ;
+    ; Both routing deps (actCheckpoints, confirmDiscardFn) are
+    ; optional. Missing actCheckpoints → lastComplete treated as 0,
+    ; falls through to confirm path. Missing confirmDiscardFn →
+    ; default fn returns "Yes" (matches pre-B2 "always discard"
+    ; semantic for back-compat with existing tests).
+
+    routing_idle_calls_reset_without_confirm()
+    {
+        ; Idle state: ResetRun is idempotent cleanup; no
+        ; confirmation prompt because there's nothing to lose.
+        ; Wire a tracking confirmFn to assert it ISN'T invoked.
+        promptCalls := []
+        confirmFn := (msg, title) => (promptCalls.Push(title), "Yes")
+        actCp := _RunServiceStubActCheckpoints()
+        svc := RunService(this.stubClock, this.bus,
+            TimerService(this.stubClock, this.bus),
+            RunStateRepository(IniFile(Fixtures.TempPath("ini"))),
+            "", actCp, confirmFn)
+        try
+        {
+            ; Not active: state is idle from construction.
+            this.bus.Publish(Commands.ResetRunRequested, Map())
+
+            Assert.Equal("idle", svc.GetStatus())
+            Assert.Equal(0, promptCalls.Length,
+                "Confirm fn must NOT fire when state is already idle")
+        }
+        finally svc.Dispose()
+    }
+
+    routing_with_complete_act_calls_cancel()
+    {
+        ; Active run with ≥1 complete (act, stage) bucket. Ctrl+5
+        ; saves as DNF (via CancelRun) instead of discarding. The
+        ; resulting state must be "cancelled" — same outcome as a
+        ; direct CancelRun call.
+        actCp := _RunServiceStubActCheckpoints()
+        actCp.SetCheckpointsByStage(Map("1|normal", 300000))
+
+        svc := RunService(this.stubClock, this.bus,
+            TimerService(this.stubClock, this.bus),
+            RunStateRepository(IniFile(Fixtures.TempPath("ini"))),
+            "", actCp, "")
+        try
+        {
+            svc.NewRun()
+            this.bus.Publish(Commands.ResetRunRequested, Map())
+
+            Assert.Equal("cancelled", svc.GetStatus(),
+                "Run with complete act routes Ctrl+5 to CancelRun, not ResetRun")
+        }
+        finally svc.Dispose()
+    }
+
+    routing_with_complete_act_does_not_invoke_confirm()
+    {
+        ; Symmetric to the idle test: with complete acts the work
+        ; is preserved (CancelRun saves a DNF), so the confirm
+        ; prompt would be misplaced friction.
+        promptCalls := []
+        confirmFn := (msg, title) => (promptCalls.Push(title), "Yes")
+        actCp := _RunServiceStubActCheckpoints()
+        actCp.SetCheckpointsByStage(Map("1|normal", 300000))
+
+        svc := RunService(this.stubClock, this.bus,
+            TimerService(this.stubClock, this.bus),
+            RunStateRepository(IniFile(Fixtures.TempPath("ini"))),
+            "", actCp, confirmFn)
+        try
+        {
+            svc.NewRun()
+            this.bus.Publish(Commands.ResetRunRequested, Map())
+
+            Assert.Equal(0, promptCalls.Length,
+                "Cancel path is non-destructive; no prompt fires")
+        }
+        finally svc.Dispose()
+    }
+
+    routing_no_complete_act_yes_confirm_calls_reset()
+    {
+        ; Active run with no captured checkpoint (user gave up
+        ; mid-Act 1). Destructive path — confirm fires, returns
+        ; "Yes", ResetRun runs.
+        actCp := _RunServiceStubActCheckpoints()
+        ; checkpointsByStage stays empty.
+        confirmFn := (msg, title) => "Yes"
+        svc := RunService(this.stubClock, this.bus,
+            TimerService(this.stubClock, this.bus),
+            RunStateRepository(IniFile(Fixtures.TempPath("ini"))),
+            "", actCp, confirmFn)
+        try
+        {
+            svc.NewRun()
+            this.bus.Publish(Commands.ResetRunRequested, Map())
+
+            Assert.Equal("idle", svc.GetStatus(),
+                "User confirmed discard → run resets to idle")
+            Assert.Equal("", svc.GetRunId())
+        }
+        finally svc.Dispose()
+    }
+
+    routing_no_complete_act_no_confirm_preserves_run()
+    {
+        ; Same destructive path, but the user dismisses the
+        ; prompt. The run stays active — no state change.
+        actCp := _RunServiceStubActCheckpoints()
+        confirmFn := (msg, title) => "No"
+        svc := RunService(this.stubClock, this.bus,
+            TimerService(this.stubClock, this.bus),
+            RunStateRepository(IniFile(Fixtures.TempPath("ini"))),
+            "", actCp, confirmFn)
+        try
+        {
+            svc.NewRun()
+            preserveRunId := svc.GetRunId()
+            this.bus.Publish(Commands.ResetRunRequested, Map())
+
+            Assert.Equal("running", svc.GetStatus(),
+                "User dismissed prompt → active run preserved")
+            Assert.Equal(preserveRunId, svc.GetRunId(),
+                "runId unchanged when user cancels the discard")
+        }
+        finally svc.Dispose()
+    }
+
+    routing_no_actCheckpoints_dep_falls_through_to_confirm()
+    {
+        ; Back-compat: callers that don't wire actCheckpoints get
+        ; lastComplete=0 implicitly (the IsObject guard skips the
+        ; query entirely). The destructive path runs the confirm
+        ; fn just like the explicit-empty case above.
+        promptCalls := []
+        confirmFn := (msg, title) => (promptCalls.Push(title), "Yes")
+        svc := RunService(this.stubClock, this.bus,
+            TimerService(this.stubClock, this.bus),
+            RunStateRepository(IniFile(Fixtures.TempPath("ini"))),
+            "", "", confirmFn)   ; actCheckpoints intentionally ""
+        try
+        {
+            svc.NewRun()
+            this.bus.Publish(Commands.ResetRunRequested, Map())
+
+            Assert.Equal(1, promptCalls.Length,
+                "Missing actCheckpoints dep falls through to the prompt path")
+            Assert.Equal("idle", svc.GetStatus(),
+                "Confirm fn returned 'Yes', ResetRun ran")
+        }
+        finally svc.Dispose()
+    }
+
+    constructor_default_confirm_fn_returns_yes_for_back_compat()
+    {
+        ; Critical back-compat invariant: the ~hundreds of existing
+        ; tests that publish Cmd.ResetRunRequested without injecting
+        ; a confirmFn rely on the default fn returning "Yes". This
+        ; test pins that default at the constructor level so a
+        ; future change to the default (e.g. swap to "Cancel" out
+        ; of an excess of caution) shows up as a single explicit
+        ; failure here rather than a cascade across the suite.
+        svc := RunService(this.stubClock, this.bus,
+            TimerService(this.stubClock, this.bus),
+            RunStateRepository(IniFile(Fixtures.TempPath("ini"))))
+        try
+        {
+            svc.NewRun()
+            this.bus.Publish(Commands.ResetRunRequested, Map())
+
+            Assert.Equal("idle", svc.GetStatus(),
+                "Default confirmFn returns 'Yes' → ResetRun runs unconditionally")
+        }
+        finally svc.Dispose()
     }
 
     ; ============================================================

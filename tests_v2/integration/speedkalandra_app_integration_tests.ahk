@@ -1103,10 +1103,11 @@ class SpeedKalandraAppIntegrationTests extends TestCase
 
     cancelled_long_run_saves_to_history_with_zone_totals_intact()
     {
-        ; Anti-regression (bus-subscription FIFO race):
+        ; Anti-regression dual coverage:
         ;
-        ; A run that is cancelled after the 3-minute threshold must
-        ; still be persisted to history, AND the saved snapshot must
+        ; (1) Bus-subscription FIFO race (pre-B2 origin): a run
+        ; cancelled after the 3-minute threshold must still be
+        ; persisted to history, AND the saved snapshot must
         ; include the zone totals — even though ZoneTrackingService
         ; clears `_totals` and RunStatsRecorder calls `Reset()` on
         ; RunCancelled. The save runs through RunService's
@@ -1121,11 +1122,27 @@ class SpeedKalandraAppIntegrationTests extends TestCase
         ; by reordering constructors; this test catches a regression
         ; in either the hook semantics OR a hypothetical revert to
         ; bus-subscription save.
+        ;
+        ; (2) B2 truncation (post-B2 surface): cancel-with-complete-
+        ; act now persists a snapshot truncated to the last
+        ; completed (act, stage) boundary — partial-act zone data,
+        ; loadings, and the bump it would give to runDurationMs all
+        ; stay out of the saved run. The test drives an Act 1 → Act
+        ; 3 transition (using zones from the test fixture catalog)
+        ; so ActCheckpointTracker captures "1|normal" before the
+        ; cancel. Without the transition, B2 would short-circuit on
+        ; truncatedRunMs==0 and drop the save entirely (a separate
+        ; behaviour pinned by
+        ; cancel_with_no_complete_act_drops_save in the saver unit
+        ; suite).
         this.app.bus.Publish(Commands.NewRunRequested, Map())
 
-        ; 5 minutes of zone time — well above the 3-minute save
-        ; threshold, and gives _totals a real value to verify.
+        ; Act 1: 5 minutes in Mud Burrow.
         this._EnterZoneAndAdvance("Mud Burrow", 300000)
+        ; Cross into Act 3 (The Karui Shores) — ActCheckpointTracker
+        ; sees the act change and captures "1|normal"=300000 as a
+        ; completed bucket. Then 60 s of partial Act 3 time.
+        this._EnterZoneAndAdvance("The Karui Shores", 60000)
         producedId := this.app.runService.GetRunId()
 
         this.app.bus.Publish(Commands.CancelRunRequested, Map())
@@ -1133,20 +1150,44 @@ class SpeedKalandraAppIntegrationTests extends TestCase
         ; Run saved to history.
         files := this._ListRunFiles()
         Assert.Equal(1, files.Length,
-            "long-cancelled run is persisted (>= 3 min threshold)")
+            "long-cancelled run with ≥1 complete act is persisted as DNF")
         Assert.Equal(producedId ".ini", files[1],
             "saved file is named after the runId")
 
-        ; And the saved snapshot carries the run's totals (proves the
-        ; hook saw _totals before zoneTracker._OnRunEnded cleared them).
+        ; And the saved snapshot reflects the TRUNCATED boundary
+        ; (proves the hook saw the captured checkpoints AND that
+        ; the truncation step ran). The Act 3 partial doesn't
+        ; contribute: totalMs and runDurationMs lock to the Act 1
+        ; closing boundary (300000), not the real elapsed (360000).
         loadedRun := this.app.runHistory.Load(producedId)
         Assert.True(IsObject(loadedRun),
             "saved run loads back")
-        Assert.True(loadedRun["totalMs"] >= 300000,
-            "saved totalMs covers the 5 min of zone time")
+        Assert.Equal(300000, loadedRun["totalMs"],
+            "B2: saved totalMs is the truncated boundary, not the real elapsed")
+        ; Note: RunHistoryRepository.Load surfaces only `totalMs` from
+        ; the persisted INI's [meta] section; the saver's internal
+        ; `runDurationMs` is serialized AS `totalMs` (same number,
+        ; one canonical key on disk). The saver's dual-write of both
+        ; keys is verified in run_snapshot_saver_tests via the
+        ; runHistory stub's _lastSaved buffer, which captures the
+        ; pre-persistence buildResult. End-to-end, totalMs is the
+        ; single contract this test pins.
+
+        ; Detail rows for the partial Act 3 zone must NOT appear in
+        ; the saved file — truncation drops them so the saved DNF
+        ; reads as a clean Act 1 partial run.
+        karuiSeen := false
+        for _, d in loadedRun["details"]
+        {
+            if (d.Has("label") && d["label"] = "The Karui Shores")
+                karuiSeen := true
+        }
+        Assert.False(karuiSeen,
+            "B2: Act 3 (partial) zone is filtered out of the saved details")
 
         ; State-clearing on the bus subscribers should have happened
-        ; AFTER the save — _totals is now empty.
+        ; AFTER the save — _totals is now empty (this part of the
+        ; original anti-regression contract is unchanged by B2).
         Assert.Equal(0, this.app.zoneTracker.GetTotals().Count,
             "zone tracker state is cleared post-RunCancelled (subscriber ran after the hook)")
     }

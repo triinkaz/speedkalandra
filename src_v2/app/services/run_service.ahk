@@ -36,6 +36,39 @@
 ;   state-clearers downstream of RunCompleted/RunCancelled can
 ;   react.
 ;
+; B2 Ctrl+5 routing (_OnResetRunRequested):
+;   The handler subscribed to Cmd.ResetRunRequested examines the
+;   act-checkpoint state and routes between two behaviours:
+;
+;     - Active run + ≥1 complete (act, stage) bucket → CancelRun()
+;       (snapshot saver truncates and persists as DNF; muscle
+;       memory of Ctrl+5 preserved, work isn't lost).
+;     - Active run + no complete bucket → confirm via the
+;       injected `confirmDiscardFn`, then ResetRun() on "Yes".
+;       Default fn returns "Yes" (back-compat: every existing
+;       caller that didn't wire one continues to discard
+;       unconditionally). Production wires a SpeedKalandraMsgBox
+;       so the user has a visible "are you sure" before throwing
+;       away an active partial-act run.
+;     - Idle (no active run) → ResetRun() (idempotent cleanup;
+;       no confirmation prompt because there's nothing to lose).
+;
+;   Both deps (`actCheckpoints`, `confirmDiscardFn`) are optional
+;   constructor parameters. Without them, the handler falls
+;   through to the "no complete act" branch with the permissive
+;   default fn — which matches the pre-B2 "always reset"
+;   behaviour. Tests that publish Cmd.ResetRunRequested directly
+;   continue to work without rewiring.
+;
+;   ResetRun() and CancelRun() themselves keep their pre-B2
+;   semantics: ResetRun always resets without saving; CancelRun
+;   always invokes the cancel hook (which performs the B2
+;   truncation in the saver). NewRun's internal `if active,
+;   ResetRun` path is deliberately untouched — Ctrl+Alt+N still
+;   throws away the current run unconditionally, never goes
+;   through the routing handler. To save before restarting, use
+;   Ctrl+5 first (which routes), then Ctrl+Alt+N.
+;
 ; AHK v2 gotcha: parameter is `timerSvc`, not `timerService` — AHK
 ; variable lookup is case-insensitive, and `is TimerService` would
 ; collide with a `timerService` local.
@@ -78,12 +111,24 @@ class RunService
     _onBeforeFinalize := ""
     _onBeforeCancel   := ""
 
+    ; B2 routing deps (both optional, see _OnResetRunRequested):
+    ;   _actCheckpoints   queried via GetLastCompleteCheckpointMs() to
+    ;                     decide whether Ctrl+5 saves as DNF or discards.
+    ;   _confirmDiscardFn callable; signature is
+    ;                       fn(msg, title) → "Yes" | "No" | "Cancel"
+    ;                     Invoked only on the destructive path (active
+    ;                     run with no complete act). Permissive default
+    ;                     (always "Yes") preserves pre-B2 semantics for
+    ;                     callers that don't inject a real prompt.
+    _actCheckpoints   := ""
+    _confirmDiscardFn := ""
+
     _handlerNew      := ""
     _handlerFinalize := ""
     _handlerCancel   := ""
     _handlerReset    := ""
 
-    __New(clock, bus, timerSvc, stateRepo, log := "")
+    __New(clock, bus, timerSvc, stateRepo, log := "", actCheckpoints := "", confirmDiscardFn := "")
     {
         if !IsObject(clock) || !clock.HasMethod("NowMs")
             throw TypeError("RunService: 'clock' must implement NowMs()")
@@ -104,10 +149,20 @@ class RunService
         ; in those callers. Production wires the real LogService.
         this._log       := (log = "") ? NullLogger() : log
 
+        ; B2 routing deps. Both optional — see the header for the
+        ; back-compat contract. When actCheckpoints is missing, the
+        ; routing falls through to the destructive path. When the
+        ; confirm fn is missing, the destructive path runs without a
+        ; prompt (matches pre-B2 "Ctrl+5 always discards" semantic).
+        this._actCheckpoints := actCheckpoints
+        this._confirmDiscardFn := (confirmDiscardFn = "")
+            ? (msg, title) => "Yes"
+            : confirmDiscardFn
+
         this._handlerNew      := (data) => this.NewRun()
         this._handlerFinalize := (data) => this.FinalizeRun()
         this._handlerCancel   := (data) => this.CancelRun()
-        this._handlerReset    := (data) => this.ResetRun()
+        this._handlerReset    := (data) => this._OnResetRunRequested()
 
         bus.Subscribe(Commands.NewRunRequested,      this._handlerNew)
         bus.Subscribe(Commands.FinalizeRunRequested, this._handlerFinalize)
@@ -288,6 +343,59 @@ class RunService
 
         this._bus.Publish(Events.RunCancelled, Map("runId", currentRunId))
         return true
+    }
+
+    ; B2 routing entry point — subscribed to Cmd.ResetRunRequested.
+    ; See class header for the full state machine. Three branches,
+    ; in priority order:
+    ;
+    ;   1. !IsActive()                  → ResetRun()  (idempotent cleanup)
+    ;   2. has complete (act, stage)    → CancelRun() (snapshot saver
+    ;                                                  truncates + persists
+    ;                                                  as DNF)
+    ;   3. otherwise (active, no act)   → confirm → ResetRun() on "Yes"
+    ;
+    ; Direct callers of ResetRun() / CancelRun() bypass this routing
+    ; entirely — in particular, NewRun()'s internal ResetRun is
+    ; unaffected, so Ctrl+Alt+N still throws away unconditionally.
+    _OnResetRunRequested()
+    {
+        if !this._state.IsActive()
+        {
+            this.ResetRun()
+            return
+        }
+
+        lastCompleteMs := 0
+        if IsObject(this._actCheckpoints)
+        {
+            try lastCompleteMs := this._actCheckpoints.GetLastCompleteCheckpointMs()
+        }
+
+        if (lastCompleteMs > 0)
+        {
+            ; ≥1 complete act — work is preserved via CancelRun
+            ; (which routes through the snapshot saver's B2
+            ; truncation path). No confirmation prompt: nothing
+            ; is being lost, so the friction would be misplaced.
+            this.CancelRun()
+            return
+        }
+
+        ; No complete act — destructive path. Prompt the user via
+        ; the injected fn before discarding. Default fn returns
+        ; "Yes" so test setups that don't inject one (and the
+        ; pre-B2 contract) preserve the always-discard behaviour.
+        result := ""
+        try result := (this._confirmDiscardFn)(
+            "Descartar a run atual?`n`nNenhum ato foi completado — nada será salvo no histórico.",
+            "Discard Run")
+        if (result = "Yes")
+            this.ResetRun()
+        ; else: no-op. User chose to keep the run going; the
+        ; lifecycle stays put. No event fires — the bus already
+        ; saw the Cmd request, but the response (no state change)
+        ; is the right semantic.
     }
 
     ResetRun()
