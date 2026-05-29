@@ -132,6 +132,32 @@ class ActCheckpointTracker
         return out
     }
 
+    ; Returns the runMs of the most recent CAPTURED (act, stage)
+    ; transition, or 0 if no checkpoint has been captured yet in
+    ; this run. Used by RunSnapshotSaver (B2 path) to compute the
+    ; truncated runDurationMs when a cancel happens mid-act — the
+    ; current (active) bucket isn't captured until either a
+    ; transition or a final completed-finalize, so its time isn't
+    ; considered "complete" by this query. A cancel call site that
+    ; reads this BEFORE invoking CaptureCurrentAsCheckpoint sees
+    ; the time of the boundary that closed the last fully
+    ; completed (act, stage), which is exactly the timestamp the
+    ; partial-run save should be truncated at.
+    ;
+    ; Returns 0 when no transition fired yet — the caller treats
+    ; this as "no complete act" and the B2 save path drops the
+    ; entire run instead of persisting a zero-length record.
+    GetLastCompleteCheckpointMs()
+    {
+        maxMs := 0
+        for _, ms in this._checkpointsByActStage
+        {
+            if (IsNumber(ms) && ms > maxMs)
+                maxMs := Integer(ms)
+        }
+        return maxMs
+    }
+
     Reset()
     {
         this._currentAct   := 0

@@ -101,6 +101,12 @@ class ActCheckpointTrackerTests extends TestCase
         "reset_clears_current_stage",
         "reset_clears_checkpoints_by_stage",
 
+        ; --- GetLastCompleteCheckpointMs (B2 truncation) ---
+        "last_complete_ms_zero_initially",
+        "last_complete_ms_returns_max_across_buckets",
+        "last_complete_ms_excludes_current_active_bucket",
+        "last_complete_ms_zero_after_reset",
+
         ; --- Reset on lifecycle ---
         "resets_on_run_started",
         "resets_on_run_reset",
@@ -529,6 +535,77 @@ class ActCheckpointTrackerTests extends TestCase
         Assert.Equal(1, this.svc.GetCheckpointsByStage().Count, "sanity")
         this.svc.Reset()
         Assert.Equal(0, this.svc.GetCheckpointsByStage().Count)
+    }
+
+    ; ============================================================
+    ; GetLastCompleteCheckpointMs (B2 truncation)
+    ; ============================================================
+    ;
+    ; Returns the runMs at the latest *captured* (act, stage)
+    ; transition. Used by RunSnapshotSaver on the cancel path to
+    ; decide the truncation point of a partial run. Critically:
+    ; the current (active) bucket is NOT considered "complete"
+    ; until it has actually been captured — either by a transition
+    ; out of it, or by CaptureCurrentAsCheckpoint at finalize time.
+    ; The cancel path reads this BEFORE doing any explicit capture
+    ; so the active partial-act time isn't mistaken for completed.
+
+    last_complete_ms_zero_initially()
+    {
+        ; Run hasn't started; no zones entered. The cancel path
+        ; uses this to short-circuit Save (no complete act = nothing
+        ; to persist, fulfils B2's Q3.a).
+        Assert.Equal(0, this.svc.GetLastCompleteCheckpointMs())
+    }
+
+    last_complete_ms_returns_max_across_buckets()
+    {
+        ; Normal Act 1 → Act 2 → cruel Act 1 (transitions).
+        ; Captured buckets: "1|normal"=60000, "2|normal"=150000.
+        ; Latest captured = 150000.
+        this.bus.Publish(Events.ZoneEntered, Map(
+            "actIndex", 1, "stage", "normal"))
+        this.stubTimer.SetMs(60000)
+        this.bus.Publish(Events.ZoneEntered, Map(
+            "actIndex", 2, "stage", "normal"))
+        this.stubTimer.SetMs(150000)
+        this.bus.Publish(Events.ZoneEntered, Map(
+            "actIndex", 1, "stage", "interlude"))
+
+        Assert.Equal(150000, this.svc.GetLastCompleteCheckpointMs())
+    }
+
+    last_complete_ms_excludes_current_active_bucket()
+    {
+        ; The active bucket isn't captured until either a transition
+        ; or an explicit CaptureCurrentAsCheckpoint. Even after the
+        ; timer has advanced well past the last captured value, the
+        ; query continues to return the LAST CAPTURED time, not the
+        ; live runMs — that's the B2 contract.
+        this.bus.Publish(Events.ZoneEntered, Map(
+            "actIndex", 1, "stage", "normal"))
+        this.stubTimer.SetMs(60000)
+        this.bus.Publish(Events.ZoneEntered, Map(
+            "actIndex", 2, "stage", "normal"))
+        ; Active in Act 2 normal, timer advances past the captured value.
+        this.stubTimer.SetMs(300000)
+
+        Assert.Equal(60000, this.svc.GetLastCompleteCheckpointMs(),
+            "current active bucket (Act 2 at 300000ms) isn't 'complete' yet")
+    }
+
+    last_complete_ms_zero_after_reset()
+    {
+        this.bus.Publish(Events.ZoneEntered, Map(
+            "actIndex", 1, "stage", "normal"))
+        this.stubTimer.SetMs(60000)
+        this.bus.Publish(Events.ZoneEntered, Map(
+            "actIndex", 2, "stage", "normal"))
+        Assert.Equal(60000, this.svc.GetLastCompleteCheckpointMs(), "sanity")
+
+        this.svc.Reset()
+
+        Assert.Equal(0, this.svc.GetLastCompleteCheckpointMs())
     }
 
     ; ============================================================
